@@ -1,0 +1,45 @@
+# Agent memory: planning notes, working specs, and reference docs — private working notes, not PR artifacts
+memory/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.eggs/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data / research artifacts (large, regenerable, or external-drive-backed)
+data/
+mlruns/
+experiments/
+outputs/
+*.parquet
+*.duckdb
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
