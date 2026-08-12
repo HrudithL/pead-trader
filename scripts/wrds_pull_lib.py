@@ -511,6 +511,25 @@ def record(log: list, row: dict, manifest_path: Path) -> None:
 # deliberately NOT added here and IS treated as a failure by
 # find_run_log_failures below.
 #
+# "ok_empty_query_stale_fingerprint" (this round, Fix 3 of the fingerprint-
+# zero-row-fix PR): a DIFFERENT flavor of the "kept existing" scenario above.
+# It fires in exactly the same situation (existing file at out_path, zero-row
+# re-pull, file correctly left untouched) EXCEPT the file's carried-forward/
+# prior recorded fingerprint is present, non-blank, AND differs from this
+# run's current universe_fingerprint -- i.e. this isn't a first attempt (see
+# "no prior fingerprint" below) but a KNOWN, confirmed mismatch: the universe
+# changed and a re-pull under the new universe has failed to produce any
+# rows. That could recur indefinitely (every future run would otherwise log
+# plain "ok_empty_query_kept_existing" -- a SUCCESS status -- forever, even
+# though the on-disk data is known to be out of step with the active
+# universe), so this status is deliberately NOT included below and IS treated
+# as a failure by find_run_log_failures, the same reasoning as
+# "ok_suspicious_zero_rows". By contrast, when there's no prior recorded
+# fingerprint at all (a file pulled before this field existed, or a rotated/
+# reset manifest -- a first-attempt situation, not a confirmed-repeated-
+# failure one) or the prior fingerprint matches the current run's, the
+# ordinary "ok_empty_query_kept_existing" status is used and stays a success.
+#
 # "library_unavailable" (round 3 review, Fix 3) also counts as success: it
 # means pull_wrds_reference.py's one-time db.list_libraries() audit found a
 # given library (ibes/crsp/comp) simply isn't visible on this WRDS account --
@@ -775,6 +794,24 @@ def _stream_query_to_parquet(db, library, table, columns, where_sql, out_path, p
     return total_rows, True
 
 
+# Fix 1 (fingerprint-zero-row-fix follow-up): distinct sentinel for _log()'s
+# `fingerprint` parameter below. Plain `None` used to serve DOUBLE duty as
+# both "caller passed no override -- use this run's current
+# universe_fingerprint" (the intended default meaning) AND a legitimate
+# real value: last_manifest_fingerprint_for_path(...) also returns None
+# whenever out_path has NO prior recorded fingerprint (a file pulled before
+# this field existed, or a rotated/reset manifest). Passing THAT None
+# straight into `_log(fingerprint=...)` used to be indistinguishable from
+# not overriding at all, so it fell through to stamping the CURRENT run's
+# fingerprint -- reproducing, in that specific "no prior fingerprint" case,
+# the exact "stale/wrong fingerprint stamped on a kept-existing file" bug
+# this module's ok_empty_query_kept_existing handling exists to fix. A
+# distinct sentinel object (never equal to any real fingerprint string, and
+# never equal to None) makes "no override" and "explicitly record
+# blank/no-provenance" two different, unambiguous things.
+_UNSET_FINGERPRINT = object()
+
+
 def pull_table(
     db,
     log,
@@ -852,6 +889,16 @@ def pull_table(
     emptiness characteristics. "ok_suspicious_zero_rows" is NOT included in
     SUCCESS_STATUSES, so find_run_log_failures() treats it as a failure for
     the purposes of a script's overall exit code -- unlike plain "ok".
+
+    Separately (unaffected by this flag): when out_path DOES already exist
+    and a zero-row result leaves it untouched, the logged status is either
+    "ok_empty_query_kept_existing" (success -- first attempt, or the file's
+    carried-forward fingerprint matches this run's) or
+    "ok_empty_query_stale_fingerprint" (NOT a success -- the file's
+    carried-forward fingerprint is known to differ from this run's, i.e. a
+    re-pull under a changed universe has confirmed-failed to produce rows).
+    See SUCCESS_STATUSES's module-level comment and the "rows == 0" branch
+    below for the full reasoning.
     """
     # Validate every identifier that's about to be interpolated into the SQL
     # string -- see _validate_sql_identifier's docstring -- before `library`
@@ -876,13 +923,20 @@ def pull_table(
     out_path = out_dir / f"{out_name}.parquet"
 
     def _log(status, rows=0, path="", missing_columns="", optional_columns_missing="", error="",
-             fingerprint=None):
+             fingerprint=_UNSET_FINGERPRINT):
         # `fingerprint` lets a call site override what's recorded for THIS
         # row instead of always stamping the current run's
         # `universe_fingerprint` -- needed by the "ok_empty_query_kept_existing"
         # branch below, which must carry forward out_path's PRIOR recorded
         # fingerprint rather than the current (mismatched) one.
-        if fingerprint is None:
+        #
+        # `_UNSET_FINGERPRINT` (the default -- see its module-level docstring
+        # above) means "no override, use this run's current
+        # universe_fingerprint". An explicit `fingerprint=None` (or
+        # `fingerprint=""`) is a REAL value meaning "record blank/
+        # no-provenance" and must NOT fall back to the current fingerprint --
+        # that distinction is exactly what fixes the bug described above.
+        if fingerprint is _UNSET_FINGERPRINT:
             fingerprint = universe_fingerprint
         record(
             log,
@@ -1004,19 +1058,63 @@ def pull_table(
                 # for it -- NOT this run's (possibly different) universe_
                 # fingerprint. Carry that prior value forward rather than
                 # stamping the current one, so a later run whose universe
-                # still doesn't match sees a fingerprint MISMATCH (or, if no
-                # prior value exists, an absence) and attempts to re-pull
-                # again instead of treating this stale file as confirmed-
-                # current under a universe it was never actually pulled
-                # under.
+                # still doesn't match sees a fingerprint MISMATCH and
+                # attempts to re-pull again instead of treating this stale
+                # file as confirmed-current under a universe it was never
+                # actually pulled under.
+                #
+                # If NO prior fingerprint is recorded at all (a file pulled
+                # before this field existed, or a rotated/reset manifest --
+                # `prior_fingerprint` is None), that None is passed to
+                # `_log` explicitly (as a real value, not the "no override"
+                # default -- see `_UNSET_FINGERPRINT`), which correctly
+                # records it as blank/no-provenance rather than falling
+                # back to this run's current fingerprint. determine_chunk_
+                # force already treats "no recorded fingerprint" the same
+                # as a mismatch (force a re-pull attempt), so this is a
+                # first-attempt situation, not a confirmed-repeated-failure
+                # one -- see Fix 3 below for that distinction.
+                prior_fingerprint = last_manifest_fingerprint_for_path(
+                    manifest_path, _rel(out_path)
+                )
+                # Fix 3: distinguish "genuinely untouched, first attempt or
+                # matching universe -- fine" from "this file's data is
+                # KNOWN to predate a universe change and a re-pull under the
+                # new universe has now failed to produce any rows". The
+                # latter would otherwise silently log plain
+                # "ok_empty_query_kept_existing" (a SUCCESS status) forever,
+                # every single run, with no visible signal that the on-disk
+                # data is out of step with the active universe -- a script
+                # could run in this state indefinitely and always report
+                # exit-0 success. Only fires when there IS a real prior
+                # fingerprint (excludes the "no prior fingerprint" case
+                # above, which is a first attempt, not a repeated failure)
+                # that differs from this run's current one (excludes the
+                # ordinary matching-fingerprint / explicit --force-on-a-
+                # still-current-file case).
+                stale_fingerprint_mismatch = bool(
+                    prior_fingerprint
+                    and universe_fingerprint
+                    and prior_fingerprint != universe_fingerprint
+                )
+                if stale_fingerprint_mismatch:
+                    print(
+                        "  WARNING: this file's data predates a universe "
+                        "change -- a re-pull attempt under the new universe "
+                        "returned zero rows, so the on-disk data is known "
+                        "to be out of step with the active universe (not "
+                        "just possibly stale, but confirmed: the last "
+                        "attempt to refresh it under the new universe "
+                        "produced nothing).",
+                        flush=True,
+                    )
                 _log(
-                    "ok_empty_query_kept_existing",
+                    "ok_empty_query_stale_fingerprint" if stale_fingerprint_mismatch
+                    else "ok_empty_query_kept_existing",
                     rows=0,
                     path=_rel(out_path),
                     optional_columns_missing=optional_missing_str,
-                    fingerprint=last_manifest_fingerprint_for_path(
-                        manifest_path, _rel(out_path)
-                    ),
+                    fingerprint=prior_fingerprint,
                 )
             elif zero_rows_is_suspicious:
                 # Fix 2 (round 3 review): for a substantive, universe-
