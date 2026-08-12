@@ -23,21 +23,31 @@ re-query tables that already succeeded.
 Column lists are checked against the account's actual schema via
 db.describe_table() before each query, rather than assumed blind, since exact
 column/table names can vary slightly by WRDS account vintage. Any table that
-doesn't exist, or whose real schema is missing ANY column this script asks
-for, is logged and skipped rather than crashing the run, so one wrong name
-doesn't take down an otherwise-successful pull -- but it is also never
-silently queried with a partial column set. There is no "optional column"
-tier: every column named in a pull_table() call is one this script actually
-needs downstream (a payload value, a join key, or a point-in-time validity
-bound), so a missing column always aborts that table's pull (logged as
-"missing_required_columns") rather than risking a silently-crippled result
-that looks complete in the manifest but is missing something a downstream
-join or calculation depends on.
+doesn't exist, or whose real schema is missing a REQUIRED column, is logged
+and skipped rather than crashing the run.
+
+Columns come in two tiers per table (see each *_REQUIRED_COLUMNS /
+*_OPTIONAL_COLUMNS pair below):
+  - required: load-bearing payload/join-key/point-in-time-validity columns.
+    Missing ANY of these aborts that table's pull entirely (logged as
+    "missing_required_columns"), because a result missing one of these would
+    look complete in the manifest while silently lacking something a
+    downstream join or calculation depends on.
+  - optional: genuinely speculative "grab it now since this is a one-shot
+    pull" extras (transaction-cost fields, GICS sector, analyst-count detail
+    beyond what this project's Phase I signal needs, etc.) whose exact name
+    can vary by WRDS account vintage/subscription tier. A missing optional
+    column is dropped from that table's query and noted in the manifest's
+    "optional_columns_missing" field -- visible, but never fatal.
+Every column named in either tier for a given table IS requested from the
+real query when present; only a missing REQUIRED column can abort the pull.
 
 Every table's outcome -- success, skip, or failure -- is appended to
 data/metadata/wrds_pull_manifest.csv immediately after that table's attempt,
 not buffered in memory until the end, so an interrupted run still leaves an
-accurate manifest for everything it got through.
+accurate manifest for everything it got through. Error text written to that
+manifest is sanitized first (see _sanitize_error_text) since the manifest is
+git-tracked.
 
 Usage:
     python scripts/pull_wrds_data.py [--force]
@@ -93,73 +103,230 @@ RETURN_END_DATE = "2014-06-30"
 # pulls contain duplicate, unusable rows.
 COMPUSTAT_STD_FILTER = "indfmt='INDL' AND datafmt='STD' AND popsrc='D' AND consol='C'"
 
-# Per-table column lists for every pull_table() call in main(), pulled out to
-# module level (rather than inline list literals in main()) for one reason:
-# tests/test_pull_wrds_data.py needs a "full column set" fixture to build a
-# fake schema that never spuriously fails any table's pull, and a previous
-# round's hand-copied duplicate of that set drifted out of sync with main()'s
-# real calls. Defining the lists once here and having BOTH main() and the
-# test suite import these same constants makes that kind of drift structurally
-# impossible instead of merely policed by hand -- there is only one place a
-# column ever gets added or removed for a given table.
+# Per-table required/optional column lists for every pull_table() call in
+# main(), pulled out to module level (rather than inline list literals in
+# main()) for one reason: tests/test_pull_wrds_data.py needs these same lists
+# to build fake schemas that never spuriously fail a table's pull, and a
+# previous round's hand-copied duplicate of that set drifted out of sync
+# with main()'s real calls. Defining the lists once here and having BOTH
+# main() and the test suite import these same constants makes that kind of
+# drift structurally impossible instead of merely policed by hand -- there is
+# only one place a column ever gets added or removed for a given table.
 #
-# Every column below is required: see pull_table()'s docstring for why there
-# is no more "optional column" tier.
-IBES_STATSUMU_EPSUS_COLUMNS = [
-    "ticker", "cusip", "oftic", "cname", "statpers", "measure", "fiscalp",
-    "fpi", "curcode", "usfirm", "fpedats", "numest", "numup", "numdown",
-    "medest", "meanest", "stdev", "highest", "lowest",
+# required = aborts the whole table's pull if missing from the real schema.
+# optional = dropped from the query (and noted in the manifest) if missing;
+#            never aborts the pull.
+#
+# The required/optional split below reflects what this project's Phase I
+# signal-and-returns equity study actually needs as load-bearing vs. what was
+# added purely as "grab it now, it's a one-shot pull" speculation (see the
+# per-table reasoning comments at each constant).
+
+# ibes.statsumu_epsus: meanest/fpi/fpedats/statpers/ticker are the consensus
+# estimate itself, its forecast-horizon identification, and its snapshot
+# date -- without any of them this table has no usable payload at all.
+# numest/stdev are also promoted to required (not merely nice-to-have):
+# this project's earnings-surprise construction uses analyst dispersion
+# (stdev) and coverage count (numest) directly, so losing either one would
+# silently degrade the surprise measure rather than just being missing
+# color. Everything else here is genuinely optional detail.
+IBES_STATSUMU_EPSUS_REQUIRED_COLUMNS = [
+    "ticker", "statpers", "fpedats", "fpi", "meanest", "numest", "stdev",
 ]
-IBES_ACTU_EPSUS_COLUMNS = [
-    "ticker", "cusip", "oftic", "cname", "pends", "anndats", "anntims",
-    "value", "curr_act", "measure",
+IBES_STATSUMU_EPSUS_OPTIONAL_COLUMNS = [
+    "cusip", "oftic", "cname", "measure", "fiscalp", "curcode", "usfirm",
+    "numup", "numdown", "medest", "highest", "lowest",
 ]
-IBES_IDSUM_COLUMNS = ["ticker", "cusip", "cname", "oftic", "sdates"]
+IBES_STATSUMU_EPSUS_COLUMNS = (
+    IBES_STATSUMU_EPSUS_REQUIRED_COLUMNS + IBES_STATSUMU_EPSUS_OPTIONAL_COLUMNS
+)
+
+# ibes.actu_epsus: ticker/anndats/value are the join key, the event date
+# itself, and the actual reported EPS -- the whole reason this table is
+# pulled. Everything else is identifying/descriptive color that doesn't gate
+# whether this table is usable.
+IBES_ACTU_EPSUS_REQUIRED_COLUMNS = ["ticker", "anndats", "value"]
+IBES_ACTU_EPSUS_OPTIONAL_COLUMNS = [
+    "cusip", "oftic", "cname", "pends", "anntims", "curr_act",
+]
+IBES_ACTU_EPSUS_COLUMNS = IBES_ACTU_EPSUS_REQUIRED_COLUMNS + IBES_ACTU_EPSUS_OPTIONAL_COLUMNS
+
+IBES_IDSUM_REQUIRED_COLUMNS = ["ticker", "cusip"]
+IBES_IDSUM_OPTIONAL_COLUMNS = ["cname", "oftic", "sdates"]
+IBES_IDSUM_COLUMNS = IBES_IDSUM_REQUIRED_COLUMNS + IBES_IDSUM_OPTIONAL_COLUMNS
+
 # detu_epsus (unadjusted), NOT det_epsus (split-adjusted): the other two
 # I/B/E/S tables above (statsumu_epsus, actu_epsus) are both split-UNADJUSTED
 # (that's what the "u" in their names means), so pulling the split-ADJUSTED
 # detail file would mix incompatible adjustment bases and couldn't be
 # combined with them. The adjusted file also carries look-ahead: its
 # adjustment factor isn't knowable until the future split actually happens.
-IBES_DETU_EPSUS_COLUMNS = [
-    "ticker", "cusip", "estimator", "analys", "fpedats", "fpi", "revdats",
-    "revtims", "value", "measure",
+#
+# ticker/fpedats/value are required: the join key, forecast-period
+# identification, and the actual estimate value -- without any of these the
+# table is unusable. Everything else (including revdats/revtims, the
+# revision-date fields the WHERE clause below filters on) is downgraded to
+# optional: this table's exact column names are an unverified guess for this
+# account (never spot-checked against a real describe_table() call), so a
+# renamed column here shouldn't take down the whole table. NOTE the one
+# sharp edge this creates: if revdats itself turns out to be genuinely
+# absent from this account's schema, the WHERE clause below (which filters
+# on revdats) will still reference it and the query will fail at run time --
+# that failure is caught and logged as "query_failed" (a real, visible
+# failure), not silently swallowed, so this is a safe (if slightly
+# unpolished) degradation rather than a correctness bug.
+IBES_DETU_EPSUS_REQUIRED_COLUMNS = ["ticker", "fpedats", "value"]
+IBES_DETU_EPSUS_OPTIONAL_COLUMNS = [
+    "cusip", "estimator", "analys", "revdats", "revtims", "measure",
 ]
-CRSP_DSF_COLUMNS = [
-    "permno", "date", "ret", "retx", "prc", "vol", "shrout", "cfacpr",
-    "cfacshr", "bid", "ask", "bidlo", "askhi", "openprc", "numtrd",
+IBES_DETU_EPSUS_COLUMNS = IBES_DETU_EPSUS_REQUIRED_COLUMNS + IBES_DETU_EPSUS_OPTIONAL_COLUMNS
+
+# crsp.dsf: permno/date/ret are the join key, the trading date, and the
+# return itself. prc/shrout/cfacpr/cfacshr are required too: market-cap
+# weighting and split/dividend adjustment (via the cfac* factors) are
+# core to this project's signal-and-returns construction, not extras.
+# retx/vol/bid/ask/bidlo/askhi/openprc/numtrd are downgraded to optional:
+# retx is redundant with ret for this phase's purposes (no dividend-only
+# analysis planned yet), and the rest exist purely for a future
+# transaction-cost/capacity phase this project isn't in yet.
+CRSP_DSF_REQUIRED_COLUMNS = ["permno", "date", "ret", "prc", "shrout", "cfacpr", "cfacshr"]
+CRSP_DSF_OPTIONAL_COLUMNS = [
+    "retx", "vol", "bid", "ask", "bidlo", "askhi", "openprc", "numtrd",
 ]
-CRSP_DSI_COLUMNS = ["date", "vwretd", "vwretx", "ewretd", "ewretx", "sprtrn"]
-CRSP_DSEDELIST_COLUMNS = ["permno", "dlstdt", "dlret", "dlstcd"]
-# ncusip (the CUSIP actually in effect during [namedt, nameenddt]) is
-# required alongside cusip (the header/most-recent CUSIP, constant across a
-# permno's whole history): this table's pull is justified on point-in-time
-# grounds (hence namedt/nameenddt below), and cusip alone can't satisfy that
-# -- ncusip is the one that's actually valid for a given historical date.
-# cusip is kept too since some downstream uses legitimately want the current/
-# header identifier rather than the as-of-date one.
-CRSP_STOCKNAMES_COLUMNS = [
-    "permno", "permco", "namedt", "nameenddt", "ticker", "comnam", "cusip",
-    "ncusip", "shrcd", "exchcd", "siccd",
+CRSP_DSF_COLUMNS = CRSP_DSF_REQUIRED_COLUMNS + CRSP_DSF_OPTIONAL_COLUMNS
+
+# crsp.dsi: date plus at least one of the value-weighted return / S&P
+# benchmark is the whole payload this table exists for -- vwretd and
+# sprtrn are both kept required (either one alone would still let a
+# market-adjustment be computed, but both are cheap to require and this is
+# a one-shot pull). vwretx/ewretd/ewretx are equal-weighted or ex-dividend
+# variants this project doesn't need for Phase I.
+CRSP_DSI_REQUIRED_COLUMNS = ["date", "vwretd", "sprtrn"]
+CRSP_DSI_OPTIONAL_COLUMNS = ["vwretx", "ewretd", "ewretx"]
+CRSP_DSI_COLUMNS = CRSP_DSI_REQUIRED_COLUMNS + CRSP_DSI_OPTIONAL_COLUMNS
+
+# crsp.dsedelist: permno/dlstdt/dlret are the join key, the delisting date,
+# and the delisting return itself -- without dlret this table has no
+# payload, just the fact that a delisting happened with no return impact to
+# attribute to it. dlstcd (the delisting reason code) is nice for
+# diagnostics but not load-bearing for the return series itself.
+CRSP_DSEDELIST_REQUIRED_COLUMNS = ["permno", "dlstdt", "dlret"]
+CRSP_DSEDELIST_OPTIONAL_COLUMNS = ["dlstcd"]
+CRSP_DSEDELIST_COLUMNS = CRSP_DSEDELIST_REQUIRED_COLUMNS + CRSP_DSEDELIST_OPTIONAL_COLUMNS
+
+# crsp.stocknames: this table's entire reason for being pulled is
+# point-in-time identity -- permno (the join key), namedt/nameenddt (the
+# validity window), ticker, and the CUSIP pair (cusip = header/most-recent,
+# ncusip = the one actually in effect during [namedt, nameenddt]) are all
+# required for that reason. permco/comnam/shrcd/exchcd/siccd are
+# descriptive/classification extras that are useful but not what this
+# table's pull is justified on.
+CRSP_STOCKNAMES_REQUIRED_COLUMNS = [
+    "permno", "namedt", "nameenddt", "ticker", "cusip", "ncusip",
 ]
-COMP_FUNDQ_COLUMNS = [
-    "gvkey", "datadate", "fyearq", "fqtr", "atq", "ceqq", "saleq", "niq",
-    "epspxq", "rdq", "indfmt", "datafmt", "popsrc", "consol",
+CRSP_STOCKNAMES_OPTIONAL_COLUMNS = ["permco", "comnam", "shrcd", "exchcd", "siccd"]
+CRSP_STOCKNAMES_COLUMNS = (
+    CRSP_STOCKNAMES_REQUIRED_COLUMNS + CRSP_STOCKNAMES_OPTIONAL_COLUMNS
+)
+
+# comp.fundq: gvkey/datadate are the join key and report date; rdq is
+# Compustat's standard PEAD event-date field. indfmt/datafmt/popsrc/consol
+# are required because COMPUSTAT_STD_FILTER (below) filters on exactly
+# these four columns -- if any were silently missing from this account's
+# schema, the WHERE clause referencing them would be a raw SQL error at
+# query time rather than a graceful skip; requiring them means the
+# missing-column check aborts BEFORE the query is ever built. The actual
+# financial-statement fields (fyearq/fqtr/atq/ceqq/saleq/niq/epspxq) are
+# useful but not required to abort the whole table if one is renamed.
+COMP_FUNDQ_REQUIRED_COLUMNS = [
+    "gvkey", "datadate", "indfmt", "datafmt", "popsrc", "consol", "rdq",
 ]
-COMP_COMPANY_COLUMNS = ["gvkey", "conm", "sic", "gsector"]
-COMP_FUNDA_COLUMNS = [
-    "gvkey", "datadate", "fyear", "at", "ceq", "sale", "ni", "epspx",
-    "indfmt", "datafmt", "popsrc", "consol",
-]
-WRDSAPPS_IBCRSPHIST_COLUMNS = ["ticker", "permno", "ncusip", "score", "sdate", "edate"]
-CRSP_CCMXPF_LNKHIST_COLUMNS = [
-    "gvkey", "lpermno", "linktype", "linkprim", "linkdt", "linkenddt",
-]
+COMP_FUNDQ_OPTIONAL_COLUMNS = ["fyearq", "fqtr", "atq", "ceqq", "saleq", "niq", "epspxq"]
+COMP_FUNDQ_COLUMNS = COMP_FUNDQ_REQUIRED_COLUMNS + COMP_FUNDQ_OPTIONAL_COLUMNS
+
+# comp.company: gvkey/conm/sic are the join key, company name, and current
+# SIC classification. gsector (GICS sector) is downgraded to optional: GICS
+# coverage varies by subscription tier, and it's already documented
+# elsewhere as current-snapshot-only (not point-in-time), so it's a
+# nice-to-have, not load-bearing.
+COMP_COMPANY_REQUIRED_COLUMNS = ["gvkey", "conm", "sic"]
+COMP_COMPANY_OPTIONAL_COLUMNS = ["gsector"]
+COMP_COMPANY_COLUMNS = COMP_COMPANY_REQUIRED_COLUMNS + COMP_COMPANY_OPTIONAL_COLUMNS
+
+# comp.funda: same indfmt/datafmt/popsrc/consol reasoning as fundq above
+# (COMPUSTAT_STD_FILTER filters on these). fyear/at/ceq/sale/ni/epspx are
+# useful annual controls (book-to-market, etc.) but not required to abort
+# the whole table if one is renamed.
+COMP_FUNDA_REQUIRED_COLUMNS = ["gvkey", "datadate", "indfmt", "datafmt", "popsrc", "consol"]
+COMP_FUNDA_OPTIONAL_COLUMNS = ["fyear", "at", "ceq", "sale", "ni", "epspx"]
+COMP_FUNDA_COLUMNS = COMP_FUNDA_REQUIRED_COLUMNS + COMP_FUNDA_OPTIONAL_COLUMNS
+
+# wrdsapps.ibcrsphist: ticker/permno/sdate/edate are the link itself plus
+# its point-in-time validity window -- without any of them this table
+# can't do the one thing it exists for. ncusip/score are nice-to-have
+# corroborating fields for the link, not load-bearing.
+WRDSAPPS_IBCRSPHIST_REQUIRED_COLUMNS = ["ticker", "permno", "sdate", "edate"]
+WRDSAPPS_IBCRSPHIST_OPTIONAL_COLUMNS = ["ncusip", "score"]
+WRDSAPPS_IBCRSPHIST_COLUMNS = (
+    WRDSAPPS_IBCRSPHIST_REQUIRED_COLUMNS + WRDSAPPS_IBCRSPHIST_OPTIONAL_COLUMNS
+)
+
+# crsp.ccmxpf_lnkhist: gvkey/lpermno are the join keys on each side;
+# linkdt/linkenddt are the point-in-time link validity bounds, without
+# which this table can silently misattribute a gvkey/permno link outside
+# its actually-valid window -- all four required for that reason.
+# linktype/linkprim (link quality/primacy flags) are useful for filtering
+# to the "best" link but not required for the link to exist at all.
+CRSP_CCMXPF_LNKHIST_REQUIRED_COLUMNS = ["gvkey", "lpermno", "linkdt", "linkenddt"]
+CRSP_CCMXPF_LNKHIST_OPTIONAL_COLUMNS = ["linktype", "linkprim"]
+CRSP_CCMXPF_LNKHIST_COLUMNS = (
+    CRSP_CCMXPF_LNKHIST_REQUIRED_COLUMNS + CRSP_CCMXPF_LNKHIST_OPTIONAL_COLUMNS
+)
 
 MANIFEST_FIELDNAMES = [
-    "library", "table", "status", "rows", "path", "missing_columns", "error",
-    "pulled_at", "start_date", "end_date",
+    "library", "table", "status", "rows", "path", "missing_columns",
+    "optional_columns_missing", "error", "pulled_at", "start_date", "end_date",
 ]
+
+# Manifest error-text sanitization (Fix 4): data/metadata/wrds_pull_manifest.csv
+# is git-tracked (a deliberate choice from a prior round), and exception text
+# from psycopg2/sqlalchemy connection failures can embed hostnames, usernames,
+# or other connection details. _MAX_ERROR_LEN caps how much raw exception text
+# ever reaches that file.
+_MAX_ERROR_LEN = 300
+
+
+def _sanitize_error_text(text: str) -> str:
+    """Best-effort scrub of an exception message before it's written to the
+    git-tracked manifest CSV.
+
+    Two simple steps, deliberately not a general-purpose credential
+    scrubber:
+      1. If the literal WRDS_USERNAME from the environment appears verbatim
+         in the text, redact it. This is the most common way a
+         connection-error message leaks account identity (e.g.
+         "FATAL: password authentication failed for user \"jdoe123\"").
+      2. Truncate to _MAX_ERROR_LEN characters. The manifest only needs
+         enough text to identify what failed, not a full stack trace -- and
+         the longer an error message is, the more likely it accidentally
+         embeds a hostname, DSN, or other connection detail.
+
+    Limits (documented, not hidden): this does NOT parse connection-string
+    syntax, does NOT redact hostnames/ports/database names, and won't catch
+    a username that differs from the current process's WRDS_USERNAME (e.g.
+    an error surfaced from a stale or alternate credential, or one where the
+    username is embedded in a different case). psycopg2/sqlalchemy error
+    text does not normally echo the password itself, only host/user, so
+    password leakage specifically is not the primary risk this addresses.
+    This is "don't casually commit the account name to git history", not a
+    substitute for reviewing manifest diffs before a push.
+    """
+    if not text:
+        return text
+    username = os.environ.get("WRDS_USERNAME", "")
+    if username:
+        text = text.replace(username, "[REDACTED_WRDS_USERNAME]")
+    return text[:_MAX_ERROR_LEN]
 
 
 def load_env_file(path: Path) -> None:
@@ -227,10 +394,17 @@ def append_manifest_row(row: dict, manifest_path: Path = None) -> None:
     after db.close(), inside a finally block that can itself be interrupted
     -- means a killed/interrupted run still leaves a manifest that's accurate
     for everything it got through before it died.
+
+    Any "error" field is sanitized (see _sanitize_error_text) right here,
+    at the single choke point where a row actually reaches the git-tracked
+    CSV -- rather than at each call site that sets "error" -- so a future
+    call site can't forget to sanitize its own error text.
     """
     manifest_path = Path(manifest_path) if manifest_path is not None else MANIFEST_PATH
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     row = dict(row)
+    if row.get("error"):
+        row["error"] = _sanitize_error_text(str(row["error"]))
     row.setdefault(
         "pulled_at", dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     )
@@ -244,104 +418,15 @@ def append_manifest_row(row: dict, manifest_path: Path = None) -> None:
 
 def record(log: list, row: dict, manifest_path: Path = None) -> None:
     """Add one entry to both the in-memory run log (used only for the final
-    printed summary) and the on-disk manifest (the durable record)."""
+    printed summary -- kept un-sanitized since it's console-only, never
+    committed) and the on-disk manifest (the durable, git-tracked record,
+    sanitized by append_manifest_row)."""
     row = dict(row)
     row.setdefault(
         "pulled_at", dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     )
     log.append(row)
     append_manifest_row(row, manifest_path=manifest_path)
-
-
-def _stream_query_to_parquet(db, sql: str, out_path: Path):
-    """Run `sql` against `db` using chunked streaming (`return_iter=True`),
-    accumulating each chunk as a pyarrow Table, then write the combined
-    result to `out_path` once, atomically, at the end.
-
-    wrds.Connection.raw_sql's default (non-streaming) path internally
-    accumulates chunks via repeated pd.concat, which is O(n^2) in the number
-    of chunks -- risky for a table the size of crsp.dsf. Streaming via
-    `return_iter=True` avoids that repeated-pd.concat blowup.
-
-    We deliberately do NOT use a fixed-schema pyarrow.parquet.ParquetWriter
-    here (an earlier version did, seeded from the first chunk's schema):
-    per-chunk schemas can legitimately differ in more than one way. The
-    obvious case is a null-type column (e.g. crsp.dsf's `numtrd`, NASDAQ-only
-    and NULL for every NYSE/AMEX row) promoted to a real type once a later
-    chunk has actual values. The subtler, ACTUALLY-observed case is two
-    chunks that both have real (non-null) values in a numeric column but
-    infer to different pandas/pyarrow dtypes: pandas' `convert_dtypes()`
-    (used internally by wrds's chunked reader) runs independently per chunk,
-    so a chunk whose values all happen to be whole numbers infers as `Int64`
-    while another chunk with a fractional value infers as `Float64` for the
-    very same column. `pa.concat_tables(..., promote_options="default")`
-    handles the null-type-promotion case but NOT the Int64-vs-Float64 case
-    -- it raises `ArrowTypeError` on that mismatch. `promote_options=
-    "permissive"` unifies both cases (e.g. Int64 and Float64 both promote to
-    a common `double` column), so that's what we use here. We also strip the
-    combined table's schema metadata before writing (see the inline comment
-    at that call) -- without that, stale per-chunk pandas-dtype metadata
-    makes a later read try to cast the unified column back to the ORIGINAL
-    (pre-promotion) dtype and fail all over again on the same data.
-
-    Holding every chunk's pyarrow Table in memory and combining them all at
-    once at the end -- rather than writing incrementally -- means this
-    function is NOT low-memory and does NOT avoid ever holding the full
-    table: it holds one table's entire chunk set (input data plus pyarrow's
-    in-memory Arrow representation of it) before the final concat+write.
-    That is an accepted, deliberate trade-off, not an oversight: this is a
-    one-time bulk pull, not a recurring job, and this project's per-table
-    date range tops out at a few GB, so the memory cost of holding one
-    table's chunks is acceptable in exchange for not having to build a fully
-    streaming, incremental schema-unification system (which would be more
-    code, and more surface area for a new subtle bug, than the memory this
-    saves is worth). We're still never doing repeated pandas concat, which
-    was the original O(n^2) risk this function replaced.
-
-    The final write goes to a temporary path and is moved into place with
-    os.replace() only after it fully succeeds, so a failure partway through
-    (e.g. on a --force re-pull) can never truncate or destroy a
-    previously-good `out_path` -- it is left completely untouched until the
-    new file is known-good.
-
-    Returns (total_rows, wrote_any). wrote_any is False only if the query
-    returned zero chunks (no rows at all), in which case no file is created
-    (and out_path is untouched).
-    """
-    tables = []
-    total_rows = 0
-    for chunk in db.raw_sql(sql, return_iter=True):
-        tables.append(pa.Table.from_pandas(chunk, preserve_index=False))
-        total_rows += len(chunk)
-
-    if not tables:
-        return 0, False
-
-    combined = pa.concat_tables(tables, promote_options="permissive")
-    # `promote_options="permissive"` unifies the ARROW schema (e.g. Int64 and
-    # Float64 chunks both promote to a common `double` column) -- but each
-    # chunk's pyarrow Table also carries pandas-specific schema metadata
-    # (embedded by pa.Table.from_pandas) recording the ORIGINAL pandas dtype
-    # per column. After promotion that metadata is stale for any promoted
-    # column: it still says e.g. "this column is pandas Int64", even though
-    # the promoted Arrow column is now `double`. If left in place, a later
-    # pd.read_parquet() (or .to_pandas()) tries to honor that stale metadata
-    # and cast the double column back to Int64 -- which raises ArrowInvalid
-    # ("Float value ... was truncated converting to int64") on the very
-    # first non-whole-number value, i.e. exactly the case this promotion was
-    # supposed to fix. Dropping all schema metadata before writing forces a
-    # later read to infer dtypes fresh from the (already-correct) unified
-    # Arrow schema instead of trusting stale per-chunk pandas hints.
-    combined = combined.replace_schema_metadata(None)
-    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
-    try:
-        pq.write_table(combined, str(tmp_path))
-        os.replace(tmp_path, out_path)
-    except (Exception, KeyboardInterrupt):
-        if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
-        raise
-    return total_rows, True
 
 
 # Table/library/column names are f-string-interpolated into the SQL below.
@@ -364,12 +449,245 @@ def _validate_sql_identifier(kind: str, name: str) -> None:
         )
 
 
+def _widen_integers_to_float64(schema: "pa.Schema") -> "pa.Schema":
+    """Return `schema` with every integer-typed field replaced by
+    pa.float64(). Non-integer fields (including pa.null()) pass through
+    unchanged.
+
+    This is the core defense against the Int64-vs-Float64 chunk-drift bug:
+    wrds's chunked reader runs pandas dtype inference independently per
+    chunk, so the SAME numeric column can come back as pandas `Int64` in a
+    chunk where every value happens to be whole and `Float64` in another
+    chunk with a fractional value. Under a true single-pass incremental
+    writer (ParquetWriter's schema is fixed the moment it's constructed), a
+    LATER chunk revealing a fraction can never retroactively widen an
+    already-pinned int64 column -- so the only way to guarantee we never
+    need an unsafe (truncating) downcast later is to never pin an integer
+    type in the first place. The accepted cost: a genuinely integer-only
+    column (e.g. permno, gvkey -- true database integers that will never
+    have a fractional value in any chunk) also ends up as float64 in the
+    output. That's a real, deliberate trade-off: those id values are well
+    within float64's exact-integer range, so no precision is actually lost,
+    and a uniform rule (rather than a per-column allowlist of which columns
+    are "safe" to leave as int) is far less bug-prone than trying to guess
+    upfront which columns could ever drift.
+    """
+    fields = []
+    for field in schema:
+        if pa.types.is_integer(field.type):
+            fields.append(pa.field(field.name, pa.float64(), nullable=True))
+        else:
+            fields.append(field)
+    return pa.schema(fields)
+
+
+def _merge_schema_resolving_nulls(resolved: "pa.Schema", new_schema: "pa.Schema") -> "pa.Schema":
+    """Merge `new_schema` into `resolved` (or just widen+return `new_schema`
+    if `resolved` is None): for each field, keep `resolved`'s type unless
+    it's still pa.null() and `new_schema` has a concrete type for that
+    field, in which case adopt `new_schema`'s type (widened per
+    _widen_integers_to_float64). Used to resolve a column that happened to
+    be entirely NULL in earlier buffered chunks (e.g. crsp.dsf's numtrd,
+    NASDAQ-only and NULL for every NYSE/AMEX row) once a chunk with a real
+    value for it is seen.
+    """
+    if resolved is None:
+        return _widen_integers_to_float64(new_schema)
+    fields = []
+    for rf in resolved:
+        if pa.types.is_null(rf.type):
+            nf_type = new_schema.field(rf.name).type
+            if pa.types.is_integer(nf_type):
+                nf_type = pa.float64()
+            fields.append(pa.field(rf.name, nf_type, nullable=True))
+        else:
+            fields.append(rf)
+    return pa.schema(fields)
+
+
+# Bounded lookahead buffer for schema resolution (see
+# _stream_query_to_parquet's docstring for the full reasoning): rather than
+# holding the WHOLE table's chunks in memory (the previous round's approach)
+# or blindly trusting only the very first chunk (which could show a
+# pa.null() type for a column that's coincidentally all-NULL in that one
+# chunk), we buffer at most this many chunks while any column's resolved
+# type is still ambiguous, then pin the schema and flush. A small fixed
+# constant, NOT proportional to table size -- still a bounded-memory
+# improvement over accumulating every chunk, while giving a realistic chance
+# of resolving a null-in-first-chunk column from real data before pinning.
+_SCHEMA_RESOLUTION_CHUNK_CAP = 3
+
+
+def _stream_query_to_parquet(db, library, table, columns, where_sql, out_path):
+    """Run the real `columns` query against `library`.`table` (filtered by
+    `where_sql`, if given) using chunked streaming (`return_iter=True`), and
+    write the result to `out_path` incrementally via a real
+    `pyarrow.parquet.ParquetWriter` -- bounded memory (see below), never the
+    whole table held at once.
+
+    SCHEMA PINNING (Fix 3, replacing the previous round's accumulate-then-
+    pa.concat_tables-then-strip-metadata approach):
+
+    The problem that approach was patching: wrds's chunked reader runs
+    pandas' dtype inference independently per chunk, so the SAME numeric
+    column can come back as pandas `Int64` in a chunk where every value
+    happens to be whole and `Float64` in another chunk with a fractional
+    value -- for the same query, same column, just depending on which rows
+    landed in which 500k-row chunk. Reconciling that after the fact (concat
+    with permissive promotion, then strip stale per-chunk pandas metadata so
+    a later read doesn't try to cast back to the wrong original dtype) works,
+    but it requires holding every chunk in memory at once (roughly doubling
+    peak memory: the accumulated chunks plus the final concatenated table),
+    and the schema is only decided after ALL data is already in hand.
+
+    DEVIATION FROM THE ORIGINALLY SUGGESTED "zero-row probe query" APPROACH
+    (documented here because round 5's verification discipline explicitly
+    asks for this): the natural design is "issue `SELECT <cols> FROM
+    <table> WHERE 1=0`, convert the resulting empty DataFrame to a pyarrow
+    Schema, and trust that as the pinned schema, since a zero-row result
+    should reflect the DB's real per-column type rather than a
+    value-dependent guess." I implemented this and then verified it against
+    the ACTUAL pandas/wrds code path (pandas.io.sql._convert_arrays_to_dataframe
+    and _query_iterator, read directly from the installed pandas==2.2.3
+    source, not assumed): for a genuinely zero-row result, pandas takes the
+    `DataFrame(columns=columns)` fallback branch -- EVERY column comes back
+    plain `object` dtype, with no per-column type information from the DB
+    driver at all. Converting that to a pyarrow Schema gives pa.null() for
+    literally every field, regardless of the column's real type. I confirmed
+    this empirically (see the round's test suite / PR notes) -- the probe
+    query is not a shortcut, it's a wasted round trip that provides no type
+    information. Given that finding, and given this project's standing
+    "minimize WRDS query volume" constraint, I dropped the probe query
+    entirely rather than ship a mechanism that looks like protection but
+    isn't (exactly the failure mode this round is meant to eliminate).
+
+    What this function does instead: build the schema from REAL chunks,
+    widening every integer field to float64 up front
+    (_widen_integers_to_float64) so a later chunk's fractional value can
+    never require an unsafe downcast. Because a column can still be
+    genuinely all-NULL (pa.null()) in an early chunk (e.g. numtrd, NASDAQ-
+    only), we buffer up to _SCHEMA_RESOLUTION_CHUNK_CAP chunks -- a small,
+    FIXED constant, not proportional to the table's size -- merging each
+    into a running "resolved schema" (_merge_schema_resolving_nulls) until
+    every column has a concrete type or the cap is reached, THEN create the
+    ParquetWriter and flush the buffered chunks, and stream+cast+write every
+    subsequent chunk one at a time with no further buffering. This is a
+    materially bounded memory profile (a small constant multiple of one
+    chunk, not the whole table), though not literally "exactly one chunk"
+    in every case -- an honest, documented trade-off, not the literal
+    single-chunk design originally sketched, because a true single-chunk
+    design cannot correctly resolve a column that's all-NULL in chunk one
+    without either guessing its type or accepting a hard failure later.
+
+    KNOWN LIMITATION: if an optional/nullable column is NULL in every one
+    of the first _SCHEMA_RESOLUTION_CHUNK_CAP chunks and only gets a real
+    value in a LATER chunk, the pinned schema still has pa.null() for that
+    field, and casting that later chunk raises (pyarrow does not support
+    casting real data onto a pa.null() target -- verified directly:
+    `pa.table(...).cast(schema_with_null_field, safe=False)` raises
+    ArrowNotImplementedError, it does not silently drop or corrupt data).
+    That exception is caught by pull_table's outer handler and logged as
+    "query_failed" -- a real, visible failure, not silent data loss -- so
+    this limitation degrades safely if it's ever hit; it is not expected to
+    be hit in practice for this project's tables (whichever optional
+    columns can be sparse, e.g. crsp.dsf.numtrd, are NULL for a whole
+    EXCHANGE, not the whole table, so any chunk spanning more than a
+    handful of distinct permnos should see a real value well within the
+    3-chunk cap).
+
+    We no longer call `.replace_schema_metadata(None)` anywhere: that call
+    existed to strip stale pandas-dtype metadata left over from the
+    concat-then-promote approach, which doesn't apply here -- the schema is
+    pinned before most/all chunks are written and every chunk is explicitly
+    cast to it, so there is no stale metadata to strip.
+
+    The final write goes to a temporary path and is moved into place with
+    os.replace() only after it fully succeeds, so a failure partway through
+    (e.g. on a --force re-pull) can never truncate or destroy a
+    previously-good `out_path` -- it is left completely untouched until the
+    new file is known-good.
+
+    Returns (total_rows, wrote_file). Per the real wrds/pandas contract
+    (verified directly against pandas.io.sql._query_iterator and
+    wrds.Connection.raw_sql's use of pd.read_sql_query(..., chunksize=...)):
+    a zero-row query still yields exactly ONE (empty) chunk, never zero
+    chunks -- so `wrote_file` is False whenever total_rows == 0 (in which
+    case no file is written and out_path, if it already existed, is left
+    completely untouched), not merely whenever "no chunks were produced".
+    """
+    col_list_sql = ", ".join(columns)
+    sql = f"SELECT {col_list_sql} FROM {library}.{table}"
+    if where_sql:
+        sql += f" WHERE {where_sql}"
+
+    total_rows = 0
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    writer = None
+    resolved_schema = None
+    pending = []  # bounded by _SCHEMA_RESOLUTION_CHUNK_CAP -- see docstring
+    try:
+        for chunk in db.raw_sql(sql, return_iter=True):
+            total_rows += len(chunk)
+            chunk_table = pa.Table.from_pandas(chunk, preserve_index=False)
+
+            if writer is not None:
+                writer.write_table(chunk_table.cast(resolved_schema, safe=False))
+                continue
+
+            resolved_schema = _merge_schema_resolving_nulls(
+                resolved_schema, chunk_table.schema
+            )
+            pending.append(chunk_table)
+
+            still_unresolved = any(pa.types.is_null(f.type) for f in resolved_schema)
+            if not still_unresolved or len(pending) >= _SCHEMA_RESOLUTION_CHUNK_CAP:
+                writer = pq.ParquetWriter(str(tmp_path), resolved_schema)
+                for pending_table in pending:
+                    writer.write_table(pending_table.cast(resolved_schema, safe=False))
+                pending = []
+
+        if writer is None:
+            # Fewer chunks existed in total than the resolution cap (this
+            # includes the zero-total-rows case: exactly one empty chunk).
+            # Flush whatever's pending now with the best schema resolved so
+            # far -- there's nothing more to look at.
+            if resolved_schema is None:
+                resolved_schema = pa.schema([])
+            writer = pq.ParquetWriter(str(tmp_path), resolved_schema)
+            for pending_table in pending:
+                writer.write_table(pending_table.cast(resolved_schema, safe=False))
+    except (Exception, KeyboardInterrupt):
+        if writer is not None:
+            try:
+                writer.close()
+            except Exception:
+                pass
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
+
+    writer.close()
+
+    if total_rows == 0:
+        # Per the verified contract above, this is the single-empty-chunk
+        # case, not a "zero chunks" case -- the writer above did open and
+        # write one empty table to tmp_path. Discard it: a genuinely empty
+        # result must never overwrite (or create alongside) out_path.
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        return 0, False
+
+    os.replace(tmp_path, out_path)
+    return total_rows, True
+
+
 def pull_table(
     db,
     log,
     library,
     table,
-    columns,
+    required_columns,
+    optional_columns=None,
     where_sql="",
     out_name=None,
     stream=False,
@@ -385,18 +703,24 @@ def pull_table(
     `describe_table(library, table)` and `raw_sql(sql, return_iter=...)` --
     so tests can pass a lightweight stub instead of a real wrds.Connection.
 
-    `columns` is the single, complete list of columns this table's pull
-    needs. There is no "optional column" tier: every column named here must
-    be present in the real schema (per db.describe_table()) or the pull does
+    `required_columns` is the must-have subset: every one of these must be
+    present in the real schema (per db.describe_table()) or the pull does
     not run at all (status "missing_required_columns", logged with the
-    actual missing names) -- never a partial column set. This is
-    deliberately strict: a caller that only weakly wants a column shouldn't
-    put it in `columns` at all, since its absence always aborts the pull.
+    actual missing names) -- never a partial column set for a REQUIRED
+    column.
 
-    `stream=True` uses `_stream_query_to_parquet` (chunked reads, one
-    combined write at the end -- see that function's docstring for the
-    memory trade-off) instead of loading the full result into a DataFrame
-    first; use it for any table that could plausibly be large.
+    `optional_columns` (default: none) is the nice-to-have subset: any of
+    these that's present in the real schema is included in the query
+    opportunistically; any that's absent is simply dropped (not aborted),
+    and every dropped optional column across the whole call is recorded in
+    the manifest's "optional_columns_missing" field so the gap is visible
+    without being fatal.
+
+    `stream=True` uses `_stream_query_to_parquet` (schema pinned from a
+    zero-row probe query, then written incrementally via a real
+    ParquetWriter -- see that function's docstring) instead of loading the
+    full result into a DataFrame first; use it for any table that could
+    plausibly be large.
     """
     # Validate every identifier that's about to be interpolated into the SQL
     # string -- see _validate_sql_identifier's docstring -- before `library`
@@ -408,7 +732,10 @@ def pull_table(
     # (or parameterized via raw_sql's params support) before reaching here.
     _validate_sql_identifier("library", library)
     _validate_sql_identifier("table", table)
-    for col in columns:
+    optional_columns = list(optional_columns or [])
+    for col in required_columns:
+        _validate_sql_identifier("column", col)
+    for col in optional_columns:
         _validate_sql_identifier("column", col)
 
     out_name = out_name or table
@@ -417,7 +744,7 @@ def pull_table(
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{out_name}.parquet"
 
-    def _log(status, rows=0, path="", missing_columns="", error=""):
+    def _log(status, rows=0, path="", missing_columns="", optional_columns_missing="", error=""):
         record(
             log,
             {
@@ -427,6 +754,7 @@ def pull_table(
                 "rows": rows,
                 "path": path,
                 "missing_columns": missing_columns,
+                "optional_columns_missing": optional_columns_missing,
                 "error": error,
                 "start_date": start_date or "",
                 "end_date": end_date or "",
@@ -464,47 +792,79 @@ def pull_table(
         _log("describe_table_error", error=str(e))
         return
 
-    missing = [c for c in columns if c.lower() not in actual_columns]
-    if missing:
+    missing_required = [c for c in required_columns if c.lower() not in actual_columns]
+    if missing_required:
         print(
             f"  {library}.{table}: required columns missing, NOT querying: "
-            f"{missing}",
+            f"{missing_required}",
             flush=True,
         )
         _log(
             "missing_required_columns",
-            missing_columns=",".join(missing),
-            error=f"required columns missing: {missing}",
+            missing_columns=",".join(missing_required),
+            error=f"required columns missing: {missing_required}",
         )
         return
 
-    sql = f"SELECT {', '.join(columns)} FROM {library}.{table}"
+    present_optional = [c for c in optional_columns if c.lower() in actual_columns]
+    missing_optional = [c for c in optional_columns if c.lower() not in actual_columns]
+    if missing_optional:
+        print(
+            f"  {library}.{table}: optional columns not in schema, dropping "
+            f"(NOT aborting the pull): {missing_optional}",
+            flush=True,
+        )
+    optional_missing_str = ",".join(missing_optional)
+
+    query_columns = list(required_columns) + present_optional
+
+    sql = f"SELECT {', '.join(query_columns)} FROM {library}.{table}"
     if where_sql:
         sql += f" WHERE {where_sql}"
 
     try:
         print(f"Pulling {library}.{table} -> {_rel(out_path)} ...", flush=True)
         if stream:
-            rows, wrote_any = _stream_query_to_parquet(db, sql, out_path)
-            if not wrote_any:
-                if out_path.exists():
-                    # --force re-pull whose query legitimately returned zero
-                    # rows: the previous file at out_path was never touched
-                    # (no chunks means no write at all), so "rows: 0" alone
-                    # would misleadingly read as "this table is empty" when
-                    # actually the old data is still sitting on disk.
-                    print(
-                        "  0 rows returned; existing file at out_path left "
-                        "untouched (not overwritten with an empty result).",
-                        flush=True,
-                    )
-                    _log("ok_empty_query_kept_existing", rows=0)
-                else:
-                    print("  0 rows returned; no file written.", flush=True)
-                    _log("ok", rows=0)
-                return
+            rows, _wrote_file = _stream_query_to_parquet(
+                db, library, table, query_columns, where_sql, out_path
+            )
         else:
             df = db.raw_sql(sql)
+            rows = len(df)
+
+        if rows == 0:
+            if out_path.exists():
+                # A --force re-pull (or, non-streaming, any run) whose query
+                # legitimately returned zero rows: gate strictly on the
+                # actual row count, not on "did the query return an
+                # iterator" / "were there any chunks" -- a zero-row query
+                # still produces exactly one (empty) chunk in the streaming
+                # case, never zero chunks (verified against pandas'
+                # chunked-read implementation), so that was never a safe
+                # signal. The previous file at out_path was never touched
+                # (streaming: no real chunk means no replace(); non-
+                # streaming: we return before ever writing), so "rows: 0"
+                # alone would misleadingly read as "this table is empty"
+                # when actually the old data is still sitting on disk --
+                # log the distinct status WITH the path of the file that
+                # was left in place.
+                print(
+                    "  0 rows returned; existing file at out_path left "
+                    "untouched (not overwritten with an empty result).",
+                    flush=True,
+                )
+                _log(
+                    "ok_empty_query_kept_existing",
+                    rows=0,
+                    path=_rel(out_path),
+                    optional_columns_missing=optional_missing_str,
+                )
+            else:
+                print("  0 rows returned; no file written.", flush=True)
+                _log("ok", rows=0, optional_columns_missing=optional_missing_str)
+            return
+
+        if not stream:
             # Write to a temp path and move it into place atomically so a
             # failure partway through to_parquet() can never leave a
             # truncated file at out_path that a later --force-less run's
@@ -519,9 +879,12 @@ def pull_table(
                 if tmp_path.exists():
                     tmp_path.unlink(missing_ok=True)
                 raise
-            rows = len(df)
+
         print(f"  {rows:,} rows.", flush=True)
-        _log("ok", rows=rows, path=_rel(out_path))
+        _log(
+            "ok", rows=rows, path=_rel(out_path),
+            optional_columns_missing=optional_missing_str,
+        )
     except Exception as e:
         print(f"  FAILED: {e}", flush=True)
         # Both write paths above are now atomic (write-to-temp, then
@@ -529,7 +892,10 @@ def pull_table(
         # on failure -- so out_path itself is never touched by a failed
         # write and must be left alone here, whether it pre-existed (a
         # previously-good file from an earlier run) or never existed.
-        _log("query_failed", error=str(e))
+        _log(
+            "query_failed", error=str(e),
+            optional_columns_missing=optional_missing_str,
+        )
 
 
 def _parse_args(argv):
@@ -590,15 +956,11 @@ def main():
             # intentionally left at END_DATE (not RETURN_END_DATE): extending
             # it would pull in consensus snapshots past the sample cutoff
             # rather than giving an in-sample event more drift-window room,
-            # which is what RETURN_END_DATE is for. Every column in
-            # IBES_STATSUMU_EPSUS_COLUMNS is required (see pull_table's
-            # docstring): meanest/fpi/fpedats in particular, since without
-            # them there's no consensus estimate value or forecast-horizon
-            # identification at all, making a schema missing any of them
-            # useless for this project, not just incomplete.
+            # which is what RETURN_END_DATE is for.
             pull_table(
                 db, log, "ibes", "statsumu_epsus",
-                IBES_STATSUMU_EPSUS_COLUMNS,
+                IBES_STATSUMU_EPSUS_REQUIRED_COLUMNS,
+                optional_columns=IBES_STATSUMU_EPSUS_OPTIONAL_COLUMNS,
                 where_sql=f"statpers BETWEEN '{LOOKBACK_START_DATE}' AND '{END_DATE}'",
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=END_DATE,
@@ -607,11 +969,11 @@ def main():
             # anndats is the earnings ANNOUNCEMENT date -- an actual PEAD
             # trigger event, so (per the module-level RETURN_END_DATE
             # comment) it gets the forward buffer like the return series,
-            # not just END_DATE. value (the actual reported EPS) is
-            # required: without it this table has no payload at all.
+            # not just END_DATE.
             pull_table(
                 db, log, "ibes", "actu_epsus",
-                IBES_ACTU_EPSUS_COLUMNS,
+                IBES_ACTU_EPSUS_REQUIRED_COLUMNS,
+                optional_columns=IBES_ACTU_EPSUS_OPTIONAL_COLUMNS,
                 where_sql=f"anndats BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
@@ -619,36 +981,29 @@ def main():
             )
             pull_table(
                 db, log, "ibes", "idsum",
-                IBES_IDSUM_COLUMNS,
+                IBES_IDSUM_REQUIRED_COLUMNS,
+                optional_columns=IBES_IDSUM_OPTIONAL_COLUMNS,
                 start_date=None, end_date=None,
                 force=force,
             )
-            # Analyst-level detail: STDEV/NUMEST from the summary file already cover
-            # dispersion and analyst count for most purposes, but this is a one-shot
-            # pull, so grab it now rather than come back for it later if a future
-            # slice wants revision-level detail. fpi needed to separate detail
-            # estimates by forecast horizon.
+            # Analyst-level detail: STDEV/NUMEST from the summary file already
+            # cover dispersion and analyst count for most purposes, but this is
+            # a one-shot pull, so grab it now rather than come back for it
+            # later if a future slice wants revision-level detail.
             #
-            # detu_epsus (unadjusted), NOT det_epsus (split-adjusted): the
-            # other two I/B/E/S tables above (statsumu_epsus, actu_epsus) are
-            # both split-UNADJUSTED (that's what the "u" in their names
-            # means), so pulling the split-ADJUSTED detail file would mix
-            # incompatible adjustment bases and couldn't be combined with
-            # them. The adjusted file also carries look-ahead: its adjustment
-            # factor isn't knowable until the future split actually happens.
-            # detu_epsus is expected to share det_epsus's column names
-            # (IBES detail tables conventionally do between adjusted/
-            # unadjusted variants) -- this should still be spot-checked
-            # against this account's actual schema (e.g. via
-            # db.describe_table("ibes", "detu_epsus")) on the next real run;
-            # pull_table's own column-matching check will catch a mismatch
-            # rather than silently mis-querying.
-            # revdats (the estimate REVISION date) is an actual event date
-            # for this table's purposes, so it gets the RETURN_END_DATE
-            # buffer too, same reasoning as actu_epsus.anndats above.
+            # detu_epsus is expected to share det_epsus's column names (IBES
+            # detail tables conventionally do between adjusted/unadjusted
+            # variants) -- this should still be spot-checked against this
+            # account's actual schema on the next real run; most of this
+            # table's columns are optional precisely because that hasn't been
+            # verified yet (see IBES_DETU_EPSUS_OPTIONAL_COLUMNS above).
+            # revdats (the estimate REVISION date) is an actual event date for
+            # this table's purposes, so it gets the RETURN_END_DATE buffer
+            # too, same reasoning as actu_epsus.anndats above.
             pull_table(
                 db, log, "ibes", "detu_epsus",
-                IBES_DETU_EPSUS_COLUMNS,
+                IBES_DETU_EPSUS_REQUIRED_COLUMNS,
+                optional_columns=IBES_DETU_EPSUS_OPTIONAL_COLUMNS,
                 where_sql=f"revdats BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
@@ -668,52 +1023,44 @@ def main():
             # Return series get a forward buffer (RETURN_END_DATE, not
             # END_DATE) so events near the end of the sample still have a
             # full post-event drift window. bid/ask/bidlo/askhi/openprc/numtrd
-            # added for any future transaction-cost/spread modeling -- this
-            # table won't be re-pulled later per the "minimize WRDS queries"
-            # rule, so grab them now.
-            # ret (the actual daily return) is required: without it this
-            # table is useless for this project regardless of what else is
-            # present.
+            # are optional here -- they exist purely for a future
+            # transaction-cost/capacity phase this project isn't in yet, so a
+            # renamed/missing one shouldn't take down the whole table.
             pull_table(
                 db, log, "crsp", "dsf",
-                CRSP_DSF_COLUMNS,
+                CRSP_DSF_REQUIRED_COLUMNS,
+                optional_columns=CRSP_DSF_OPTIONAL_COLUMNS,
                 where_sql=f"date BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
                 force=force,
             )
-            # This is the market-benchmark counterpart to dsf above --
-            # vwretd/vwretx/ewretd/ewretx/sprtrn are all required: without
-            # the benchmark return series itself, this table has no payload.
+            # This is the market-benchmark counterpart to dsf above.
             pull_table(
                 db, log, "crsp", "dsi",
-                CRSP_DSI_COLUMNS,
+                CRSP_DSI_REQUIRED_COLUMNS,
+                optional_columns=CRSP_DSI_OPTIONAL_COLUMNS,
                 where_sql=f"date BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
                 force=force,
             )
-            # dlret (the delisting return) is required: without it this
-            # table has no payload -- just the fact that a delisting
-            # happened, with no return impact to attribute to it.
             pull_table(
                 db, log, "crsp", "dsedelist",
-                CRSP_DSEDELIST_COLUMNS,
+                CRSP_DSEDELIST_REQUIRED_COLUMNS,
+                optional_columns=CRSP_DSEDELIST_OPTIONAL_COLUMNS,
                 where_sql=f"dlstdt BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
                 force=force,
             )
             # siccd is the point-in-time SIC code (unlike comp.company.sic
             # below, which is the firm's current/most-recent classification
-            # only) -- needed for historically-accurate sector attribution.
-            # nameenddt/namedt are required: point-in-time identifier
-            # validity depends on both bounds being present. permno is
-            # required too: it's the actual join key this table exists to
-            # provide, alongside its validity window. See
-            # CRSP_STOCKNAMES_COLUMNS' definition above for why ncusip (not
-            # just cusip) is required here.
+            # only) -- needed for historically-accurate sector attribution,
+            # but downgraded to optional here (it's still useful even if
+            # missing, unlike the identity/validity-window columns).
             pull_table(
                 db, log, "crsp", "stocknames",
-                CRSP_STOCKNAMES_COLUMNS,
+                CRSP_STOCKNAMES_REQUIRED_COLUMNS,
+                optional_columns=CRSP_STOCKNAMES_OPTIONAL_COLUMNS,
                 start_date=None, end_date=None,
                 force=force,
             )
@@ -763,17 +1110,10 @@ def main():
             # point-in-time data without accounting for that; downstream
             # feature work should not assume point-in-time correctness this
             # pull doesn't have.
-            # indfmt/datafmt/popsrc/consol are required here (part of
-            # COMP_FUNDQ_COLUMNS): they're the same four columns
-            # COMPUSTAT_STD_FILTER filters on in fundq_where above, so if
-            # any of them were silently missing from this account's schema,
-            # the WHERE clause referencing them would be a raw SQL error at
-            # query time rather than a graceful skip. Requiring them means
-            # pull_table's own missing-required-columns check aborts BEFORE
-            # the query is ever built, not after a malformed one fails.
             pull_table(
                 db, log, comp_lib, "fundq",
-                COMP_FUNDQ_COLUMNS,
+                COMP_FUNDQ_REQUIRED_COLUMNS,
+                optional_columns=COMP_FUNDQ_OPTIONAL_COLUMNS,
                 where_sql=fundq_where,
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
@@ -785,19 +1125,19 @@ def main():
             # crsp.stocknames.siccd (above) for point-in-time SIC instead.
             pull_table(
                 db, log, comp_lib, "company",
-                COMP_COMPANY_COLUMNS,
+                COMP_COMPANY_REQUIRED_COLUMNS,
+                optional_columns=COMP_COMPANY_OPTIONAL_COLUMNS,
                 start_date=None, end_date=None,
                 force=force,
             )
             # Annual fundamentals alongside quarterly -- book-to-market and
             # other annual-basis controls aren't in fundq, and this is a
             # one-shot pull, so grab it now. See the restated-data caveat
-            # above fundq's pull_table call -- it applies here too. Same
-            # indfmt/datafmt/popsrc/consol reasoning as fundq above applies:
-            # funda_where filters on those same four columns.
+            # above fundq's pull_table call -- it applies here too.
             pull_table(
                 db, log, comp_lib, "funda",
-                COMP_FUNDA_COLUMNS,
+                COMP_FUNDA_REQUIRED_COLUMNS,
+                optional_columns=COMP_FUNDA_OPTIONAL_COLUMNS,
                 where_sql=funda_where,
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=END_DATE,
@@ -816,29 +1156,18 @@ def main():
         # wrdsapps.iclink was removed: confirmed via a prior run's manifest
         # that it doesn't exist on this account (no_such_table) -- dead code.
         if have_ibes and have_crsp:
-            # ncusip is required: we rely on it for CUSIP-based identifier
-            # matching between I/B/E/S and CRSP, so a silently-missing ncusip
-            # would produce a link table that looks fine but can't actually
-            # be joined on. permno/sdate/edate are also required: the whole
-            # point of this table is the permno link plus its point-in-time
-            # validity window, so a schema missing any of those produces a
-            # link table that can't actually be used for the thing it exists
-            # for.
             pull_table(
                 db, log, "wrdsapps", "ibcrsphist",
-                WRDSAPPS_IBCRSPHIST_COLUMNS,
+                WRDSAPPS_IBCRSPHIST_REQUIRED_COLUMNS,
+                optional_columns=WRDSAPPS_IBCRSPHIST_OPTIONAL_COLUMNS,
                 start_date=None, end_date=None,
                 force=force,
             )
         if have_crsp and have_comp:
-            # linkdt/linkenddt are required for the same reason they're
-            # required on crsp.stocknames above: the point-in-time link
-            # validity bounds, without which this table can silently
-            # misattribute a gvkey/permno link outside its actually-valid
-            # window.
             pull_table(
                 db, log, "crsp", "ccmxpf_lnkhist",
-                CRSP_CCMXPF_LNKHIST_COLUMNS,
+                CRSP_CCMXPF_LNKHIST_REQUIRED_COLUMNS,
+                optional_columns=CRSP_CCMXPF_LNKHIST_OPTIONAL_COLUMNS,
                 start_date=None, end_date=None,
                 force=force,
             )
