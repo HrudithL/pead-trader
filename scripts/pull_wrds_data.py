@@ -61,6 +61,7 @@ import datetime as dt
 import os
 import re
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
@@ -930,6 +931,425 @@ def pull_table(
         )
 
 
+# ---------------------------------------------------------------------------
+# Phase B: local universe resolution (no WRDS query).
+#
+# This project only ever needs the ~8,358 securities that actually have real
+# options data in the local archive -- not the entire US equity market that
+# an unfiltered date-only pull previously produced. `data/metadata/
+# optionmetrics_universe.parquet` (current secid/cusip/ticker/issuer/sic) and
+# `..._history.parquet` (one row per historical CUSIP/ticker change for the
+# same secids) already exist locally (built elsewhere, not touched here) --
+# this module resolves those OptionMetrics secids to CRSP PERMNO, Compustat
+# GVKEY, and I/B/E/S ticker using the small reference tables Phase A already
+# pulled, so Phase C's big-table pulls (crsp.dsf, comp.fundq/funda, the
+# ibes.*_epsus family) can be filtered down to just what this project needs.
+#
+# A security can have had multiple CUSIPs/tickers over 1996-2013 (renames,
+# spinoffs, etc.), so the CUSIP side of the join checks BOTH the current
+# file and the history file, not just today's CUSIP -- and CRSP itself
+# carries two CUSIP-shaped columns per row (`cusip`, the header/most-recent
+# value, and `ncusip`, the point-in-time value) -- either one matching an
+# OM CUSIP counts as a link.
+# ---------------------------------------------------------------------------
+
+
+class UniverseResolutionError(RuntimeError):
+    """Raised whenever Phase B's local resolution can't proceed safely: a
+    required input file is missing, or a loaded DataFrame is missing a
+    column this resolution structurally depends on.
+
+    main() catches this and aborts the ENTIRE run before attempting any of
+    Phase C's expensive WRDS queries -- a broken resolution step must never
+    be allowed to silently fall through to an empty/missing filter that then
+    pulls either the whole market (no filter) or nothing (an accidentally
+    always-false filter) from WRDS.
+    """
+
+
+@dataclass
+class ResolvedUniverse:
+    """The output of resolve_universe(): the deduplicated ID lists Phase C's
+    pull_table() calls filter on, plus the counts needed for the mandatory
+    auditability summary (see resolve_universe's docstring).
+
+    `permnos`/`gvkeys` are ints; `ibes_tickers` are strings. Every list is
+    the UNION of every ID reachable from any resolved OM secid -- including
+    ones flagged as ambiguous in ambiguous_links.csv -- because for a
+    universe FILTER (as opposed to a clean one-to-one attribution join)
+    over-inclusion is the safe direction: pulling a handful of extra
+    PERMNOs/GVKEYs/tickers costs a little extra data, silently dropping one
+    because its link happened to be ambiguous costs a security's worth of
+    data this project actually needs.
+    """
+
+    permnos: list = field(default_factory=list)
+    gvkeys: list = field(default_factory=list)
+    ibes_tickers: list = field(default_factory=list)
+    n_secids_total: int = 0
+    n_secids_resolved: int = 0
+    n_ambiguous_links: int = 0
+
+
+def _require_columns(df: pd.DataFrame, columns, context: str) -> None:
+    missing = [c for c in columns if c not in df.columns]
+    if missing:
+        raise UniverseResolutionError(
+            f"{context}: missing expected column(s) {missing} -- actual "
+            f"columns are {list(df.columns)}"
+        )
+
+
+def _load_parquet_or_raise(path: Path, context: str) -> pd.DataFrame:
+    path = Path(path)
+    if not path.exists():
+        raise UniverseResolutionError(
+            f"{context}: expected input file not found at {path} -- Phase A "
+            f"must pull this table successfully before Phase B can resolve "
+            f"the universe."
+        )
+    try:
+        return pd.read_parquet(path)
+    except Exception as e:
+        raise UniverseResolutionError(
+            f"{context}: failed to read {path} as Parquet: {e}"
+        ) from e
+
+
+def _norm_cusip(series: pd.Series) -> pd.Series:
+    """Normalize a CUSIP-shaped column to a comparable string form: cast to
+    str, strip whitespace, uppercase. CUSIPs may have leading zeros (e.g.
+    "04341310"), so they must be compared/joined as strings, never as
+    numbers."""
+    return series.astype(str).str.strip().str.upper()
+
+
+def _agg_unique_join(df: pd.DataFrame, key_col: str, val_col: str) -> dict:
+    """Return {key: comma-joined sorted-unique str(val)} for a `key_col` ->
+    `val_col` mapping that may legitimately be one-to-many (e.g. one PERMNO
+    linked to more than one GVKEY across CCM's link history). A key with
+    exactly one distinct value still comes back as that one value with no
+    comma; a key with more than one is visibly ambiguous in the output
+    (comma-separated) without needing a second lookup."""
+    out = {}
+    for key, group in df.groupby(key_col)[val_col]:
+        vals = sorted({str(v) for v in group.dropna()})
+        out[key] = ",".join(vals) if vals else None
+    return out
+
+
+def resolve_universe(
+    om_universe_path,
+    om_universe_history_path,
+    stocknames_path,
+    ccmxpf_lnkhist_path,
+    ibcrsphist_path,
+    unresolved_secids_out,
+    ambiguous_links_out,
+    resolved_ids_out,
+) -> ResolvedUniverse:
+    """Resolve the OptionMetrics universe (current + historical CUSIPs) to
+    CRSP PERMNO, Compustat GVKEY, and I/B/E/S ticker, purely locally (no WRDS
+    query) -- see the module comment above this class for why.
+
+    Steps (mirrors memory/phase1-equity-pead-plan.md's "Update 2026-08-12"
+    section):
+      1. Load the two OM universe files and the three just-pulled Phase A
+         reference tables (crsp.stocknames, crsp.ccmxpf_lnkhist,
+         wrdsapps.ibcrsphist). Any missing file or missing required column
+         raises UniverseResolutionError immediately -- see
+         _load_parquet_or_raise/_require_columns.
+      2. Union the current + historical CUSIPs per secid.
+      3. Join against crsp.stocknames on EITHER cusip OR ncusip to get the
+         resolved PERMNO(s) per secid.
+      4. Join the resolved PERMNOs against crsp.ccmxpf_lnkhist (on lpermno)
+         to get GVKEY(s), and against wrdsapps.ibcrsphist (on permno) to get
+         I/B/E/S ticker(s).
+      5. Write the three auditability artifacts (unresolved_secids.csv,
+         ambiguous_links.csv, resolved_ids_out) and print a one-line summary.
+
+    Returns a ResolvedUniverse with the deduplicated PERMNO/GVKEY/ticker
+    filter lists Phase C's pull_table() calls use, favoring over-inclusion
+    for any ambiguous link (see ResolvedUniverse's docstring).
+    """
+    om = _load_parquet_or_raise(om_universe_path, "optionmetrics_universe.parquet")
+    om_hist = _load_parquet_or_raise(
+        om_universe_history_path, "optionmetrics_universe_history.parquet"
+    )
+    stocknames = _load_parquet_or_raise(stocknames_path, "crsp.stocknames pull")
+    ccmxpf = _load_parquet_or_raise(ccmxpf_lnkhist_path, "crsp.ccmxpf_lnkhist pull")
+    ibcrsphist = _load_parquet_or_raise(ibcrsphist_path, "wrdsapps.ibcrsphist pull")
+
+    _require_columns(om, ["secid", "cusip", "ticker", "issuer"], "optionmetrics_universe.parquet")
+    _require_columns(om_hist, ["secid", "cusip"], "optionmetrics_universe_history.parquet")
+    _require_columns(stocknames, ["permno", "cusip", "ncusip"], "crsp.stocknames pull")
+    _require_columns(ccmxpf, ["lpermno", "gvkey"], "crsp.ccmxpf_lnkhist pull")
+    _require_columns(ibcrsphist, ["permno", "ticker"], "wrdsapps.ibcrsphist pull")
+
+    om = om.copy()
+    om["secid"] = om["secid"].astype("int64")
+    om_lookup = om[["secid", "cusip", "ticker", "issuer"]].drop_duplicates(subset=["secid"])
+    all_secids = om["secid"].drop_duplicates()
+
+    # --- Union current + historical CUSIPs per secid ---
+    om_cusips = pd.concat(
+        [
+            om.loc[om["cusip"].notna(), ["secid", "cusip"]],
+            om_hist.loc[om_hist["cusip"].notna(), ["secid", "cusip"]],
+        ],
+        ignore_index=True,
+    )
+    om_cusips["cusip"] = _norm_cusip(om_cusips["cusip"])
+    om_cusips = om_cusips.drop_duplicates()
+
+    # --- crsp.stocknames: stack cusip and ncusip into one long (permno,
+    # cusip-shaped-value) table -- either column matching an OM cusip counts
+    # as a link. ---
+    sn = stocknames.dropna(subset=["permno"]).copy()
+    sn["permno"] = sn["permno"].astype("int64")
+    cusip_side = sn.loc[sn["cusip"].notna(), ["permno", "cusip"]].rename(
+        columns={"cusip": "crsp_cusip"}
+    )
+    ncusip_side = sn.loc[sn["ncusip"].notna(), ["permno", "ncusip"]].rename(
+        columns={"ncusip": "crsp_cusip"}
+    )
+    sn_long = pd.concat([cusip_side, ncusip_side], ignore_index=True)
+    sn_long["crsp_cusip"] = _norm_cusip(sn_long["crsp_cusip"])
+    sn_long = sn_long.drop_duplicates()
+
+    secid_permno = (
+        om_cusips.merge(sn_long, left_on="cusip", right_on="crsp_cusip", how="inner")[
+            ["secid", "permno"]
+        ]
+        .drop_duplicates()
+    )
+
+    resolved_secid_set = set(secid_permno["secid"].unique())
+    n_total = int(all_secids.shape[0])
+    n_resolved = len(resolved_secid_set)
+
+    # --- Unresolved secids: written for a human to spot-check, never
+    # silently dropped. NOTE for anyone reading this CSV back
+    # programmatically: the `cusip` column is text that can have leading
+    # zeros (same caveat as the OM universe Parquet files) -- pd.read_csv()
+    # will silently re-infer a value like "00000003" as the int 3 unless you
+    # pass dtype={"cusip": str} (or similar) explicitly. ---
+    unresolved = om_lookup[~om_lookup["secid"].isin(resolved_secid_set)]
+    unresolved.to_csv(unresolved_secids_out, index=False)
+
+    # --- permno -> gvkey (crsp.ccmxpf_lnkhist), restricted to resolved
+    # permnos only -- no linkdt/linkenddt window filtering here: this is a
+    # broad "which securities need data pulled at all" universe filter, not
+    # a point-in-time attribution join, so over-inclusion (every gvkey ever
+    # linked to a resolved permno) is the safe direction. ---
+    cc = ccmxpf.dropna(subset=["lpermno", "gvkey"]).copy()
+    cc["lpermno"] = cc["lpermno"].astype("int64")
+    cc["gvkey"] = cc["gvkey"].astype(str).str.strip()
+    permno_gvkey = (
+        cc.loc[cc["lpermno"].isin(secid_permno["permno"]), ["lpermno", "gvkey"]]
+        .rename(columns={"lpermno": "permno"})
+        .drop_duplicates()
+    )
+
+    # --- permno -> I/B/E/S ticker (wrdsapps.ibcrsphist), same reasoning. ---
+    ic = ibcrsphist.dropna(subset=["permno", "ticker"]).copy()
+    ic["permno"] = ic["permno"].astype("int64")
+    ic["ticker"] = ic["ticker"].astype(str).str.strip()
+    permno_ticker = (
+        ic.loc[ic["permno"].isin(secid_permno["permno"]), ["permno", "ticker"]]
+        .drop_duplicates()
+    )
+
+    # --- Ambiguous links: flagged for human review, never silently
+    # resolved one way. Three independent stages, each a genuine one-to-many
+    # (or many-to-one) case: ---
+    ambiguous_frames = []
+
+    secid_permno_counts = secid_permno.groupby("secid")["permno"].nunique()
+    multi_permno_secids = set(secid_permno_counts[secid_permno_counts > 1].index)
+    permno_secid_counts = secid_permno.groupby("permno")["secid"].nunique()
+    multi_secid_permnos = set(permno_secid_counts[permno_secid_counts > 1].index)
+    if multi_permno_secids or multi_secid_permnos:
+        stage1 = secid_permno[
+            secid_permno["secid"].isin(multi_permno_secids)
+            | secid_permno["permno"].isin(multi_secid_permnos)
+        ].merge(om_lookup, on="secid", how="left")
+        stage1 = stage1.rename(columns={"cusip": "om_cusip", "ticker": "om_ticker"})
+        stage1["stage"] = "secid_to_permno"
+        ambiguous_frames.append(stage1)
+
+    gvkey_counts = permno_gvkey.groupby("permno")["gvkey"].nunique()
+    multi_gvkey_permnos = set(gvkey_counts[gvkey_counts > 1].index)
+    if multi_gvkey_permnos:
+        stage2 = permno_gvkey[permno_gvkey["permno"].isin(multi_gvkey_permnos)].copy()
+        stage2["stage"] = "permno_to_gvkey"
+        ambiguous_frames.append(stage2)
+
+    ticker_counts = permno_ticker.groupby("permno")["ticker"].nunique()
+    multi_ticker_permnos = set(ticker_counts[ticker_counts > 1].index)
+    if multi_ticker_permnos:
+        stage3 = permno_ticker[permno_ticker["permno"].isin(multi_ticker_permnos)].rename(
+            columns={"ticker": "ibes_ticker"}
+        )
+        stage3["stage"] = "permno_to_ibes_ticker"
+        ambiguous_frames.append(stage3)
+
+    ambiguous_columns = [
+        "stage", "secid", "permno", "gvkey", "ibes_ticker", "om_cusip", "om_ticker", "issuer",
+    ]
+    if ambiguous_frames:
+        ambiguous_df = pd.concat(ambiguous_frames, ignore_index=True, sort=False)
+        for col in ambiguous_columns:
+            if col not in ambiguous_df.columns:
+                ambiguous_df[col] = None
+        ambiguous_df = ambiguous_df[ambiguous_columns]
+    else:
+        ambiguous_df = pd.DataFrame(columns=ambiguous_columns)
+    ambiguous_df.to_csv(ambiguous_links_out, index=False)
+    n_ambiguous_links = len(ambiguous_df)
+
+    # --- resolved_universe_ids.parquet: one row per OM secid, nullable
+    # where resolution failed, comma-joined where a link was ambiguous (see
+    # ResolvedUniverse's docstring for why ambiguous links still count
+    # toward the filter lists below even though they're flagged here). ---
+    gvkey_by_permno = _agg_unique_join(permno_gvkey, "permno", "gvkey")
+    ticker_by_permno = _agg_unique_join(permno_ticker, "permno", "ticker")
+    secid_to_permnos = secid_permno.groupby("secid")["permno"].apply(lambda s: sorted(set(s)))
+
+    rows = []
+    for secid, om_row in om_lookup.set_index("secid").iterrows():
+        permnos_for_secid = secid_to_permnos.get(secid, [])
+        if not permnos_for_secid:
+            rows.append({
+                "secid": secid,
+                "cusip": om_row["cusip"],
+                "ticker": om_row["ticker"],
+                "issuer": om_row["issuer"],
+                "permno": None,
+                "gvkey": None,
+                "ibes_ticker": None,
+                "permno_ambiguous": False,
+                "gvkey_ambiguous": False,
+                "ibes_ticker_ambiguous": False,
+            })
+            continue
+        gvkeys_for_secid = sorted({
+            g for p in permnos_for_secid for g in (gvkey_by_permno.get(p) or "").split(",") if g
+        })
+        tickers_for_secid = sorted({
+            t for p in permnos_for_secid for t in (ticker_by_permno.get(p) or "").split(",") if t
+        })
+        rows.append({
+            "secid": secid,
+            "cusip": om_row["cusip"],
+            "ticker": om_row["ticker"],
+            "issuer": om_row["issuer"],
+            "permno": ",".join(str(p) for p in permnos_for_secid),
+            "gvkey": ",".join(gvkeys_for_secid) if gvkeys_for_secid else None,
+            "ibes_ticker": ",".join(tickers_for_secid) if tickers_for_secid else None,
+            # Ambiguous in EITHER direction: this secid maps to more than
+            # one permno, OR at least one of its permnos is itself shared
+            # by more than one secid (many-to-one) -- both are flagged in
+            # ambiguous_links.csv's "secid_to_permno" stage, so both must
+            # be reflected here too, not just the one-to-many case.
+            "permno_ambiguous": (
+                len(permnos_for_secid) > 1
+                or any(p in multi_secid_permnos for p in permnos_for_secid)
+            ),
+            "gvkey_ambiguous": len(gvkeys_for_secid) > 1,
+            "ibes_ticker_ambiguous": len(tickers_for_secid) > 1,
+        })
+
+    resolved_df = pd.DataFrame(rows)
+    resolved_df.to_parquet(resolved_ids_out, index=False)
+
+    all_permnos = sorted(int(p) for p in secid_permno["permno"].unique())
+    all_gvkeys = sorted(permno_gvkey["gvkey"].unique().tolist())
+    all_tickers = sorted(permno_ticker["ticker"].unique().tolist())
+
+    pct = (100.0 * n_resolved / n_total) if n_total else 0.0
+    print(
+        f"Universe resolution: {n_resolved:,} of {n_total:,} OptionMetrics "
+        f"secids resolved to a PERMNO ({pct:.1f}%); {n_ambiguous_links:,} "
+        f"ambiguous link(s) flagged; resolved {len(all_permnos):,} distinct "
+        f"PERMNOs, {len(all_gvkeys):,} distinct GVKEYs, {len(all_tickers):,} "
+        f"distinct I/B/E/S tickers. Details in data/metadata/ "
+        f"(unresolved_secids.csv, ambiguous_links.csv, "
+        f"resolved_universe_ids.parquet).",
+        flush=True,
+    )
+
+    return ResolvedUniverse(
+        permnos=all_permnos,
+        gvkeys=all_gvkeys,
+        ibes_tickers=all_tickers,
+        n_secids_total=n_total,
+        n_secids_resolved=n_resolved,
+        n_ambiguous_links=n_ambiguous_links,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase C's IN (...) clause builders. PERMNO/GVKEY are numeric identifiers,
+# safe to interpolate as bare numeric literals once validated as digits-only
+# (defensive, consistent with _validate_sql_identifier's existing posture on
+# this script's own hardcoded/derived inputs -- these values are WRDS-
+# sourced, not external/untrusted input, but the validation costs nothing
+# and catches a corrupted resolution result loudly instead of building a
+# malformed query). I/B/E/S tickers are strings and get single-quoted with
+# embedded quotes escaped -- string interpolation is less trivially safe
+# than the numeric case, but adding SQLAlchemy text()-bound-parameter
+# support to pull_table's raw_sql call sites would touch the very internals
+# this round is explicitly not supposed to change; proper quoting/escaping
+# here is the smaller, contained fix for this specific list.
+# ---------------------------------------------------------------------------
+
+_NUMERIC_ID_RE = re.compile(r"^-?\d+\Z")
+
+
+def _validate_numeric_id(value) -> str:
+    s = str(value).strip()
+    if not _NUMERIC_ID_RE.match(s):
+        raise ValueError(
+            f"Non-numeric id {value!r} cannot be safely interpolated into a "
+            f"numeric IN (...) clause"
+        )
+    return s
+
+
+def build_numeric_in_clause(column: str, values) -> str:
+    """Build `"<column> IN (1, 2, 3)"` from an iterable of PERMNO/GVKEY-like
+    values, after validating every value is digits-only. An empty `values`
+    produces `"<column> IN (NULL)"` (matches nothing, since NULL never
+    equals anything) rather than the invalid-SQL `"IN ()"` or, worse, an
+    omitted filter that would silently pull an unfiltered table."""
+    _validate_sql_identifier("column", column)
+    ids = sorted({_validate_numeric_id(v) for v in values}, key=lambda s: (len(s), s))
+    if not ids:
+        return f"{column} IN (NULL)"
+    return f"{column} IN ({', '.join(ids)})"
+
+
+def _escape_sql_string_literal(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def build_string_in_clause(column: str, values) -> str:
+    """Build `"<column> IN ('AAPL', 'MSFT')"` from an iterable of I/B/E/S
+    ticker strings, single-quoting each and escaping any embedded single
+    quote by doubling it (the standard SQL escape). An empty `values`
+    produces `"<column> IN (NULL)"`, matching build_numeric_in_clause's
+    empty-list behavior."""
+    _validate_sql_identifier("column", column)
+    cleaned = sorted({
+        str(v).strip() for v in values if v is not None and str(v).strip() != ""
+    })
+    if not cleaned:
+        return f"{column} IN (NULL)"
+    quoted = ", ".join(f"'{_escape_sql_string_literal(v)}'" for v in cleaned)
+    return f"{column} IN ({quoted})"
+
+
 def _parse_args(argv):
     """Parse this script's own command-line arguments via argparse (rather
     than a hand-rolled `"--force" in sys.argv` check), so a typo like
@@ -978,7 +1398,112 @@ def main():
         # Deliberately not checking for optionm/OptionMetrics here -- see module
         # docstring. Options data comes from the external drive archive.
 
-        # --- I/B/E/S ---
+        for lib_name, available in (("ibes", have_ibes), ("crsp", have_crsp), ("comp", have_comp)):
+            if not available:
+                print(f"{lib_name} library not visible on this account -- skipping.", flush=True)
+                record(
+                    log,
+                    {"library": lib_name, "table": "*", "status": "library_unavailable",
+                     "rows": 0, "path": "", "missing_columns": "", "error": "",
+                     "start_date": "", "end_date": ""},
+                )
+
+        # =====================================================================
+        # Phase A -- small reference/linking tables, pulled unfiltered (as
+        # before). These ARE the resolution mechanism Phase B uses below, or
+        # are already small regardless (tens of thousands of rows) -- no
+        # universe filter needed or possible yet at this point.
+        # =====================================================================
+        if have_crsp:
+            # siccd is the point-in-time SIC code (unlike comp.company.sic
+            # below, which is the firm's current/most-recent classification
+            # only) -- needed for historically-accurate sector attribution,
+            # but downgraded to optional here (it's still useful even if
+            # missing, unlike the identity/validity-window columns).
+            pull_table(
+                db, log, "crsp", "stocknames",
+                CRSP_STOCKNAMES_REQUIRED_COLUMNS,
+                optional_columns=CRSP_STOCKNAMES_OPTIONAL_COLUMNS,
+                start_date=None, end_date=None,
+                force=force,
+            )
+        if have_comp:
+            pull_table(
+                db, log, comp_lib, "company",
+                COMP_COMPANY_REQUIRED_COLUMNS,
+                optional_columns=COMP_COMPANY_OPTIONAL_COLUMNS,
+                start_date=None, end_date=None,
+                force=force,
+            )
+        # wrdsapps.iclink was removed: confirmed via a prior run's manifest
+        # that it doesn't exist on this account (no_such_table) -- dead code.
+        if have_ibes and have_crsp:
+            pull_table(
+                db, log, "wrdsapps", "ibcrsphist",
+                WRDSAPPS_IBCRSPHIST_REQUIRED_COLUMNS,
+                optional_columns=WRDSAPPS_IBCRSPHIST_OPTIONAL_COLUMNS,
+                start_date=None, end_date=None,
+                force=force,
+            )
+        if have_crsp and have_comp:
+            pull_table(
+                db, log, "crsp", "ccmxpf_lnkhist",
+                CRSP_CCMXPF_LNKHIST_REQUIRED_COLUMNS,
+                optional_columns=CRSP_CCMXPF_LNKHIST_OPTIONAL_COLUMNS,
+                start_date=None, end_date=None,
+                force=force,
+            )
+        if have_ibes:
+            pull_table(
+                db, log, "ibes", "idsum",
+                IBES_IDSUM_REQUIRED_COLUMNS,
+                optional_columns=IBES_IDSUM_OPTIONAL_COLUMNS,
+                start_date=None, end_date=None,
+                force=force,
+            )
+
+        # =====================================================================
+        # Phase B -- local universe resolution (no WRDS query). Resolves the
+        # ~8,358-secid OptionMetrics universe (data/metadata/
+        # optionmetrics_universe*.parquet, built elsewhere, not touched here)
+        # to CRSP PERMNO / Compustat GVKEY / I/B/E/S ticker using the Phase A
+        # tables just pulled above. See resolve_universe's docstring for the
+        # full join logic and the mandatory auditability outputs.
+        #
+        # A failure here (missing input file, unexpected schema) MUST abort
+        # the whole run before Phase C's expensive WRDS queries -- a broken
+        # resolution step must never silently fall through to an empty
+        # filter that then pulls either the entire market or nothing.
+        # =====================================================================
+        try:
+            resolved = resolve_universe(
+                om_universe_path=METADATA_DIR / "optionmetrics_universe.parquet",
+                om_universe_history_path=METADATA_DIR / "optionmetrics_universe_history.parquet",
+                stocknames_path=RAW_DIR / "crsp" / "stocknames.parquet",
+                ccmxpf_lnkhist_path=RAW_DIR / "crsp" / "ccmxpf_lnkhist.parquet",
+                ibcrsphist_path=RAW_DIR / "wrdsapps" / "ibcrsphist.parquet",
+                unresolved_secids_out=METADATA_DIR / "unresolved_secids.csv",
+                ambiguous_links_out=METADATA_DIR / "ambiguous_links.csv",
+                resolved_ids_out=METADATA_DIR / "resolved_universe_ids.parquet",
+            )
+        except UniverseResolutionError as e:
+            print(
+                f"FATAL: universe resolution failed -- aborting before any "
+                f"Phase C (big-table) query is attempted: {e}",
+                flush=True,
+            )
+            raise SystemExit(1) from e
+
+        permno_filter = build_numeric_in_clause("permno", resolved.permnos)
+        gvkey_filter = build_numeric_in_clause("gvkey", resolved.gvkeys)
+        ticker_filter = build_string_in_clause("ticker", resolved.ibes_tickers)
+
+        # =====================================================================
+        # Phase C -- big tables, now filtered by the resolved IDs above (in
+        # addition to the existing date/format filters -- combined with AND,
+        # nothing lost or overwritten). crsp.dsi is deliberately left
+        # unfiltered: one row per trading day market-wide, already tiny.
+        # =====================================================================
         if have_ibes:
             # NOTE: these use LOOKBACK_START_DATE (not START_DATE) for the same
             # reason CRSP/Compustat do -- rolling-window/history features need
@@ -993,7 +1518,10 @@ def main():
                 db, log, "ibes", "statsumu_epsus",
                 IBES_STATSUMU_EPSUS_REQUIRED_COLUMNS,
                 optional_columns=IBES_STATSUMU_EPSUS_OPTIONAL_COLUMNS,
-                where_sql=f"statpers BETWEEN '{LOOKBACK_START_DATE}' AND '{END_DATE}'",
+                where_sql=(
+                    f"statpers BETWEEN '{LOOKBACK_START_DATE}' AND '{END_DATE}' "
+                    f"AND {ticker_filter}"
+                ),
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=END_DATE,
                 force=force,
@@ -1006,16 +1534,12 @@ def main():
                 db, log, "ibes", "actu_epsus",
                 IBES_ACTU_EPSUS_REQUIRED_COLUMNS,
                 optional_columns=IBES_ACTU_EPSUS_OPTIONAL_COLUMNS,
-                where_sql=f"anndats BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
+                where_sql=(
+                    f"anndats BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}' "
+                    f"AND {ticker_filter}"
+                ),
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
-                force=force,
-            )
-            pull_table(
-                db, log, "ibes", "idsum",
-                IBES_IDSUM_REQUIRED_COLUMNS,
-                optional_columns=IBES_IDSUM_OPTIONAL_COLUMNS,
-                start_date=None, end_date=None,
                 force=force,
             )
             # Analyst-level detail: STDEV/NUMEST from the summary file already
@@ -1036,21 +1560,15 @@ def main():
                 db, log, "ibes", "detu_epsus",
                 IBES_DETU_EPSUS_REQUIRED_COLUMNS,
                 optional_columns=IBES_DETU_EPSUS_OPTIONAL_COLUMNS,
-                where_sql=f"revdats BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
+                where_sql=(
+                    f"revdats BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}' "
+                    f"AND {ticker_filter}"
+                ),
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
                 force=force,
             )
-        else:
-            print("ibes library not visible on this account -- skipping.", flush=True)
-            record(
-                log,
-                {"library": "ibes", "table": "*", "status": "library_unavailable",
-                 "rows": 0, "path": "", "missing_columns": "", "error": "",
-                 "start_date": "", "end_date": ""},
-            )
 
-        # --- CRSP ---
         if have_crsp:
             # Return series get a forward buffer (RETURN_END_DATE, not
             # END_DATE) so events near the end of the sample still have a
@@ -1062,12 +1580,17 @@ def main():
                 db, log, "crsp", "dsf",
                 CRSP_DSF_REQUIRED_COLUMNS,
                 optional_columns=CRSP_DSF_OPTIONAL_COLUMNS,
-                where_sql=f"date BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
+                where_sql=(
+                    f"date BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}' "
+                    f"AND {permno_filter}"
+                ),
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
                 force=force,
             )
-            # This is the market-benchmark counterpart to dsf above.
+            # This is the market-benchmark counterpart to dsf above. Left
+            # unfiltered by design -- one row per trading day market-wide,
+            # already tiny, and there is no per-security ID to filter it by.
             pull_table(
                 db, log, "crsp", "dsi",
                 CRSP_DSI_REQUIRED_COLUMNS,
@@ -1080,32 +1603,14 @@ def main():
                 db, log, "crsp", "dsedelist",
                 CRSP_DSEDELIST_REQUIRED_COLUMNS,
                 optional_columns=CRSP_DSEDELIST_OPTIONAL_COLUMNS,
-                where_sql=f"dlstdt BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
+                where_sql=(
+                    f"dlstdt BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}' "
+                    f"AND {permno_filter}"
+                ),
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
                 force=force,
             )
-            # siccd is the point-in-time SIC code (unlike comp.company.sic
-            # below, which is the firm's current/most-recent classification
-            # only) -- needed for historically-accurate sector attribution,
-            # but downgraded to optional here (it's still useful even if
-            # missing, unlike the identity/validity-window columns).
-            pull_table(
-                db, log, "crsp", "stocknames",
-                CRSP_STOCKNAMES_REQUIRED_COLUMNS,
-                optional_columns=CRSP_STOCKNAMES_OPTIONAL_COLUMNS,
-                start_date=None, end_date=None,
-                force=force,
-            )
-        else:
-            print("crsp library not visible on this account -- skipping.", flush=True)
-            record(
-                log,
-                {"library": "crsp", "table": "*", "status": "library_unavailable",
-                 "rows": 0, "path": "", "missing_columns": "", "error": "",
-                 "start_date": "", "end_date": ""},
-            )
 
-        # --- Compustat (lower priority) ---
         if have_comp:
             # datadate here gates fundq's rdq (report date of quarterly
             # earnings) -- Compustat's standard PEAD event-date field -- so
@@ -1116,7 +1621,7 @@ def main():
             # would have no visibility into that next announcement.
             fundq_where = (
                 f"datadate BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}' "
-                f"AND {COMPUSTAT_STD_FILTER}"
+                f"AND {COMPUSTAT_STD_FILTER} AND {gvkey_filter}"
             )
             # funda (annual) is intentionally left at END_DATE, not
             # RETURN_END_DATE: it's lower-priority annual control data
@@ -1125,7 +1630,7 @@ def main():
             # next-announcement forward buffer.
             funda_where = (
                 f"datadate BETWEEN '{LOOKBACK_START_DATE}' AND '{END_DATE}' "
-                f"AND {COMPUSTAT_STD_FILTER}"
+                f"AND {COMPUSTAT_STD_FILTER} AND {gvkey_filter}"
             )
             # indfmt/datafmt/popsrc/consol select the standard
             # industrial/domestic/consolidated statement -- Compustat stores
@@ -1151,17 +1656,6 @@ def main():
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
                 force=force,
             )
-            # sic/gsector here are CURRENT-SNAPSHOT only (the firm's most
-            # recent classification), NOT point-in-time -- do not use this
-            # for historical sector attribution without that caveat. Use
-            # crsp.stocknames.siccd (above) for point-in-time SIC instead.
-            pull_table(
-                db, log, comp_lib, "company",
-                COMP_COMPANY_REQUIRED_COLUMNS,
-                optional_columns=COMP_COMPANY_OPTIONAL_COLUMNS,
-                start_date=None, end_date=None,
-                force=force,
-            )
             # Annual fundamentals alongside quarterly -- book-to-market and
             # other annual-basis controls aren't in fundq, and this is a
             # one-shot pull, so grab it now. See the restated-data caveat
@@ -1173,34 +1667,6 @@ def main():
                 where_sql=funda_where,
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=END_DATE,
-                force=force,
-            )
-        else:
-            print("Compustat library not visible on this account -- skipping.", flush=True)
-            record(
-                log,
-                {"library": "comp", "table": "*", "status": "library_unavailable",
-                 "rows": 0, "path": "", "missing_columns": "", "error": "",
-                 "start_date": "", "end_date": ""},
-            )
-
-        # --- Linking tables (best-effort; exact names vary by account) ---
-        # wrdsapps.iclink was removed: confirmed via a prior run's manifest
-        # that it doesn't exist on this account (no_such_table) -- dead code.
-        if have_ibes and have_crsp:
-            pull_table(
-                db, log, "wrdsapps", "ibcrsphist",
-                WRDSAPPS_IBCRSPHIST_REQUIRED_COLUMNS,
-                optional_columns=WRDSAPPS_IBCRSPHIST_OPTIONAL_COLUMNS,
-                start_date=None, end_date=None,
-                force=force,
-            )
-        if have_crsp and have_comp:
-            pull_table(
-                db, log, "crsp", "ccmxpf_lnkhist",
-                CRSP_CCMXPF_LNKHIST_REQUIRED_COLUMNS,
-                optional_columns=CRSP_CCMXPF_LNKHIST_OPTIONAL_COLUMNS,
-                start_date=None, end_date=None,
                 force=force,
             )
     finally:
