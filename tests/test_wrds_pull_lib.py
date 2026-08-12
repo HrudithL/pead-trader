@@ -2593,6 +2593,173 @@ def test_determine_chunk_force_false_when_fingerprint_matches(tmp_path):
     ) is False
 
 
+def test_pull_table_kept_existing_carries_forward_prior_fingerprint_not_current(tmp_path):
+    """Regression test for the "stale fingerprint stamped on kept-existing
+    file" bug: a chunk is pulled under universe A (fingerprint A recorded
+    for out_path). The universe then changes to B; a fingerprint-mismatch-
+    triggered re-pull attempt under B legitimately returns zero rows, so
+    pull_table correctly leaves the existing (universe-A) file untouched.
+
+    Because there IS a real prior fingerprint (A) and it genuinely differs
+    from this run's (B), this is the "confirmed, known mismatch" scenario
+    (Fix 3) -- distinct from a first-attempt/no-prior-fingerprint case (see
+    test_pull_table_kept_existing_with_no_prior_fingerprint_records_blank_
+    not_current below) -- so the logged status is the non-success
+    "ok_empty_query_stale_fingerprint", not plain "ok_empty_query_kept_
+    existing". Either way, that manifest row must carry the ORIGINAL prior
+    fingerprint (A), not this run's (B) and not blank -- if it were stamped
+    with B, a THIRD run still under universe B would see a (false)
+    fingerprint match against B and skip re-pulling forever, permanently
+    freezing universe-A data under a fingerprint that no longer describes
+    it.
+    """
+    raw_dir = tmp_path / "raw"
+    out_dir = raw_dir / "crsp"
+    out_dir.mkdir(parents=True)
+    out_path = out_dir / "dsf_2005.parquet"
+    original_bytes = b"UNIVERSE-A-DATA"
+    out_path.write_bytes(original_bytes)
+    manifest_path = tmp_path / "manifest.csv"
+
+    fingerprint_a = "fingerprint-universe-a"
+    fingerprint_b = "fingerprint-universe-b"
+
+    # Run 1 (already happened): universe A's pull recorded fingerprint A for
+    # this exact out_path.
+    lib.append_manifest_row(
+        {"library": "crsp", "table": "dsf", "status": "ok", "rows": 100,
+         "path": lib._rel(out_path), "missing_columns": "",
+         "optional_columns_missing": "", "error": "", "start_date": "",
+         "end_date": "", "universe_fingerprint": fingerprint_a},
+        manifest_path=manifest_path,
+    )
+
+    # Sanity check: before run 2, universe B's fingerprint correctly
+    # mismatches fingerprint A -- a re-pull is (correctly) requested.
+    assert lib.determine_chunk_force(
+        out_path, manifest_path, universe_fingerprint=fingerprint_b, requested_force=False,
+    ) is True
+
+    # Run 2: the fingerprint-mismatch-triggered re-pull attempt under
+    # universe B legitimately returns zero rows.
+    empty_chunk = pd.DataFrame({"permno": pd.Series([], dtype="int64"),
+                                 "date": pd.Series([], dtype="object")})
+    db = StubDB(columns=["permno", "date"], chunks=[empty_chunk])
+    log = []
+    lib.pull_table(
+        db, log, "crsp", "dsf", ["permno", "date"], out_name="dsf_2005",
+        raw_dir=raw_dir, manifest_path=manifest_path,
+        stream=True, force=True, universe_fingerprint=fingerprint_b,
+    )
+
+    assert log[0]["status"] == "ok_empty_query_stale_fingerprint"
+    assert out_path.read_bytes() == original_bytes
+
+    # The critical assertion: the manifest row for this untouched file must
+    # carry the ORIGINAL prior fingerprint (A) -- not just "not B". Asserting
+    # only "!= fingerprint_b" would equally pass if the value were blanked
+    # out instead of correctly carried forward, which is NOT the behavior
+    # this module chooses (see determine_chunk_force/last_manifest_
+    # fingerprint_for_path's docstrings): carrying A forward is what lets a
+    # later run under universe A again (see below) correctly recognize this
+    # file as already up to date.
+    assert log[0]["universe_fingerprint"] == fingerprint_a
+
+    # Run 3: a subsequent run still under universe B must NOT see a
+    # fingerprint match -- it must attempt to re-pull this chunk again,
+    # not silently skip it forever.
+    assert lib.determine_chunk_force(
+        out_path, manifest_path, universe_fingerprint=fingerprint_b, requested_force=False,
+    ) is True
+
+    # Run 4: the universe reverts back to A (e.g. a bad universe
+    # regeneration is rolled back). This is the actual justification for
+    # choosing "carry the prior fingerprint forward" over "blank it out" --
+    # a carried-forward A now correctly matches the reverted-to-A universe,
+    # so determine_chunk_force must return False (skip: this chunk's data,
+    # never actually touched since it was pulled under A, is genuinely
+    # already up to date, no re-pull needed).
+    assert lib.determine_chunk_force(
+        out_path, manifest_path, universe_fingerprint=fingerprint_a, requested_force=False,
+    ) is False
+
+
+def test_pull_table_kept_existing_with_no_prior_fingerprint_records_blank_not_current(tmp_path):
+    """Fix 1's scenario: out_path exists but has NO recorded fingerprint
+    history at all (e.g. a file pulled before this manifest field existed,
+    or a rotated/reset manifest -- simulated here by simply never writing a
+    manifest row for it). determine_chunk_force therefore has no provenance
+    to trust and asks for a re-pull attempt (same as a genuine mismatch);
+    that attempt legitimately returns zero rows.
+
+    The recorded fingerprint for this event must end up blank/no-provenance
+    -- NOT this run's current fingerprint (that was the exact bug this PR
+    fixes: falling through to the current fingerprint via the old
+    `fingerprint=None`-as-sentinel collision) -- and a SUBSEQUENT run must
+    still attempt a re-pull (determine_chunk_force -> True) rather than
+    being permanently skipped because a wrong fingerprint got stamped.
+
+    This is also a genuinely DIFFERENT scenario from the confirmed-mismatch
+    case above: there's no real prior value to compare against, so this is
+    a first-attempt situation, not a confirmed-repeated-failure one -- the
+    status must stay the ordinary success "ok_empty_query_kept_existing",
+    not the non-success "ok_empty_query_stale_fingerprint".
+    """
+    raw_dir = tmp_path / "raw"
+    out_dir = raw_dir / "crsp"
+    out_dir.mkdir(parents=True)
+    out_path = out_dir / "dsf_2006.parquet"
+    original_bytes = b"PRE-FINGERPRINT-FEATURE-DATA"
+    out_path.write_bytes(original_bytes)
+    manifest_path = tmp_path / "manifest.csv"  # never created -- no history at all
+
+    fingerprint_x = "fingerprint-universe-x"
+
+    # Sanity check: no provenance at all -- a re-pull is (correctly)
+    # requested, same treatment as a genuine mismatch.
+    assert lib.determine_chunk_force(
+        out_path, manifest_path, universe_fingerprint=fingerprint_x, requested_force=False,
+    ) is True
+
+    empty_chunk = pd.DataFrame({"permno": pd.Series([], dtype="int64"),
+                                 "date": pd.Series([], dtype="object")})
+    db = StubDB(columns=["permno", "date"], chunks=[empty_chunk])
+    log = []
+    lib.pull_table(
+        db, log, "crsp", "dsf", ["permno", "date"], out_name="dsf_2006",
+        raw_dir=raw_dir, manifest_path=manifest_path,
+        stream=True, force=True, universe_fingerprint=fingerprint_x,
+    )
+
+    assert log[0]["status"] == "ok_empty_query_kept_existing"
+    assert out_path.read_bytes() == original_bytes
+
+    # Must be blank, not fingerprint_x (the bug this PR fixes) and not any
+    # other stand-in value.
+    assert log[0]["universe_fingerprint"] == ""
+
+    # A subsequent run must still see "no provenance" and attempt a re-pull
+    # again -- not be permanently skipped because fingerprint_x got wrongly
+    # stamped.
+    assert lib.determine_chunk_force(
+        out_path, manifest_path, universe_fingerprint=fingerprint_x, requested_force=False,
+    ) is True
+
+
+def test_ok_empty_query_stale_fingerprint_is_not_a_success_status():
+    """Fix 3: a confirmed carried-forward-fingerprint mismatch must gate a
+    script's overall exit code the same way ok_suspicious_zero_rows does --
+    a script must not report SUCCESS forever while sitting on data known to
+    be out of step with the active universe."""
+    assert "ok_empty_query_stale_fingerprint" not in lib.SUCCESS_STATUSES
+    failures = lib.find_run_log_failures([
+        {"status": "ok_empty_query_stale_fingerprint"},
+        {"status": "ok_empty_query_kept_existing"},
+    ])
+    assert len(failures) == 1
+    assert failures[0]["status"] == "ok_empty_query_stale_fingerprint"
+
+
 # ---------------------------------------------------------------------------
 # Fix 2 (round 3 review): a substantive, universe-filtered table returning
 # zero rows with NO exception and NO pre-existing file is essentially
