@@ -2005,14 +2005,18 @@ def build_string_in_clause(column: str, values) -> str:
 # table, not external/user input -- but this file's established pattern
 # elsewhere (_validate_sql_identifier, _validate_numeric_id) is "validate the
 # shape and fail loudly" rather than lean on a database setting. This
-# allowlist is intentionally generous (letters, digits, and the handful of
-# punctuation marks real I/B/E/S tickers use for share classes/warrants,
-# e.g. "BRK.A", "BF-B") rather than tightly matched to any one exchange's
-# ticker convention. Includes "/" too: I/B/E/S's own share-class suffix
-# convention (e.g. "NWS/1", "VIA/2") uses it, and a live pull found this
-# missing -- 14 of 7,355 resolved tickers failed the allowlist for exactly
-# this reason and blocked the entire ibes.* pull.
-_IBES_TICKER_RE = re.compile(r"^[A-Z0-9./-]{1,10}\Z")
+# allowlist is intentionally generous: letters, digits, and exactly four
+# punctuation marks real I/B/E/S tickers use for share classes/warrants --
+# ".", "_", "/", "-" -- e.g. "BRK.A", "BF-B" -- rather than tightly matched
+# to any one exchange's ticker convention. "/" covers I/B/E/S's own
+# share-class suffix convention (e.g. "NWS/1", "VIA/2"): a live pull found
+# this missing -- 14 of 7,355 resolved tickers failed the allowlist for
+# exactly this reason and blocked the entire ibes.* pull. "/" was added
+# alongside the existing "_", not swapped in for it: an accidental
+# "/"-for-"_" swap slipped into this character class once already, so keep
+# all four characters -- ".", "_", "/", "-" -- present if you touch this
+# regex again.
+_IBES_TICKER_RE = re.compile(r"^[A-Z0-9._/-]{1,10}\Z")
 
 
 def _validate_ibes_tickers(tickers) -> None:

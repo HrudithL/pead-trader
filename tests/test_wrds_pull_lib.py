@@ -1956,7 +1956,7 @@ def test_resolve_universe_ambiguous_gvkey_and_ticker_stages_carry_om_detail(tmp_
 
 
 def test_validate_ibes_tickers_accepts_typical_tickers():
-    lib._validate_ibes_tickers(["AAPL", "BRK.A", "BF-B", "A", "1234567890"])
+    lib._validate_ibes_tickers(["AAPL", "BRK.A", "BF-B", "BRK_A", "A", "1234567890"])
 
 
 def test_validate_ibes_tickers_accepts_share_class_suffix():
