@@ -369,6 +369,50 @@ def test_one_year_chunk_query_failure_does_not_prevent_others_and_is_reported(tm
     assert (dsf_rows["status"] == "ok").sum() == N_DSF_YEARS - 1
 
 
+def test_dsf_year_chunk_output_content_is_not_cross_contaminated_across_threads(tmp_path, monkeypatch):
+    """Goes one step further than test_dsf_year_chunking_produces_one_file_
+    per_year and test_filtered_where_sql_combines_permno_and_date_filters
+    above: those prove the right FILENAMES exist and the right SQL TEXT was
+    issued, but not that each file's actual DATA came from its own year's
+    connection rather than another concurrent thread's. Each simulated
+    connection here tags its returned rows with the year found in its own
+    query's WHERE clause (in the `prc` column, reusing an existing required
+    column rather than inventing a new one) -- if a closure-captured-loop-
+    variable bug (or any other cross-thread mixup: a shared mutable buffer,
+    a wrong `out_name`, etc.) let one thread's data or destination leak into
+    another's, this test would catch it directly by reading each
+    dsf_<year>.parquet file back and checking its tag against its own
+    filename's year, rather than inferring correctness indirectly from
+    filenames/SQL text alone."""
+    raw_dir, _metadata_dir, _manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
+
+    class TaggedFakeCrspDB(FakeCrspDB):
+        def raw_sql(self, sql, return_iter=False):
+            self.calls.append(sql)
+            select_list = sql.split("FROM")[0].replace("SELECT", "")
+            cols = [c.strip() for c in select_list.split(",") if c.strip()]
+            m = re.search(r"date BETWEEN '(\d{4})-", sql)
+            tag = m.group(1) if m else "0"
+            row = pd.DataFrame({c: ([tag] if c == "prc" else [1]) for c in cols})
+            return iter([row]) if return_iter else row
+
+    monkeypatch.setattr(lib, "connect", lambda: TaggedFakeCrspDB())
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py"])
+
+    crsp_script.main()
+
+    lookback_start = dt.date.fromisoformat(lib.LOOKBACK_START_DATE)
+    return_end = dt.date.fromisoformat(lib.RETURN_END_DATE)
+    for year in range(lookback_start.year, return_end.year + 1):
+        f = raw_dir / "crsp" / f"dsf_{year}.parquet"
+        df = pd.read_parquet(f)
+        assert (df["prc"].astype(str) == str(year)).all(), (
+            f"{f} contains data tagged for a different year than its own "
+            f"filename -- cross-contamination between concurrent year-chunk "
+            f"workers"
+        )
+
+
 def test_one_task_connection_failure_does_not_prevent_others_and_is_reported(tmp_path, monkeypatch, capsys):
     """A failure OUTSIDE pull_table()'s own protection -- e.g. lib.connect()
     itself raising for one of the 22 concurrent tasks (a real WRDS
