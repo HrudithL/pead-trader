@@ -989,8 +989,8 @@ def test_pull_table_query_failed_error_is_sanitized_in_manifest(tmp_path, monkey
     error_text = manifest.iloc[0]["error"]
     assert "myuser42" not in error_text
     assert "[REDACTED_WRDS_USERNAME]" in error_text
-    # The in-memory log (console-only, never committed) is deliberately NOT
-    # sanitized -- only what actually reaches the git-tracked file is.
+    # The in-memory log (console-only) is deliberately NOT sanitized --
+    # only what actually reaches the on-disk manifest file is.
     assert "myuser42" in log[0]["error"]
 
 

@@ -265,11 +265,13 @@ MANIFEST_FIELDNAMES = [
 ]
 
 # Manifest error-text sanitization (Fix 4): the manifest is a local, gitignored
-# run log (tracking it in git was tried and reverted -- see .gitignore), but
-# rows still get pasted into PR comments, reports, and console summaries, and
+# run log (tracking it in git was tried and reverted -- see .gitignore), but a
+# human may still paste its contents into a PR comment or report, and
 # exception text from psycopg2/sqlalchemy connection failures can embed
 # hostnames, usernames, or other connection details. _MAX_ERROR_LEN caps how
-# much raw exception text ever reaches those surfaces.
+# much raw exception text ever reaches the manifest FILE specifically -- it
+# does not cover the separate in-memory run_log printed to console, which
+# record()'s own docstring documents as deliberately left un-sanitized.
 _MAX_ERROR_LEN = 300
 
 # NEW this round: bounded concurrency cap shared by every script's internal

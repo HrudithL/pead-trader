@@ -30,27 +30,22 @@ credentials.json
 # Jupyter
 .ipynb_checkpoints/
 
-# Data / research artifacts (large, regenerable, or external-drive-backed)
-# NOTE: a plain `data/` ignore would also block the negations below (git
-# won't descend into an already-ignored directory to re-check un-ignore
-# rules), so this ignores contents one level at a time instead.
-data/*
-!data/metadata/
-data/metadata/*
-# Deliberately no negation for the WRDS pull manifests/library-list here
-# (tried once, reverted -- see git history). These aren't static
-# provenance: append_manifest_row() appends to the manifests on every
-# pull, and pull_wrds_reference.py rewrites wrds_available_libraries.txt
-# wholesale. last_manifest_fingerprint_for_path() reads the manifest back
-# to decide whether a chunk gets re-pulled, so a git-tracked copy makes
-# `git merge`/checkout a destructive writer of live run state: a local
-# untracked copy gets silently overwritten with no conflict, and worse,
-# these paths are symlinked to a shared location from every agent
-# worktree, so a merge that brings a tracked file under a symlinked
-# directory deletes the symlink outright, disconnecting that worktree
-# from all of data/metadata/. A `merge=union` driver doesn't help either
-# -- both failure modes are one-sided adds over an ignored/symlinked path,
-# so no merge driver ever runs. These stay local and gitignored.
+# Data / research artifacts (large, regenerable, or external-drive-backed).
+# Nothing under data/ is tracked, including data/metadata/'s WRDS pull
+# manifests and library-list file (tried once, reverted -- see git
+# history). Those aren't static provenance: append_manifest_row() appends
+# to the manifests on every pull, and pull_wrds_reference.py rewrites
+# wrds_available_libraries.txt wholesale. last_manifest_fingerprint_for_path()
+# reads the manifest back to decide whether a chunk gets re-pulled, so a
+# git-tracked copy makes `git merge`/checkout a destructive writer of live
+# run state: a local untracked copy gets silently overwritten with no
+# conflict, and worse, these paths are symlinked to a shared location from
+# every agent worktree, so a merge that brings a tracked file under a
+# symlinked directory deletes the symlink outright, disconnecting that
+# worktree from all of data/metadata/. A `merge=union` driver doesn't help
+# either -- both failure modes are one-sided adds over an ignored/symlinked
+# path, so no merge driver ever runs.
+data/
 mlruns/
 experiments/
 outputs/
