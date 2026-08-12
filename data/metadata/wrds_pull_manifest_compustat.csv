@@ -1,3 +1,0 @@
-library,table,status,rows,path,missing_columns,optional_columns_missing,error,pulled_at,start_date,end_date,universe_fingerprint
-comp,funda,ok,90061,data/raw_wrds/comp/funda.parquet,,,,2026-08-12T16:10:03+00:00,1995-01-01,2013-12-31,
-comp,fundq,ok,369168,data/raw_wrds/comp/fundq.parquet,,,,2026-08-12T16:10:31+00:00,1995-01-01,2014-06-30,

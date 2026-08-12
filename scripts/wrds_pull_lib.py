@@ -264,11 +264,12 @@ MANIFEST_FIELDNAMES = [
     "universe_fingerprint",
 ]
 
-# Manifest error-text sanitization (Fix 4): data/metadata/wrds_pull_manifest.csv
-# is git-tracked (a deliberate choice from a prior round), and exception text
-# from psycopg2/sqlalchemy connection failures can embed hostnames, usernames,
-# or other connection details. _MAX_ERROR_LEN caps how much raw exception text
-# ever reaches that file.
+# Manifest error-text sanitization (Fix 4): the manifest is a local, gitignored
+# run log (tracking it in git was tried and reverted -- see .gitignore), but
+# rows still get pasted into PR comments, reports, and console summaries, and
+# exception text from psycopg2/sqlalchemy connection failures can embed
+# hostnames, usernames, or other connection details. _MAX_ERROR_LEN caps how
+# much raw exception text ever reaches those surfaces.
 _MAX_ERROR_LEN = 300
 
 # NEW this round: bounded concurrency cap shared by every script's internal
@@ -331,7 +332,8 @@ _MANIFEST_LOCK = threading.Lock()
 
 def _sanitize_error_text(text: str) -> str:
     """Best-effort scrub of an exception message before it's written to the
-    git-tracked manifest CSV.
+    manifest CSV (local, gitignored, but still pasted into PR comments and
+    reports).
 
     Two simple steps, deliberately not a general-purpose credential
     scrubber:
@@ -429,7 +431,7 @@ def append_manifest_row(row: dict, manifest_path: Path) -> None:
     for everything it got through before it died.
 
     Any "error" field is sanitized (see _sanitize_error_text) right here,
-    at the single choke point where a row actually reaches the git-tracked
+    at the single choke point where a row actually reaches the manifest
     CSV -- rather than at each call site that sets "error" -- so a future
     call site can't forget to sanitize its own error text.
 
@@ -473,8 +475,8 @@ def append_manifest_row(row: dict, manifest_path: Path) -> None:
 def record(log: list, row: dict, manifest_path: Path) -> None:
     """Add one entry to both the in-memory run log (used only for the final
     printed summary -- kept un-sanitized since it's console-only, never
-    committed) and the on-disk manifest (the durable, git-tracked record,
-    sanitized by append_manifest_row).
+    committed) and the on-disk manifest (the durable on-disk record, local
+    and gitignored, sanitized by append_manifest_row).
 
     `log` is a plain list. Callers that share a `log` across THREADS (none
     of this library's own code does -- each of pull_wrds_crsp.py's per-year
