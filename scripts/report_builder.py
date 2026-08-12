@@ -29,6 +29,8 @@ import base64
 import datetime as dt
 import html
 import io
+import os
+import re
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -43,7 +45,10 @@ ChartCaption = tuple[matplotlib.figure.Figure, str]  # (figure, caption)
 
 # Print-quality default. Raise for charts with a lot of fine detail (dense
 # scatter, small tick labels); the acceptance bar is "readable, not
-# stretched/cut off," not any specific resolution.
+# stretched/cut off," not any specific resolution. Affects the raster
+# sharpness and file size of the embedded PNG only -- not layout: every
+# chart lays out at the full printable width regardless of dpi (see
+# div.chart-block img in _CSS).
 DEFAULT_CHART_DPI = 150
 
 # @page size is fixed at A4 per the plan -- not a caller-configurable option,
@@ -109,6 +114,13 @@ h2.section-heading {
     overflow-wrap: break-word;
 }
 
+div.section-body {
+    /* Matches div.summary/div.caption, which already set this on their
+    container, so long unbroken tokens stay on-page even if the wrapper
+    element changes later. */
+    overflow-wrap: break-word;
+}
+
 div.section-body p {
     margin: 0 0 3mm 0;
     overflow-wrap: break-word;
@@ -128,13 +140,17 @@ div.chart-block img {
     /* max-width relative to the content box (not a hardcoded mm value) so
     it always matches the real printable width regardless of @page margins.
     max-height is an explicit mm value, deliberately less than the ~261mm
-    full content height, leaving guaranteed room below for the caption even
-    for a chart that would otherwise want to be maximally tall. Both are
-    max-* with width/height:auto, so figures scale down to fit without ever
-    being stretched or cropped. */
+    full content height, leaving room below for a normal-length caption on
+    the same page -- a sufficiently long caption can still flow onto
+    following page(s); no content is ever lost, but the chart+caption
+    block is not guaranteed to stay on one page. width: 100% makes the
+    chart's on-page size depend only on the printable width, not on dpi;
+    object-fit: contain prevents stretching/cropping when max-height
+    clamps a tall figure. */
     max-width: 100%;
     max-height: 180mm;
-    width: auto;
+    width: 100%;
+    object-fit: contain;
     height: auto;
     display: block;
     margin: 0 auto;
@@ -185,13 +201,19 @@ def build_pdf_report(
         Ordered ``(figure, caption)`` pairs. ``figure`` is any object with a
         matplotlib-compatible ``.savefig()`` (a ``matplotlib.figure.Figure``
         in practice). Each chart is rendered in its own region sized to fit
-        one A4 page -- scaled down to fit if needed, never stretched or
-        cropped -- with its caption directly beneath it. Rendered in order,
-        after all sections. This function does not close the figures it's
-        given; the caller keeps ownership and should call ``plt.close(fig)``
-        itself afterward if generating many charts in one process.
+        one A4 page -- scaled to the full printable width, and scaled down
+        further only if needed to fit the page height, aspect ratio always
+        preserved, never stretched or cropped -- with its caption directly
+        beneath it. Rendered in order, after all sections. This function
+        does not close the figures it's given; the caller keeps ownership
+        and should call ``plt.close(fig)`` itself afterward if generating
+        many charts in one process.
     dpi:
         Raster resolution used when embedding each chart as a PNG.
+        Controls the sharpness (and file size) of the embedded image only,
+        NOT the chart's size on the page -- every chart lays out at full
+        printable width with aspect ratio preserved regardless of dpi; a
+        low dpi looks blurry, not small.
 
     Returns
     -------
@@ -205,12 +227,28 @@ def build_pdf_report(
     special characters (``<``, ``&``, quotes, ...) in real report content
     can't corrupt the layout.
     """
+    out_path = Path(output_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    # Built only after the mkdir above, so a bad output path fails fast
+    # instead of paying for HTML/chart-rasterization work first.
     document_html = _build_html(
         title=title, summary=summary, sections=sections, charts=charts, dpi=dpi
     )
-    out_path = Path(output_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    HTML(string=document_html).write_pdf(str(out_path))
+    # Render to a sibling temp path and atomically replace the destination,
+    # so a failure or crash mid-render never leaves a truncated/corrupt PDF
+    # at out_path -- readers either see the old file (if any) or the
+    # complete new one, never a partial write. A sibling path (not
+    # tempfile.mkstemp) guarantees the same filesystem, which os.replace
+    # needs to be atomic; there are no concurrent writers to worry about.
+    tmp_path = out_path.with_name(out_path.name + ".tmp")
+    try:
+        HTML(string=document_html).write_pdf(str(tmp_path))
+        os.replace(tmp_path, out_path)
+    finally:
+        # No-op if the replace above succeeded (nothing left at tmp_path);
+        # cleans up the leftover partial file if the render or replace
+        # failed instead.
+        tmp_path.unlink(missing_ok=True)
     return out_path
 
 
@@ -258,7 +296,7 @@ def _build_html(
 
 def _chart_block_html(figure: matplotlib.figure.Figure, caption: str, dpi: int) -> str:
     data_uri = _figure_to_png_data_uri(figure, dpi)
-    alt_text = html.escape(caption) if caption else "Chart"
+    alt_text = html.escape(caption) if caption.strip() else "Chart"
     return (
         '<div class="chart-block">'
         f'<img src="{data_uri}" alt="{alt_text}">'
@@ -270,17 +308,21 @@ def _chart_block_html(figure: matplotlib.figure.Figure, caption: str, dpi: int) 
 def _figure_to_png_data_uri(figure: matplotlib.figure.Figure, dpi: int) -> str:
     """Render a matplotlib figure to a PNG and encode it as a base64 data
     URI, so it can be embedded directly in the HTML with no temp file."""
-    buffer = io.BytesIO()
-    figure.savefig(buffer, format="png", dpi=dpi, bbox_inches="tight")
-    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    with io.BytesIO() as buffer:
+        figure.savefig(buffer, format="png", dpi=dpi, bbox_inches="tight")
+        encoded = base64.b64encode(buffer.getbuffer()).decode("ascii")
     return f"data:image/png;base64,{encoded}"
 
 
 def _escape_multiline(text: str) -> str:
     """HTML-escape text and turn blank-line-separated paragraphs into <p>
     tags (single newlines become <br>), so callers can write plain, natural
-    multi-paragraph prose without knowing any HTML."""
-    paragraphs = [p.strip() for p in text.strip().split("\n\n") if p.strip()]
+    multi-paragraph prose without knowing any HTML. Line endings are
+    normalized first (CRLF and bare CR both become LF), and a blank line
+    counts as a paragraph separator even if it's whitespace-only (spaces or
+    tabs), not just a fully empty line."""
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    paragraphs = [p.strip() for p in re.split(r"\n[ \t]*\n", normalized.strip()) if p.strip()]
     rendered = []
     for paragraph in paragraphs:
         escaped = html.escape(paragraph).replace("\n", "<br>")
