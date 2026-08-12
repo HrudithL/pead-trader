@@ -1097,7 +1097,7 @@ class FakeMainDB:
         self.closed = True
 
 
-def _patch_main_env(monkeypatch, tmp_path):
+def _patch_main_env(monkeypatch, tmp_path, enforce_universe_floor=False):
     """Point RAW_DIR/METADATA_DIR/MANIFEST_PATH at a tmp_path sandbox so
     main() never touches the real repo's data/ directory during tests, and
     return the paths a test needs to make assertions against.
@@ -1108,6 +1108,15 @@ def _patch_main_env(monkeypatch, tmp_path):
     into the test process's environment. Harmless today since connect() is
     always mocked in these tests, but a unit test shouldn't touch a real
     credentials file at all.
+
+    `enforce_universe_floor` (default False): Fix 4 added an ABSOLUTE floor
+    (MIN_UNIVERSE_SECID_COUNT, 8,000) on the universe file's row count,
+    checked before any WRDS connection at all -- but nearly every main()-
+    level test in this file uses a deliberately tiny (1-10 row) synthetic
+    universe fixture that has nothing to do with what Fix 4 is testing.
+    Patch the floor down to 0 by default so those tests keep exercising
+    what they were written for; the dedicated Fix 4 test passes
+    enforce_universe_floor=True to get the real 8,000 floor back.
     """
     raw_dir = tmp_path / "raw"
     metadata_dir = tmp_path / "metadata"
@@ -1116,6 +1125,8 @@ def _patch_main_env(monkeypatch, tmp_path):
     monkeypatch.setattr(pwd, "METADATA_DIR", metadata_dir)
     monkeypatch.setattr(pwd, "MANIFEST_PATH", manifest_path)
     monkeypatch.setattr(pwd, "load_env_file", lambda path: None)
+    if not enforce_universe_floor:
+        monkeypatch.setattr(pwd, "MIN_UNIVERSE_SECID_COUNT", 0)
 
     # Phase B (resolve_universe) reads data/metadata/optionmetrics_universe*
     # .parquet -- real files that live in the actual repo and are NOT
@@ -2136,6 +2147,91 @@ def test_resolve_universe_gvkey_survives_as_zero_padded_string_despite_numeric_s
     )
 
 
+def test_resolve_universe_gvkey_survives_as_zero_padded_string_despite_float64_source(tmp_path):
+    """Fix 1, round 2: crsp.ccmxpf_lnkhist's gvkey column supplied as a
+    genuine float64 (1000.0, NOT the int64 1000 the test above covers) --
+    this is exactly what pull_table's non-streaming path (used for this
+    small Phase A linking table) can actually produce: pandas' dtype
+    inference lands on float64 for a gvkey column whenever it has any
+    null, or under certain other numeric-inference conditions. The pre-fix
+    bug: `.astype(str)` on a float64 column gives "1000.0" (already 6+
+    characters), so `.str.zfill(6)` is a NO-OP -- silently producing a
+    GVKEY that matches nothing in Compustat, without the resolution-floor/
+    empty checks ever catching it (the gvkey list is non-empty, just
+    wrong). resolve_universe must still recover the correct zero-padded
+    "001000"."""
+    om = pd.DataFrame({
+        "secid": [41], "cusip": ["00000041"], "ticker": ["NNN"], "issuer": ["NNN CORP"],
+    })
+    om_hist = pd.DataFrame({"secid": [], "cusip": []})
+    stocknames = pd.DataFrame({
+        "permno": [4141], "cusip": ["00000041"], "ncusip": ["00000041"],
+    })
+    ccmxpf = pd.DataFrame({
+        "lpermno": [4141],
+        "gvkey": pd.array([1000.0], dtype="float64"),
+    })
+    assert ccmxpf["gvkey"].dtype == "float64", (
+        "sanity check: this test is only meaningful if the source column "
+        "really is float64, not int64/object"
+    )
+    ibcrsphist = pd.DataFrame({"permno": [4141], "ticker": ["NNN"]})
+
+    resolved, *_ = _resolve_universe_fixture(
+        tmp_path, om=om, om_hist=om_hist, stocknames=stocknames, ccmxpf=ccmxpf, ibcrsphist=ibcrsphist,
+    )
+
+    assert resolved.gvkeys == ["001000"], (
+        f"GVKEY must come back as the correct zero-padded 6-digit string "
+        f"even when the source column is float64 -- got {resolved.gvkeys!r}. "
+        f"The pre-fix bug would have silently produced ['1000.0'] instead, "
+        f"which matches nothing in Compustat."
+    )
+    clause = pwd.build_string_in_clause("gvkey", resolved.gvkeys)
+    assert clause == "gvkey IN ('001000')"
+
+
+# ---------------------------------------------------------------------------
+# Fix 1, round 2: _normalize_gvkeys (root-cause dtype fix) and
+# _validate_gvkeys (safety net) in isolation, not just end-to-end via
+# resolve_universe above.
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_gvkeys_handles_float64_dtype():
+    result = pwd._normalize_gvkeys(pd.Series([1000.0, 2.0], dtype="float64"))
+    assert list(result) == ["001000", "000002"]
+
+
+def test_normalize_gvkeys_handles_int64_dtype():
+    result = pwd._normalize_gvkeys(pd.Series([1000, 2], dtype="int64"))
+    assert list(result) == ["001000", "000002"]
+
+
+def test_normalize_gvkeys_handles_object_dtype_already_correct():
+    result = pwd._normalize_gvkeys(pd.Series(["001000", "000002"], dtype="object"))
+    assert list(result) == ["001000", "000002"]
+
+
+def test_validate_gvkeys_accepts_well_formed():
+    pwd._validate_gvkeys(["001000", "999999"])  # must not raise
+
+
+def test_validate_gvkeys_rejects_float_like_string():
+    # This is exactly the pre-fix bug's output shape -- the safety net must
+    # catch it even if _normalize_gvkeys's root-cause fix were ever
+    # bypassed or regressed.
+    with pytest.raises(ValueError):
+        pwd._validate_gvkeys(["1000.0"])
+
+
+def test_validate_gvkeys_rejects_wrong_length():
+    with pytest.raises(ValueError):
+        pwd._validate_gvkeys(["12345"])
+    with pytest.raises(ValueError):
+        pwd._validate_gvkeys(["1234567"])
+
+
 # ---------------------------------------------------------------------------
 # Fix 3: crsp.ccmxpf_lnkhist / wrdsapps.ibcrsphist missing/unpullable at the
 # resolve_universe() level (see the main()-level dedicated tests earlier in
@@ -2184,6 +2280,18 @@ def test_resolve_universe_missing_ccmxpf_lnkhist_skips_gvkey_only(tmp_path):
     assert resolved.ibes_ticker_resolution_skipped is False
     assert resolved.ibes_ticker_skip_reason == ""
 
+    # Finding 6 (round 2 review): GVKEY resolution was SKIPPED (never
+    # evaluated), so the coverage-gap audit CSV must be empty -- NOT list
+    # every resolved PERMNO as if each one had been individually checked
+    # and found to have no GVKEY link. That would conflate "we never
+    # checked" with "we checked and it doesn't link".
+    assert resolved.n_permnos_without_gvkey == 0
+    without_gvkey_df = pd.read_csv(tmp_path / "metadata" / "permnos_without_gvkey.csv")
+    assert without_gvkey_df.empty, (
+        "GVKEY resolution was skipped -- permnos_without_gvkey.csv must be "
+        "empty, not populated with every resolved PERMNO"
+    )
+
 
 def test_resolve_universe_missing_ibcrsphist_skips_ibes_ticker_only(tmp_path):
     om = pd.DataFrame({
@@ -2221,6 +2329,18 @@ def test_resolve_universe_missing_ibcrsphist_skips_ibes_ticker_only(tmp_path):
     assert "ibcrsphist" in resolved.ibes_ticker_skip_reason
     assert resolved.gvkey_resolution_skipped is False
     assert resolved.gvkey_skip_reason == ""
+
+    # Finding 6 (round 2 review): same reasoning as the ccmxpf_lnkhist test
+    # above, for the I/B/E/S ticker side.
+    assert resolved.n_permnos_without_ibes_ticker == 0
+    without_ibes_ticker_df = pd.read_csv(
+        tmp_path / "metadata" / "permnos_without_ibes_ticker.csv"
+    )
+    assert without_ibes_ticker_df.empty, (
+        "I/B/E/S ticker resolution was skipped -- "
+        "permnos_without_ibes_ticker.csv must be empty, not populated with "
+        "every resolved PERMNO"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2348,6 +2468,211 @@ def test_validate_ibes_tickers_rejects_lowercase():
 
 
 # ---------------------------------------------------------------------------
+# Fix 2, round 2: a single malformed/blank I/B/E/S ticker must never abort
+# the ENTIRE run -- only ever degrade the I/B/E/S family, the same way a
+# missing wrdsapps.ibcrsphist table already does (Fix 3, round 1).
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_universe_blank_ibes_ticker_treated_as_missing_link(tmp_path):
+    """A blank/whitespace-only ticker in wrdsapps.ibcrsphist (e.g. ""
+    surviving dropna() because it's an empty string, not NaN) must be
+    dropped the same way a missing link is -- reducing this permno's
+    I/B/E/S coverage and landing it in permnos_without_ibes_ticker.csv --
+    rather than reaching main()'s ticker-format allowlist, where it would
+    previously have raised and (per the bug this round fixes) aborted the
+    entire run including CRSP/Compustat pulls that don't need I/B/E/S at
+    all."""
+    om = pd.DataFrame({
+        "secid": [90], "cusip": ["00000090"], "ticker": ["RRR"], "issuer": ["RRR CORP"],
+    })
+    om_hist = pd.DataFrame({"secid": [], "cusip": []})
+    stocknames = pd.DataFrame({
+        "permno": [9090], "cusip": ["00000090"], "ncusip": ["00000090"],
+    })
+    ccmxpf = pd.DataFrame({"lpermno": [9090], "gvkey": ["090000"]})
+    ibcrsphist = pd.DataFrame({"permno": [9090], "ticker": ["   "]})  # blank after strip
+
+    resolved, _unresolved_df, _ambiguous_df, _resolved_df, _without_gvkey_df, without_ibes_ticker_df = (
+        _resolve_universe_fixture(
+            tmp_path, om=om, om_hist=om_hist, stocknames=stocknames, ccmxpf=ccmxpf, ibcrsphist=ibcrsphist,
+        )
+    )
+
+    assert resolved.ibes_tickers == [], (
+        "a blank ticker must not appear in the resolved ticker list"
+    )
+    assert resolved.ibes_ticker_resolution_skipped is False, (
+        "the linking table itself WAS available -- this is a per-row data "
+        "quality issue, not a missing/unpullable table"
+    )
+    assert list(without_ibes_ticker_df["permno"]) == [9090], (
+        "the permno with only a blank ticker must show up in the "
+        "coverage-gap audit, same as if it had no ibcrsphist row at all"
+    )
+
+
+class _FakeMainDBTwoSecidsWithBlankTicker(FakeMainDB):
+    """Two OM secids/permnos; wrdsapps.ibcrsphist returns a valid ticker for
+    permno 1 and a blank (whitespace-only) ticker for permno 2. Fix 2(a)
+    must silently drop the blank one (reducing I/B/E/S coverage) rather
+    than letting it reach ticker-format validation -- while permno 1's
+    valid ticker keeps the I/B/E/S family non-empty, so this test isn't
+    confused with the unrelated "attempted but zero tickers" floor check.
+    """
+
+    def raw_sql(self, sql, return_iter=False):
+        match = re.search(r"FROM (\S+)", sql)
+        key = match.group(1) if match else "?"
+        if not return_iter and key in (
+            "crsp.stocknames", "crsp.ccmxpf_lnkhist", "wrdsapps.ibcrsphist",
+        ):
+            self.calls.append({"key": key, "sql": sql, "return_iter": return_iter})
+            select_list = sql.split("FROM")[0].replace("SELECT", "")
+            cols = [c.strip() for c in select_list.split(",") if c.strip()]
+            if key == "crsp.stocknames":
+                data = {"permno": [1, 2], "cusip": ["1", "2"], "ncusip": ["1", "2"]}
+            elif key == "crsp.ccmxpf_lnkhist":
+                data = {"lpermno": [1, 2], "gvkey": [1, 2]}
+            else:  # wrdsapps.ibcrsphist
+                data = {"permno": [1, 2], "ticker": ["AAA", "   "]}
+            return pd.DataFrame({c: data.get(c, [1, 1]) for c in cols})
+        return super().raw_sql(sql, return_iter=return_iter)
+
+
+def test_main_blank_ibes_ticker_does_not_block_crsp_or_compustat_pulls(tmp_path, monkeypatch):
+    """Fix 2(a) end-to-end via main(): a blank ticker for one permno must
+    NOT prevent crsp.dsf/comp.fundq from being pulled -- it can only ever
+    affect the I/B/E/S family, and even that family must keep running here
+    (permno 1's valid ticker means resolution isn't zero)."""
+    _raw_dir, metadata_dir, _manifest_path = _patch_main_env(monkeypatch, tmp_path)
+    pd.DataFrame({
+        "secid": [1, 2], "cusip": ["1", "2"], "ticker": ["OMX1", "OMX2"],
+        "issuer": ["ISSUER 1", "ISSUER 2"], "sic": ["9999", "9999"],
+    }).to_parquet(metadata_dir / "optionmetrics_universe.parquet", index=False)
+
+    fake_db = _FakeMainDBTwoSecidsWithBlankTicker()
+    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
+
+    pwd.main()  # must NOT raise SystemExit
+
+    queried_keys = {c["key"] for c in fake_db.calls}
+    assert "crsp.dsf" in queried_keys
+    assert "comp.fundq" in queried_keys
+    assert "ibes.statsumu_epsus" in queried_keys, (
+        "the I/B/E/S family must still run: permno 1's valid ticker means "
+        "resolution wasn't zero, and permno 2's blank ticker must have been "
+        "silently dropped rather than raising"
+    )
+
+
+class _FakeMainDBMalformedIbesTicker(FakeMainDB):
+    """wrdsapps.ibcrsphist returns a non-blank, malformed ticker ("BAD
+    TICKER!" -- fails the _IBES_TICKER_RE allowlist) for the one resolved
+    permno. Used to prove BOTH (a) Fix 2: a malformed ticker degrades ONLY
+    the I/B/E/S family, never aborts the whole run, and (b) Fix 3: main()
+    actually calls _validate_ibes_tickers somewhere reachable -- if that
+    call were ever removed/bypassed (e.g. replaced with `pass`), this
+    malformed ticker would sail through build_string_in_clause unchecked
+    and the ibes.* pulls would run normally, making this test's "must be
+    skipped" assertion fail.
+    """
+
+    def raw_sql(self, sql, return_iter=False):
+        match = re.search(r"FROM (\S+)", sql)
+        key = match.group(1) if match else "?"
+        if key == "wrdsapps.ibcrsphist" and not return_iter:
+            self.calls.append({"key": key, "sql": sql, "return_iter": return_iter})
+            select_list = sql.split("FROM")[0].replace("SELECT", "")
+            cols = [c.strip() for c in select_list.split(",") if c.strip()]
+            return pd.DataFrame({c: (["BAD TICKER!"] if c == "ticker" else [1]) for c in cols})
+        return super().raw_sql(sql, return_iter=return_iter)
+
+
+def test_main_malformed_ibes_ticker_degrades_ibes_family_only_not_whole_run(tmp_path, monkeypatch):
+    """Fix 2 + Fix 3 combined: a genuinely malformed (non-blank) I/B/E/S
+    ticker must degrade ONLY the ibes.* pulls -- never abort crsp.dsf/
+    comp.fundq, which don't need I/B/E/S linkage at all. See the fake DB
+    class docstring above for why this also proves main()'s
+    _validate_ibes_tickers call is load-bearing (Fix 3)."""
+    _raw_dir, _metadata_dir, manifest_path = _patch_main_env(monkeypatch, tmp_path)
+    fake_db = _FakeMainDBMalformedIbesTicker()
+    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
+
+    pwd.main()  # must NOT raise SystemExit -- this is the core Fix 2 bug
+
+    queried_keys = {c["key"] for c in fake_db.calls}
+    assert "ibes.statsumu_epsus" not in queried_keys, (
+        "a malformed ticker must skip the I/B/E/S family -- if this "
+        "assertion fails, main()'s _validate_ibes_tickers call may have "
+        "been removed or bypassed (Fix 3)"
+    )
+    assert "ibes.actu_epsus" not in queried_keys
+    assert "ibes.detu_epsus" not in queried_keys
+    assert "crsp.dsf" in queried_keys, (
+        "CRSP pulls must not be held hostage by a bad I/B/E/S ticker"
+    )
+    assert "comp.fundq" in queried_keys, (
+        "Compustat pulls must not be held hostage by a bad I/B/E/S ticker"
+    )
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    skip_rows = manifest[manifest["status"] == "ibes_ticker_validation_failed"]
+    assert len(skip_rows) == 1, (
+        "expected exactly one manifest row recording the ticker-validation "
+        "failure with a clear reason"
+    )
+
+
+class _FakeMainDBMalformedGvkey(FakeMainDB):
+    """Like _FakeMainDBMalformedIbesTicker, but for crsp.ccmxpf_lnkhist's
+    gvkey column (Fix 1's _validate_gvkeys safety net) -- must degrade ONLY
+    comp.fundq/comp.funda, never abort the whole run."""
+
+    def raw_sql(self, sql, return_iter=False):
+        match = re.search(r"FROM (\S+)", sql)
+        key = match.group(1) if match else "?"
+        if key == "crsp.ccmxpf_lnkhist" and not return_iter:
+            self.calls.append({"key": key, "sql": sql, "return_iter": return_iter})
+            select_list = sql.split("FROM")[0].replace("SELECT", "")
+            cols = [c.strip() for c in select_list.split(",") if c.strip()]
+            return pd.DataFrame({c: (["BAD-GVKEY!"] if c == "gvkey" else [1]) for c in cols})
+        return super().raw_sql(sql, return_iter=return_iter)
+
+
+def test_main_gvkey_validation_failure_degrades_compustat_only_not_whole_run(tmp_path, monkeypatch):
+    """Fix 1's _validate_gvkeys safety net: a GVKEY that fails shape
+    validation must degrade ONLY comp.fundq/comp.funda, never abort
+    crsp.dsf or the ibes.* pulls, which don't need GVKEY linkage at all --
+    the same per-family-degrade discipline Fix 2 establishes for I/B/E/S
+    tickers."""
+    _raw_dir, _metadata_dir, manifest_path = _patch_main_env(monkeypatch, tmp_path)
+    fake_db = _FakeMainDBMalformedGvkey()
+    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
+
+    pwd.main()  # must NOT raise SystemExit
+
+    queried_keys = {c["key"] for c in fake_db.calls}
+    assert "comp.fundq" not in queried_keys, (
+        "a malformed GVKEY must skip ONLY comp.fundq/comp.funda -- if this "
+        "assertion fails, main()'s _validate_gvkeys call or gvkey_ok gating "
+        "may have been removed or bypassed"
+    )
+    assert "comp.funda" not in queried_keys
+    assert "crsp.dsf" in queried_keys, "CRSP pulls must not be held hostage by a bad GVKEY"
+    assert "ibes.statsumu_epsus" in queried_keys, (
+        "I/B/E/S pulls must not be held hostage by a bad GVKEY"
+    )
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    skip_rows = manifest[manifest["status"] == "gvkey_validation_failed"]
+    assert len(skip_rows) == 1
+
+
+# ---------------------------------------------------------------------------
 # Fix 8: CUSIP length sanity check -- logs a warning (never hard-fails) when
 # normalized CUSIPs on either side of the join aren't all length 8.
 # ---------------------------------------------------------------------------
@@ -2427,6 +2752,65 @@ def test_main_resolution_rate_below_floor_aborts_before_phase_c(tmp_path, monkey
     }
     queried_keys = {c["key"] for c in fake_db.calls}
     assert not (phase_c_keys & queried_keys)
+
+
+# ---------------------------------------------------------------------------
+# Fix 4: an ABSOLUTE floor on the universe file's secid count
+# (MIN_UNIVERSE_SECID_COUNT), independent of the RATE-based
+# MIN_PERMNO_RESOLUTION_RATE floor above -- a truncated/corrupted universe
+# file that happens to resolve at 100% would sail straight through a
+# rate-only floor.
+# ---------------------------------------------------------------------------
+
+
+def test_check_universe_secid_floor_rejects_below_threshold(tmp_path):
+    path = tmp_path / "tiny_universe.parquet"
+    pd.DataFrame({"secid": [1, 2, 3]}).to_parquet(path, index=False)
+    with pytest.raises(pwd.UniverseResolutionError):
+        pwd._check_universe_secid_floor(path)
+
+
+def test_check_universe_secid_floor_accepts_at_threshold(tmp_path, monkeypatch):
+    monkeypatch.setattr(pwd, "MIN_UNIVERSE_SECID_COUNT", 3)
+    path = tmp_path / "universe.parquet"
+    pd.DataFrame({"secid": [1, 2, 3]}).to_parquet(path, index=False)
+    assert pwd._check_universe_secid_floor(path) == 3
+
+
+def test_check_universe_secid_floor_missing_file_raises(tmp_path):
+    with pytest.raises(pwd.UniverseResolutionError):
+        pwd._check_universe_secid_floor(tmp_path / "does_not_exist.parquet")
+
+
+def test_main_tiny_universe_file_rejected_by_absolute_floor_even_at_100pct_resolution(
+    tmp_path, monkeypatch
+):
+    """A 3-row universe file must be rejected by the ABSOLUTE secid-count
+    floor even though every row uses the SAME cusip ("1") that FakeMainDB's
+    default crsp.stocknames row resolves -- i.e. it would resolve at 100%
+    against the rate-based floor alone. connect() is deliberately NOT
+    patched to a working fake: the absolute floor must fire BEFORE any
+    WRDS connection is attempted at all (see main()'s call site, which
+    runs this check ahead of connect())."""
+    _raw_dir, metadata_dir, _manifest_path = _patch_main_env(
+        monkeypatch, tmp_path, enforce_universe_floor=True
+    )
+    pd.DataFrame({
+        "secid": [1, 2, 3], "cusip": ["1", "1", "1"], "ticker": ["A", "B", "C"],
+        "issuer": ["A CORP", "B CORP", "C CORP"], "sic": ["9999"] * 3,
+    }).to_parquet(metadata_dir / "optionmetrics_universe.parquet", index=False)
+
+    def _unexpected_connect():
+        raise AssertionError(
+            "connect() must not be called -- the absolute universe-size "
+            "floor should abort before any WRDS connection is attempted"
+        )
+
+    monkeypatch.setattr(pwd, "connect", _unexpected_connect)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
+
+    with pytest.raises(SystemExit):
+        pwd.main()
 
 
 class _FakeMainDBUnlinkedGvkey(FakeMainDB):

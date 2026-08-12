@@ -983,14 +983,59 @@ class UniverseResolutionError(RuntimeError):
     """
 
 
-# Fix 2: the floor below which the secid-to-PERMNO resolution rate is
-# treated as a systemic failure (bad CRSP pull, CUSIP format mismatch, etc.)
-# rather than an ordinary real-world linking gap, and the whole run is
+# Fix 2 (round 1): the floor below which the secid-to-PERMNO resolution rate
+# is treated as a systemic failure (bad CRSP pull, CUSIP format mismatch,
+# etc.) rather than an ordinary real-world linking gap, and the whole run is
 # aborted before any Phase C query. This project's documented expectation
 # (memory/phase1-equity-pead-plan.md) is ~99.99% resolution once real CRSP
 # data is pulled -- 90% is deliberately far below that, so it only fires on
 # a genuine systemic break, never on ordinary day-to-day linking noise.
 MIN_PERMNO_RESOLUTION_RATE = 0.90
+
+# Fix 4 (round 2): an independent floor on the ABSOLUTE number of secids
+# loaded from data/metadata/optionmetrics_universe.parquet, checked BEFORE
+# any resolution (or WRDS connection) is attempted. MIN_PERMNO_RESOLUTION_RATE
+# above is a RATE, not a count -- a corrupted/truncated universe file (a
+# partial regeneration, a bad write, etc.) that happens to resolve at 100%
+# would sail straight through a rate-only floor, since 100% of a tiny, wrong
+# universe is still 100%. The real file has ~8,358 rows; 8,000 leaves
+# meaningful margin below that while still catching a file that's an order
+# of magnitude too small. See _check_universe_secid_floor.
+MIN_UNIVERSE_SECID_COUNT = 8000
+
+
+def _check_universe_secid_floor(om_universe_path) -> int:
+    """Fix 4: raise UniverseResolutionError if
+    data/metadata/optionmetrics_universe.parquet has fewer than
+    MIN_UNIVERSE_SECID_COUNT rows -- BEFORE any resolution logic runs and
+    (per main()'s call site) before a WRDS connection is even attempted.
+
+    This is deliberately independent of MIN_PERMNO_RESOLUTION_RATE: that
+    check only ever sees a RATE (resolved / total), so a universe file
+    that's been truncated or corrupted down to a handful of rows -- every
+    one of which happens to resolve successfully -- computes 100% and would
+    sail straight past a rate-only floor. Gating on the absolute count here
+    catches exactly that case before any Phase C (or even Phase A) work is
+    attempted.
+
+    Returns the row count on success (informational for the caller); the
+    caller doesn't need to keep this value since resolve_universe() re-reads
+    the same file itself as part of its own PERMNO-resolution stage.
+    """
+    om = _load_parquet_or_raise(om_universe_path, "optionmetrics_universe.parquet")
+    n = len(om)
+    if n < MIN_UNIVERSE_SECID_COUNT:
+        raise UniverseResolutionError(
+            f"optionmetrics_universe.parquet has only {n:,} row(s), below "
+            f"the MIN_UNIVERSE_SECID_COUNT floor of {MIN_UNIVERSE_SECID_COUNT:,} "
+            f"-- the real universe file has ~8,358 rows, so this looks like "
+            f"a truncated/corrupted regeneration, not a genuinely small "
+            f"universe. A rate-based floor alone would not catch this: if "
+            f"every one of these few rows happened to resolve, the rate "
+            f"would read 100% and this run would otherwise proceed to pull "
+            f"a tiny, wrong dataset from WRDS and report success."
+        )
+    return n
 
 
 @dataclass
@@ -1123,6 +1168,61 @@ def _check_cusip_lengths(series: pd.Series, context: str) -> None:
             f"{bad_lengths}) -- this can indicate a format mismatch that "
             f"would otherwise silently produce a zero-match join.",
             flush=True,
+        )
+
+
+_GVKEY_RE = re.compile(r"^\d{6}\Z")
+
+
+def _normalize_gvkeys(series: pd.Series) -> pd.Series:
+    """Normalize a GVKEY-shaped column to its correct zero-padded 6-digit
+    string form (Fix 1, round 2 -- root-cause fix).
+
+    Compustat's GVKEY is a fixed-width, zero-padded `character varying(6)`
+    (e.g. "001000"), never a number. `.astype(str).str.strip().str.zfill(6)`
+    recovers the right value when the source column is already
+    object/int64-typed (e.g. int 1000 -> "1000" -> zfill -> "001000"), but
+    silently produces the WRONG value when the source column is float64:
+    this happens whenever `crsp.ccmxpf_lnkhist` came back through
+    pull_table's non-streaming path (used for this small Phase A linking
+    table), which does no schema pinning -- pandas' dtype inference can
+    land on float64 for a `gvkey` column whenever it has any null, or under
+    certain other numeric-inference conditions. 1000.0 -> str -> "1000.0"
+    -> zfill(6) is then a NO-OP (already 6 characters) -- silently
+    producing a GVKEY that matches nothing in Compustat.
+
+    Fix: detect a float dtype explicitly and route it through
+    float -> nullable Int64 -> str -> zfill(6), which correctly turns
+    1000.0 into "001000". Any other dtype (object/int64/etc.) keeps the
+    original str/strip/zfill path, which is already correct for those.
+    Callers are expected to have already dropped null gvkey rows (see
+    `cc.dropna(subset=["lpermno", "gvkey"])` at this function's one call
+    site) -- this does not itself handle NaN.
+    """
+    if pd.api.types.is_float_dtype(series):
+        return series.astype("Int64").astype(str).str.zfill(6)
+    return series.astype(str).str.strip().str.zfill(6)
+
+
+def _validate_gvkeys(gvkeys) -> None:
+    """Raise ValueError naming every GVKEY that fails to match the expected
+    zero-padded 6-digit shape (`^\\d{6}\\Z`, see _GVKEY_RE) after
+    normalization.
+
+    This is a SAFETY NET, not the primary defense: _normalize_gvkeys
+    (called inside resolve_universe) already fixes the actual root cause
+    (a float64-typed gvkey column silently coercing to the wrong string).
+    This catches anything that still doesn't conform -- e.g. a genuinely
+    malformed value from some future data source -- so a shape violation
+    is surfaced loudly rather than silently building a GVKEY IN (...)
+    clause that matches nothing. Call this before build_string_in_clause
+    on any GVKEY list sourced from resolve_universe().
+    """
+    bad = sorted({str(g) for g in gvkeys if not _GVKEY_RE.match(str(g))})
+    if bad:
+        raise ValueError(
+            f"{len(bad)} GVKEY(s) failed shape validation "
+            f"{_GVKEY_RE.pattern!r} after normalization: {bad[:20]}"
         )
 
 
@@ -1300,14 +1400,14 @@ def resolve_universe(
         # GVKEY is Compustat's fixed-width, zero-padded 6-digit character key
         # (e.g. "001000"), never a number -- comparing/filtering it as an
         # integer would strip the leading zeros and/or fail outright against
-        # a real `varchar` column (Fix 1). .str.zfill(6) is defensive
-        # against the case where this column was ever read back as a
-        # numeric dtype (e.g. an int64-inferred Parquet column) BEFORE
-        # reaching this line, which would have already silently dropped the
-        # leading zeros from str(v) -- zfill recovers the correct 6-digit
-        # form in that case and is a no-op for a value that was already a
-        # proper 6-character string.
-        cc["gvkey"] = cc["gvkey"].astype(str).str.strip().str.zfill(6)
+        # a real `varchar` column (Fix 1). _normalize_gvkeys handles BOTH the
+        # already-string/int case (str/strip/zfill, a no-op for something
+        # already correctly shaped) AND the float64 case (round 2's Fix 1:
+        # a naive str/zfill on a float64-typed gvkey column turns 1000.0 into
+        # the WRONG "1000.0" instead of "001000", since zfill(6) is a no-op
+        # once the string is already 6 characters) -- see its docstring for
+        # the full failure mode this recovers from.
+        cc["gvkey"] = _normalize_gvkeys(cc["gvkey"])
         permno_gvkey = (
             cc.loc[cc["lpermno"].isin(secid_permno["permno"]), ["lpermno", "gvkey"]]
             .rename(columns={"lpermno": "permno"})
@@ -1322,6 +1422,17 @@ def resolve_universe(
         ic = ibcrsphist.dropna(subset=["permno", "ticker"]).copy()
         ic["permno"] = ic["permno"].astype("int64")
         ic["ticker"] = ic["ticker"].astype(str).str.strip()
+        # Fix 2 (round 2): a blank/whitespace-only ticker (e.g. "" -- this
+        # survives the dropna() above because it's an empty string, not
+        # NaN) is not a usable I/B/E/S ticker. Drop it here, treating it
+        # the SAME as a missing link (reduces this permno's I/B/E/S
+        # coverage and lands it in permnos_without_ibes_ticker.csv below if
+        # it has no other, valid ticker) -- rather than letting a blank
+        # value reach main()'s ticker-format allowlist validation, where it
+        # would previously have raised and (per the bug this round fixes)
+        # aborted the ENTIRE run, including CRSP/Compustat pulls that don't
+        # need I/B/E/S at all.
+        ic = ic[ic["ticker"] != ""]
         permno_ticker = (
             ic.loc[ic["permno"].isin(secid_permno["permno"]), ["permno", "ticker"]]
             .drop_duplicates()
@@ -1346,20 +1457,39 @@ def resolve_universe(
         if permnos_without_ibes_ticker_out is not None
         else Path(unresolved_secids_out).parent / "permnos_without_ibes_ticker.csv"
     )
+    def _coverage_gap_df(permnos_with_link: set, skip_reason):
+        # Fix 6: when a family was never evaluated at all (its linking
+        # table missing/unpullable -- skip_reason is not None), writing
+        # every resolved PERMNO here would conflate "we never checked" with
+        # "we checked and it doesn't link" -- those are different facts a
+        # human chasing a coverage gap needs to tell apart. Write an empty
+        # (header-only) frame instead in that case; the skip reason is
+        # already surfaced loudly elsewhere (the WARNING printed above, the
+        # gvkey_skip_reason/ibes_ticker_skip_reason fields, and the summary
+        # line below), so this file staying empty reads as "not evaluated,
+        # see the skip reason" rather than a misleadingly large "0 links
+        # found for anyone" result.
+        if skip_reason is not None:
+            return pd.DataFrame(columns=list(permno_ids.columns))
+        return (
+            permno_ids[~permno_ids["permno"].isin(permnos_with_link)]
+            .drop_duplicates()
+            .sort_values(["permno", "secid"])
+        )
+
     permnos_with_gvkey = set(permno_gvkey["permno"].unique())
     permnos_with_ibes_ticker = set(permno_ticker["permno"].unique())
-    permnos_without_gvkey_df = (
-        permno_ids[~permno_ids["permno"].isin(permnos_with_gvkey)]
-        .drop_duplicates()
-        .sort_values(["permno", "secid"])
-    )
-    permnos_without_ibes_ticker_df = (
-        permno_ids[~permno_ids["permno"].isin(permnos_with_ibes_ticker)]
-        .drop_duplicates()
-        .sort_values(["permno", "secid"])
+    permnos_without_gvkey_df = _coverage_gap_df(permnos_with_gvkey, gvkey_skip_reason)
+    permnos_without_ibes_ticker_df = _coverage_gap_df(
+        permnos_with_ibes_ticker, ibes_ticker_skip_reason
     )
     permnos_without_gvkey_df.to_csv(permnos_without_gvkey_out, index=False)
     permnos_without_ibes_ticker_df.to_csv(permnos_without_ibes_ticker_out, index=False)
+    # These are 0 (not "evaluated, 0 found") when the family was skipped --
+    # _coverage_gap_df returns an empty frame in that case, so nunique() on
+    # it is naturally 0. The summary print below spells out the skipped
+    # case explicitly rather than relying on the reader to infer that from
+    # a bare "0".
     n_permnos_without_gvkey = permnos_without_gvkey_df["permno"].nunique()
     n_permnos_without_ibes_ticker = permnos_without_ibes_ticker_df["permno"].nunique()
 
@@ -1416,6 +1546,19 @@ def resolve_universe(
     else:
         ambiguous_df = pd.DataFrame(columns=ambiguous_columns)
     ambiguous_df.to_csv(ambiguous_links_out, index=False)
+    # KNOWN LIMITATION (Finding 7, round 2 review -- not fixed, judged not
+    # worth the added complexity for a one-time bulk-pull script): this is a
+    # post-merge ROW count across all three stages, not a count of distinct
+    # ambiguous groups/facts. Cardinality multiplies it -- e.g. a genuine
+    # 1-to-many-plus-many-to-one situation (one secid with 3 permnos, one of
+    # which is shared by 3 secids) can report as more rows than there are
+    # underlying ambiguous facts. ambiguous_links.csv itself is still fully
+    # accurate (every ambiguous row is really there, nothing is dropped or
+    # fabricated) -- only this single summary NUMBER over- counts versus
+    # "how many distinct ambiguous situations are there". Treat this count
+    # as "at least this many", and use ambiguous_links.csv's stage/secid/
+    # permno/gvkey/ibes_ticker columns directly for anything that needs the
+    # real distinct-group count.
     n_ambiguous_links = len(ambiguous_df)
 
     # --- resolved_universe_ids.parquet: one row per OM secid, nullable
@@ -1477,18 +1620,34 @@ def resolve_universe(
     all_gvkeys = sorted(permno_gvkey["gvkey"].unique().tolist())
     all_tickers = sorted(permno_ticker["ticker"].unique().tolist())
 
+    # Fix 6: distinguish "family skipped, coverage-gap audit not evaluated"
+    # from "evaluated, N found with no link" in the printed summary too --
+    # not just in the CSVs -- since n_permnos_without_gvkey/
+    # n_permnos_without_ibes_ticker read as 0 in both cases otherwise.
+    if gvkey_skip_reason is not None:
+        gvkey_gap_note = "GVKEY coverage-gap audit NOT evaluated (resolution skipped)"
+    else:
+        gvkey_gap_note = f"{n_permnos_without_gvkey:,} resolved PERMNO(s) have no GVKEY link"
+    if ibes_ticker_skip_reason is not None:
+        ibes_gap_note = (
+            "I/B/E/S ticker coverage-gap audit NOT evaluated (resolution skipped)"
+        )
+    else:
+        ibes_gap_note = (
+            f"{n_permnos_without_ibes_ticker:,} resolved PERMNO(s) have no "
+            f"I/B/E/S ticker link"
+        )
+
     pct = (100.0 * n_resolved / n_total) if n_total else 0.0
     print(
         f"Universe resolution: {n_resolved:,} of {n_total:,} OptionMetrics "
         f"secids resolved to a PERMNO ({pct:.1f}%); {n_ambiguous_links:,} "
         f"ambiguous link(s) flagged; resolved {len(all_permnos):,} distinct "
         f"PERMNOs, {len(all_gvkeys):,} distinct GVKEYs, {len(all_tickers):,} "
-        f"distinct I/B/E/S tickers. {n_permnos_without_gvkey:,} resolved "
-        f"PERMNO(s) have no GVKEY link; {n_permnos_without_ibes_ticker:,} "
-        f"resolved PERMNO(s) have no I/B/E/S ticker link (Fix 5). Details in "
-        f"data/metadata/ (unresolved_secids.csv, ambiguous_links.csv, "
-        f"permnos_without_gvkey.csv, permnos_without_ibes_ticker.csv, "
-        f"resolved_universe_ids.parquet).",
+        f"distinct I/B/E/S tickers. {gvkey_gap_note}; {ibes_gap_note} "
+        f"(Fix 5/6). Details in data/metadata/ (unresolved_secids.csv, "
+        f"ambiguous_links.csv, permnos_without_gvkey.csv, "
+        f"permnos_without_ibes_ticker.csv, resolved_universe_ids.parquet).",
         flush=True,
     )
 
@@ -1631,6 +1790,23 @@ def main():
     args = _parse_args(sys.argv[1:])
     force = args.force
 
+    # Fix 4: absolute-count floor on the universe file, checked BEFORE
+    # connecting to WRDS at all -- see _check_universe_secid_floor's
+    # docstring for why the existing RATE-based floor
+    # (MIN_PERMNO_RESOLUTION_RATE, checked later, after resolution) isn't
+    # enough on its own: a truncated/corrupted universe file that happens to
+    # resolve at 100% would sail straight past a rate-only check.
+    try:
+        _check_universe_secid_floor(METADATA_DIR / "optionmetrics_universe.parquet")
+    except UniverseResolutionError as e:
+        print(
+            f"FATAL: universe file failed the absolute-count floor check -- "
+            f"aborting before connecting to WRDS or attempting any "
+            f"resolution: {e}",
+            flush=True,
+        )
+        raise SystemExit(1) from e
+
     db = connect()
     log = []
 
@@ -1755,22 +1931,17 @@ def main():
             )
             raise SystemExit(1) from e
 
-        # Fix 2: a zero-resolution outcome must never silently produce an
-        # `IN (NULL)` filter and exit looking successful -- hard-fail before
-        # Phase C instead. PERMNO resolution is the one stage that gates
-        # EVERYTHING (nothing in Phase C can be filtered without it), so an
-        # empty permno list (or zero resolved secids) always aborts.
-        if resolved.n_secids_resolved == 0 or not resolved.permnos:
-            print(
-                "FATAL: universe resolution resolved ZERO secids/PERMNOs -- "
-                "aborting before any Phase C (big-table) query is attempted. "
-                "This almost always means CUSIP matching failed entirely "
-                "(format mismatch, a bad crsp.stocknames pull, etc.), not "
-                "that the universe is genuinely empty.",
-                flush=True,
-            )
-            raise SystemExit(1)
-
+        # Finding 5 (round 2 review): a dedicated "zero resolved" check used
+        # to sit here, ahead of the rate-floor check below. It's fully
+        # subsumed by that rate floor: 0 resolved out of N total is a 0%
+        # rate, and 0 resolved out of 0 total is handled by the `else 0.0`
+        # fallback just below, both comfortably under MIN_PERMNO_RESOLUTION_
+        # RATE (90%). Removed as redundant rather than kept as an
+        # independently-tested branch -- especially now that Fix 4's
+        # absolute-count floor (checked before WRDS is even connected)
+        # already guards the "suspiciously tiny/corrupted universe file"
+        # failure mode this project cares about most.
+        #
         # This project's documented expectation is ~99.99% secid-to-PERMNO
         # resolution once real CRSP data is pulled -- MIN_PERMNO_RESOLUTION_
         # RATE (90%) is a floor far below that, so it only fires on a
@@ -1813,8 +1984,66 @@ def main():
             raise SystemExit(1)
 
         permno_filter = build_numeric_in_clause("permno", resolved.permnos)
+
+        # Fix 1 (round 2): _normalize_gvkeys (inside resolve_universe) fixes
+        # the actual root cause of a GVKEY silently coercing to the wrong
+        # value, but _validate_gvkeys is still run here as a safety net.
+        # Per this round's Fix 2 lesson (below): a validation failure for
+        # ONE identifier family must never abort pulls for families that
+        # don't need it -- so a bad GVKEY only skips comp.fundq/funda (the
+        # same degrade pattern as crsp.ccmxpf_lnkhist being missing
+        # entirely), never CRSP or I/B/E/S.
+        gvkey_ok = not resolved.gvkey_resolution_skipped
+        if gvkey_ok:
+            try:
+                _validate_gvkeys(resolved.gvkeys)
+            except ValueError as e:
+                gvkey_ok = False
+                print(
+                    f"WARNING: GVKEY validation failed -- comp.fundq/"
+                    f"comp.funda will NOT be pulled: {e}",
+                    flush=True,
+                )
+                record(
+                    log,
+                    {"library": "comp", "table": "fundq,funda",
+                     "status": "gvkey_validation_failed", "rows": 0, "path": "",
+                     "missing_columns": "", "error": str(e),
+                     "start_date": "", "end_date": ""},
+                )
         gvkey_filter = build_string_in_clause("gvkey", resolved.gvkeys)
-        _validate_ibes_tickers(resolved.ibes_tickers)
+
+        # Fix 2 (round 2): blank/whitespace-only tickers are already
+        # dropped inside resolve_universe (treated as a missing link, not a
+        # validation failure -- see the ic["ticker"] != "" filter there).
+        # What reaches _validate_ibes_tickers here is only a genuinely
+        # malformed NON-blank value. Previously this call sat ahead of ALL
+        # Phase C pulls and, on failure, raised an uncaught ValueError that
+        # aborted the entire run -- crsp.dsf, crsp.dsedelist, comp.fundq,
+        # and comp.funda included, none of which need the I/B/E/S ticker
+        # list at all. Now it's called only within this "about to pull
+        # I/B/E/S tables" path (mirroring the ibes_ticker_resolution_
+        # skipped gate below), and a failure degrades ONLY the I/B/E/S
+        # family via ibes_ticker_ok, logged the same way an unavailable
+        # wrdsapps.ibcrsphist already is.
+        ibes_ticker_ok = not resolved.ibes_ticker_resolution_skipped
+        if ibes_ticker_ok:
+            try:
+                _validate_ibes_tickers(resolved.ibes_tickers)
+            except ValueError as e:
+                ibes_ticker_ok = False
+                print(
+                    f"WARNING: I/B/E/S ticker validation failed -- the "
+                    f"ibes.* Phase C pulls will NOT run: {e}",
+                    flush=True,
+                )
+                record(
+                    log,
+                    {"library": "ibes", "table": "statsumu_epsus,actu_epsus,detu_epsus",
+                     "status": "ibes_ticker_validation_failed", "rows": 0,
+                     "path": "", "missing_columns": "", "error": str(e),
+                     "start_date": "", "end_date": ""},
+                )
         ticker_filter = build_string_in_clause("ticker", resolved.ibes_tickers)
 
         # Fix 3: record each degraded family in the manifest too (not just
@@ -1849,9 +2078,11 @@ def main():
         # have actually run (not skipped for a missing/unpullable
         # wrdsapps.ibcrsphist) -- crsp.dsf/dsi/dsedelist and comp.fundq/funda
         # don't need I/B/E/S linkage at all and must not be held hostage by
-        # its absence.
+        # its absence. Fix 2 (round 2): also require ibes_ticker_ok -- a
+        # ticker-format validation failure degrades this family exactly the
+        # same way a missing ibcrsphist table does.
         # =====================================================================
-        if have_ibes and not resolved.ibes_ticker_resolution_skipped:
+        if have_ibes and not resolved.ibes_ticker_resolution_skipped and ibes_ticker_ok:
             # NOTE: these use LOOKBACK_START_DATE (not START_DATE) for the same
             # reason CRSP/Compustat do -- rolling-window/history features need
             # a runway before START_DATE, so early-1996 events have a chance at
@@ -1962,7 +2193,10 @@ def main():
         # have actually run (not skipped for a missing/unpullable
         # crsp.ccmxpf_lnkhist) -- nothing else in Phase C needs Compustat
         # linkage, so its absence must not hold the other tables hostage.
-        if have_comp and not resolved.gvkey_resolution_skipped:
+        # Fix 1 (round 2): also require gvkey_ok -- a GVKEY shape-validation
+        # failure degrades this family exactly the same way a missing
+        # ccmxpf_lnkhist table does.
+        if have_comp and not resolved.gvkey_resolution_skipped and gvkey_ok:
             # datadate here gates fundq's rdq (report date of quarterly
             # earnings) -- Compustat's standard PEAD event-date field -- so
             # it gets the RETURN_END_DATE forward buffer for the same reason
