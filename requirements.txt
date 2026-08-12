@@ -15,3 +15,19 @@ pyarrow>=15
 psycopg2-binary>=2.9
 SQLAlchemy>=2.0
 pytest>=7
+
+# Dependencies for the reporting-infra slice (scripts/report_builder.py):
+# matplotlib for report charts, weasyprint for HTML/CSS-to-PDF rendering.
+# Floors are the exact versions actually installed and smoke-tested in this
+# slice's own .venv (`.venv/bin/pip show matplotlib weasyprint`), not a
+# guess: matplotlib==3.11.1, weasyprint==69.0.
+# scipy (event-study statistics: t-tests, Spearman IC) is NOT added here --
+# nothing in this slice uses it; it belongs on the statistics slice that
+# actually needs it.
+matplotlib>=3.11.1
+# weasyprint renders HTML/CSS to PDF via system libraries, not a pure
+# Python dependency -- on macOS it needs `brew install pango cairo
+# gdk-pixbuf` first (see README.md's Setup section), or the package imports
+# fine but `HTML(...).write_pdf(...)` fails at render time with no warning
+# at pip-install time.
+weasyprint>=69.0
