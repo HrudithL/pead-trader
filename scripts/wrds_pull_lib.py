@@ -122,7 +122,7 @@ IBES_STATSUMU_EPSUS_COLUMNS = (
 # whether this table is usable.
 IBES_ACTU_EPSUS_REQUIRED_COLUMNS = ["ticker", "anndats", "value"]
 IBES_ACTU_EPSUS_OPTIONAL_COLUMNS = [
-    "cusip", "oftic", "cname", "pends", "anntims", "curr_act",
+    "cusip", "oftic", "cname", "pends", "anntims", "curr_act", "pdicity", "measure",
 ]
 IBES_ACTU_EPSUS_COLUMNS = IBES_ACTU_EPSUS_REQUIRED_COLUMNS + IBES_ACTU_EPSUS_OPTIONAL_COLUMNS
 
