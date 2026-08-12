@@ -30,24 +30,25 @@ credentials.json
 # Jupyter
 .ipynb_checkpoints/
 
-# Data / research artifacts (large, regenerable, or external-drive-backed)
-# NOTE: a plain `data/` ignore would also block the negations below (git
-# won't descend into an already-ignored directory to re-check un-ignore
-# rules), so this ignores contents one level at a time instead.
-data/*
-!data/metadata/
-data/metadata/*
-# ...except these two small text/CSV provenance files -- not data, just an
-# audit record of what was pulled from WRDS and when.
-!data/metadata/wrds_pull_manifest.csv
-!data/metadata/wrds_available_libraries.txt
-# Same reasoning, same pattern, for the earnings-cleaning slice's findings
-# note: plain-language documentation of what the cleaning pipeline found,
-# not a data artifact -- the actual cleaned Parquet output next to it stays
-# gitignored/regenerable as normal.
-!data/earnings/
-data/earnings/*
-!data/earnings/FINDINGS.md
+# Data / research artifacts (large, regenerable, or external-drive-backed).
+# Nothing under data/ is tracked, including data/metadata/'s WRDS pull
+# manifests and library-list file (tried once, reverted -- see git
+# history). Those aren't static provenance: append_manifest_row() appends
+# to the manifests on every pull, and pull_wrds_reference.py rewrites
+# wrds_available_libraries.txt wholesale. last_manifest_fingerprint_for_path()
+# reads the manifest back to decide whether a chunk gets re-pulled, so a
+# git-tracked copy makes `git merge`/checkout a destructive writer of live
+# run state: a local untracked copy gets silently overwritten with no
+# conflict, and worse, these paths are symlinked to a shared location from
+# every agent worktree, so a merge that brings a tracked file under a
+# symlinked directory deletes the symlink outright, disconnecting that
+# worktree from all of data/metadata/. A `merge=union` driver doesn't help
+# either -- both failure modes are one-sided adds over an ignored/symlinked
+# path, so no merge driver ever runs. The same reasoning applies to any
+# other file under data/ (e.g. a slice's FINDINGS.md) -- no exceptions, no
+# matter how static a given file looks today: put durable, reviewable
+# write-ups in reports/ instead, which has no symlink-sharing hazard.
+/data/
 mlruns/
 experiments/
 outputs/
@@ -59,3 +60,10 @@ outputs/
 .idea/
 .vscode/
 *.swp
+
+# Claude Code agent tooling: only the isolated git worktrees created for
+# background subagents and machine-local settings overrides are scratch
+# state -- project-scoped config (settings.json, agents/, commands/,
+# hooks/, skills/) is deliberately left trackable.
+/.claude/worktrees/
+/.claude/settings.local.json
