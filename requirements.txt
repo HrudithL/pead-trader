@@ -15,3 +15,16 @@ pyarrow>=15
 psycopg2-binary>=2.9
 SQLAlchemy>=2.0
 pytest>=7
+
+# Dependencies for the pipeline/analysis and reporting slices (data
+# cleaning, event-study statistics, PDF report generation). Pinned to
+# reasonable minimums roughly matching what's installed in .venv (checked
+# via `.venv/bin/pip freeze`: matplotlib==3.11.1, scipy==1.18.0,
+# weasyprint==69.0).
+matplotlib>=3.9
+scipy>=1.13
+# weasyprint renders HTML/CSS to PDF via system libraries, not a pure
+# Python dependency -- on macOS it needs `brew install pango cairo
+# gdk-pixbuf` first, or `HTML(...).write_pdf(...)` fails at import/render
+# time rather than at pip-install time.
+weasyprint>=61
