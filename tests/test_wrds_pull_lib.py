@@ -1,7 +1,24 @@
-"""Unit tests for scripts/pull_wrds_data.py -- only the parts that don't need
-a real WRDS connection: load_env_file, pull_table's required/optional column
-handling and idempotency logic against a stub `db` object, the schema-pinned
-streaming writer, and manifest error sanitization.
+"""Unit tests for scripts/wrds_pull_lib.py -- the shared library extracted
+from the original monolithic pull_wrds_data.py (now split into
+pull_wrds_reference.py/pull_wrds_crsp.py/pull_wrds_compustat.py/
+pull_wrds_ibes.py -- see memory/phase1-equity-pead-plan.md's "Split Into
+Parallel Scripts" section). Covers only the parts that don't need a real
+WRDS connection: load_env_file, pull_table's required/optional column
+handling and idempotency logic against a stub `db` object, the schema-
+pinned streaming writer, manifest error sanitization, resolve_universe's
+full resolution logic, the IN (...) clause builders, and the NEW helpers
+this split added (parse_common_args, load_resolved_filter_lists,
+require_resolved_universe_file).
+
+Every test in this file was moved here UNCHANGED in behavior from the
+original tests/test_pull_wrds_data.py (mechanical `pwd` -> `lib` rename
+only, since the functions under test moved verbatim into wrds_pull_lib.py)
+-- see that PR's description for the diff proving no behavioral drift in
+the extracted logic. main()-level tests (which exercised the old single
+pull_wrds_data.main() end to end) moved to tests/test_pull_wrds_reference.py,
+tests/test_pull_wrds_crsp.py, tests/test_pull_wrds_compustat.py, and
+tests/test_pull_wrds_ibes.py instead, split by which new script's main()
+now owns that behavior.
 """
 
 import re
@@ -16,7 +33,9 @@ import sqlalchemy.exc as sa_exc
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import pull_wrds_data as pwd  # noqa: E402
+import wrds_pull_lib as lib  # noqa: E402
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +64,7 @@ def test_load_env_file_handles_comments_blank_lines_and_quoted_values(tmp_path, 
     for key in ("WRDS_USERNAME", "WRDS_PASSWORD", "SINGLE_QUOTED", "WITH_HASH"):
         monkeypatch.delenv(key, raising=False)
 
-    pwd.load_env_file(env_path)
+    lib.load_env_file(env_path)
 
     assert __import__("os").environ["WRDS_USERNAME"] == "plainvalue"
     assert __import__("os").environ["WRDS_PASSWORD"] == "quoted value"
@@ -57,7 +76,7 @@ def test_load_env_file_handles_comments_blank_lines_and_quoted_values(tmp_path, 
 
 def test_load_env_file_missing_file_is_a_noop(tmp_path):
     # Should not raise even if the .env file doesn't exist.
-    pwd.load_env_file(tmp_path / "does_not_exist.env")
+    lib.load_env_file(tmp_path / "does_not_exist.env")
 
 
 def test_load_env_file_does_not_overwrite_existing_env(tmp_path, monkeypatch):
@@ -65,7 +84,7 @@ def test_load_env_file_does_not_overwrite_existing_env(tmp_path, monkeypatch):
     env_path.write_text("SOME_KEY=from_file\n")
     monkeypatch.setenv("SOME_KEY", "from_process_env")
 
-    pwd.load_env_file(env_path)
+    lib.load_env_file(env_path)
 
     # os.environ.setdefault semantics: process env wins over the .env file.
     assert __import__("os").environ["SOME_KEY"] == "from_process_env"
@@ -126,7 +145,7 @@ def test_pull_table_all_columns_present(tmp_path):
     log = []
     manifest_path = tmp_path / "manifest.csv"
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf", ["permno", "date", "ret"],
         raw_dir=tmp_path / "raw", manifest_path=manifest_path,
     )
@@ -150,7 +169,7 @@ def test_pull_table_missing_required_column_blocks_pull(tmp_path):
     )
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf", ["permno", "date", "ret"],
         raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
     )
@@ -168,7 +187,7 @@ def test_pull_table_missing_column_does_not_query(tmp_path):
     )
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "stocknames",
         ["permno", "namedt", "nameenddt"],
         raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
@@ -186,7 +205,7 @@ def test_pull_table_unknown_table_logs_no_such_table(tmp_path):
     db = StubDB(describe_error=sa_exc.NoSuchTableError("crsp.not_a_real_table"))
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "not_a_real_table", ["permno"],
         raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
     )
@@ -201,7 +220,7 @@ def test_pull_table_describe_table_error_is_not_misclassified_as_no_such_table(t
     db = StubDB(describe_error=RuntimeError("connection reset by peer"))
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf", ["permno"],
         raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
     )
@@ -214,7 +233,7 @@ def test_pull_table_all_required_columns_missing_blocks_pull(tmp_path):
     db = StubDB(columns=["unrelated_col"], rows=pd.DataFrame())
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf", ["permno", "date"],
         raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
     )
@@ -232,7 +251,7 @@ def test_pull_table_skips_when_out_path_already_exists(tmp_path):
     db = StubDB(columns=["permno"], rows=pd.DataFrame({"permno": [1]}))
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf", ["permno"],
         raw_dir=raw_dir, manifest_path=tmp_path / "manifest.csv",
     )
@@ -250,7 +269,7 @@ def test_pull_table_force_reruns_even_if_out_path_exists(tmp_path):
     db = StubDB(columns=["permno"], rows=pd.DataFrame({"permno": [1]}))
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf", ["permno"],
         raw_dir=raw_dir, manifest_path=tmp_path / "manifest.csv",
         force=True,
@@ -268,7 +287,7 @@ def test_pull_table_streaming_writes_chunks_and_counts_rows(tmp_path):
     db = StubDB(columns=["permno", "date"], chunks=chunks)
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf", ["permno", "date"],
         raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
         stream=True,
@@ -287,7 +306,7 @@ def test_pull_table_manifest_rows_include_provenance_columns(tmp_path):
     log = []
     manifest_path = tmp_path / "manifest.csv"
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf", ["permno"],
         raw_dir=tmp_path / "raw", manifest_path=manifest_path,
         start_date="1995-01-01", end_date="2014-06-30",
@@ -305,12 +324,12 @@ def test_pull_table_manifest_appends_across_multiple_calls(tmp_path):
     log = []
 
     db1 = StubDB(columns=["permno"], rows=pd.DataFrame({"permno": [1]}))
-    pwd.pull_table(
+    lib.pull_table(
         db1, log, "crsp", "dsf", ["permno"],
         raw_dir=tmp_path / "raw", manifest_path=manifest_path,
     )
     db2 = StubDB(describe_error=sa_exc.NoSuchTableError("x"))
-    pwd.pull_table(
+    lib.pull_table(
         db2, log, "wrdsapps", "iclink", ["ticker"],
         raw_dir=tmp_path / "raw", manifest_path=manifest_path,
     )
@@ -344,7 +363,7 @@ def test_pull_table_missing_optional_column_does_not_block_pull(tmp_path):
     )
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf",
         required_columns=["permno", "date", "ret"],
         optional_columns=["numtrd"],
@@ -368,7 +387,7 @@ def test_pull_table_present_optional_column_is_included_in_query(tmp_path):
     )
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf",
         required_columns=["permno", "date", "ret"],
         optional_columns=["numtrd"],
@@ -387,7 +406,7 @@ def test_pull_table_missing_multiple_optional_columns_all_noted(tmp_path):
     )
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "ibes", "idsum",
         required_columns=["ticker", "cusip"],
         optional_columns=["cname", "oftic", "sdates"],
@@ -406,7 +425,7 @@ def test_pull_table_required_column_missing_still_aborts_even_with_optional_pres
     )
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf",
         required_columns=["permno", "date", "ret"],
         optional_columns=["numtrd"],
@@ -448,7 +467,7 @@ def test_pull_table_streaming_zero_rows_with_existing_file_logs_kept_existing_an
     db = StubDB(columns=["permno", "date"], chunks=[empty_chunk])
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf", ["permno", "date"],
         raw_dir=raw_dir, manifest_path=tmp_path / "manifest.csv",
         stream=True, force=True,
@@ -470,7 +489,7 @@ def test_pull_table_streaming_zero_rows_without_existing_file_logs_plain_ok(tmp_
     db = StubDB(columns=["permno", "date"], chunks=[empty_chunk])
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf", ["permno", "date"],
         raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
         stream=True,
@@ -502,7 +521,7 @@ def test_pull_table_non_streaming_zero_rows_with_existing_file_logs_kept_existin
     )
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "stocknames", ["permno"],
         raw_dir=raw_dir, manifest_path=tmp_path / "manifest.csv",
         force=True,
@@ -521,7 +540,7 @@ def test_pull_table_non_streaming_zero_rows_without_existing_file_logs_plain_ok(
     )
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "stocknames", ["permno"],
         raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
     )
@@ -546,42 +565,42 @@ def test_sql_type_to_pyarrow_type_maps_common_postgres_types():
     "INTEGER", str(sqlalchemy.dialects.postgresql.DOUBLE_PRECISION()) ==
     "DOUBLE PRECISION" -- not guessed blind)."""
     # Integers.
-    assert pwd._sql_type_to_pyarrow_type("INTEGER") == pa.int64()
-    assert pwd._sql_type_to_pyarrow_type("BIGINT") == pa.int64()
-    assert pwd._sql_type_to_pyarrow_type("SMALLINT") == pa.int64()
-    assert pwd._sql_type_to_pyarrow_type("integer") == pa.int64()  # case-insensitive
+    assert lib._sql_type_to_pyarrow_type("INTEGER") == pa.int64()
+    assert lib._sql_type_to_pyarrow_type("BIGINT") == pa.int64()
+    assert lib._sql_type_to_pyarrow_type("SMALLINT") == pa.int64()
+    assert lib._sql_type_to_pyarrow_type("integer") == pa.int64()  # case-insensitive
 
     # Floating/numeric.
-    assert pwd._sql_type_to_pyarrow_type("DOUBLE PRECISION") == pa.float64()
-    assert pwd._sql_type_to_pyarrow_type("REAL") == pa.float64()
-    assert pwd._sql_type_to_pyarrow_type("NUMERIC") == pa.float64()
-    assert pwd._sql_type_to_pyarrow_type("NUMERIC(10, 2)") == pa.float64()  # precision stripped
-    assert pwd._sql_type_to_pyarrow_type("DECIMAL") == pa.float64()
+    assert lib._sql_type_to_pyarrow_type("DOUBLE PRECISION") == pa.float64()
+    assert lib._sql_type_to_pyarrow_type("REAL") == pa.float64()
+    assert lib._sql_type_to_pyarrow_type("NUMERIC") == pa.float64()
+    assert lib._sql_type_to_pyarrow_type("NUMERIC(10, 2)") == pa.float64()  # precision stripped
+    assert lib._sql_type_to_pyarrow_type("DECIMAL") == pa.float64()
 
     # Date/time -- deliberately still pa.string(), matching this script's
     # existing (out-of-scope-to-change) behavior of writing dates as ISO
     # strings.
-    assert pwd._sql_type_to_pyarrow_type("DATE") == pa.string()
-    assert pwd._sql_type_to_pyarrow_type("TIMESTAMP") == pa.string()
-    assert pwd._sql_type_to_pyarrow_type("TIMESTAMP WITHOUT TIME ZONE") == pa.string()
+    assert lib._sql_type_to_pyarrow_type("DATE") == pa.string()
+    assert lib._sql_type_to_pyarrow_type("TIMESTAMP") == pa.string()
+    assert lib._sql_type_to_pyarrow_type("TIMESTAMP WITHOUT TIME ZONE") == pa.string()
 
     # Text.
-    assert pwd._sql_type_to_pyarrow_type("VARCHAR") == pa.string()
-    assert pwd._sql_type_to_pyarrow_type("VARCHAR(32)") == pa.string()
-    assert pwd._sql_type_to_pyarrow_type("CHARACTER VARYING") == pa.string()
-    assert pwd._sql_type_to_pyarrow_type("TEXT") == pa.string()
-    assert pwd._sql_type_to_pyarrow_type("CHAR(3)") == pa.string()
+    assert lib._sql_type_to_pyarrow_type("VARCHAR") == pa.string()
+    assert lib._sql_type_to_pyarrow_type("VARCHAR(32)") == pa.string()
+    assert lib._sql_type_to_pyarrow_type("CHARACTER VARYING") == pa.string()
+    assert lib._sql_type_to_pyarrow_type("TEXT") == pa.string()
+    assert lib._sql_type_to_pyarrow_type("CHAR(3)") == pa.string()
 
     # Boolean.
-    assert pwd._sql_type_to_pyarrow_type("BOOLEAN") == pa.bool_()
+    assert lib._sql_type_to_pyarrow_type("BOOLEAN") == pa.bool_()
 
     # Unmapped -> sane fallback, logged (not silently mishandled).
-    assert pwd._sql_type_to_pyarrow_type("SOME_EXOTIC_TYPE") == pa.string()
-    assert pwd._sql_type_to_pyarrow_type(None) == pa.string()
+    assert lib._sql_type_to_pyarrow_type("SOME_EXOTIC_TYPE") == pa.string()
+    assert lib._sql_type_to_pyarrow_type(None) == pa.string()
 
 
 def test_sql_type_to_pyarrow_type_warns_on_unmapped_type(capsys):
-    pwd._sql_type_to_pyarrow_type("SOME_EXOTIC_TYPE", column="widget")
+    lib._sql_type_to_pyarrow_type("SOME_EXOTIC_TYPE", column="widget")
     captured = capsys.readouterr()
     assert "WARNING" in captured.out
     assert "SOME_EXOTIC_TYPE" in captured.out
@@ -592,7 +611,7 @@ def test_build_pinned_schema_uses_declared_types_for_exactly_the_given_columns()
     column_sql_types = {
         "permno": "INTEGER", "numtrd": "INTEGER", "date": "DATE", "ret": "DOUBLE PRECISION",
     }
-    schema = pwd._build_pinned_schema(["permno", "date", "ret"], column_sql_types)
+    schema = lib._build_pinned_schema(["permno", "date", "ret"], column_sql_types)
     assert schema.names == ["permno", "date", "ret"]
     assert schema.field("permno").type == pa.int64()
     assert schema.field("date").type == pa.string()
@@ -609,8 +628,8 @@ def test_build_pinned_schema_is_independent_of_any_data():
     chunk's inferred schema. Calling it twice with the same declared types
     must produce identical schemas regardless of anything about data."""
     column_sql_types = {"permno": "INTEGER", "ret": "DOUBLE PRECISION"}
-    schema_1 = pwd._build_pinned_schema(["permno", "ret"], column_sql_types)
-    schema_2 = pwd._build_pinned_schema(["permno", "ret"], column_sql_types)
+    schema_1 = lib._build_pinned_schema(["permno", "ret"], column_sql_types)
+    schema_2 = lib._build_pinned_schema(["permno", "ret"], column_sql_types)
     assert schema_1.equals(schema_2)
 
 
@@ -721,11 +740,11 @@ def test_stream_query_to_parquet_pinned_schema_produces_numeric_output_despite_l
             return iter([chunk1, chunk2])
 
     out_path = tmp_path / "dsf.parquet"
-    pinned_schema = pwd._build_pinned_schema(
+    pinned_schema = lib._build_pinned_schema(
         ["permno", "numtrd"], {"permno": "INTEGER", "numtrd": "INTEGER"}
     )
 
-    total_rows, wrote_any = pwd._stream_query_to_parquet(
+    total_rows, wrote_any = lib._stream_query_to_parquet(
         FakeDB(), "crsp", "dsf", ["permno", "numtrd"], "", out_path, pinned_schema
     )
 
@@ -760,8 +779,8 @@ def test_stream_query_to_parquet_pinned_schema_identical_regardless_of_chunk_ord
             return iter([chunk_real, chunk_null])
 
     column_sql_types = {"permno": "INTEGER", "numtrd": "INTEGER"}
-    pinned_schema_a = pwd._build_pinned_schema(["permno", "numtrd"], column_sql_types)
-    pinned_schema_b = pwd._build_pinned_schema(["permno", "numtrd"], column_sql_types)
+    pinned_schema_a = lib._build_pinned_schema(["permno", "numtrd"], column_sql_types)
+    pinned_schema_b = lib._build_pinned_schema(["permno", "numtrd"], column_sql_types)
     assert pinned_schema_a.equals(pinned_schema_b), (
         "pinned schema must be identical regardless of data -- it's built "
         "purely from declared types before any chunk is seen"
@@ -769,10 +788,10 @@ def test_stream_query_to_parquet_pinned_schema_identical_regardless_of_chunk_ord
 
     out_a = tmp_path / "order_a.parquet"
     out_b = tmp_path / "order_b.parquet"
-    rows_a, wrote_a = pwd._stream_query_to_parquet(
+    rows_a, wrote_a = lib._stream_query_to_parquet(
         FakeDBOrderA(), "crsp", "dsf", ["permno", "numtrd"], "", out_a, pinned_schema_a
     )
-    rows_b, wrote_b = pwd._stream_query_to_parquet(
+    rows_b, wrote_b = lib._stream_query_to_parquet(
         FakeDBOrderB(), "crsp", "dsf", ["permno", "numtrd"], "", out_b, pinned_schema_b
     )
 
@@ -799,10 +818,10 @@ def test_stream_query_to_parquet_signature_takes_query_pieces_and_pinned_schema(
             return iter([chunk])
 
     out_path = tmp_path / "dsf.parquet"
-    pinned_schema = pwd._build_pinned_schema(
+    pinned_schema = lib._build_pinned_schema(
         ["permno", "date"], {"permno": "INTEGER", "date": "DATE"}
     )
-    total_rows, wrote_any = pwd._stream_query_to_parquet(
+    total_rows, wrote_any = lib._stream_query_to_parquet(
         FakeDB(), "crsp", "dsf", ["permno", "date"], "", out_path, pinned_schema
     )
     assert wrote_any
@@ -838,10 +857,10 @@ def test_stream_query_to_parquet_writer_is_used_incrementally_not_accumulated(tm
             return iter(chunks)
 
     out_path = tmp_path / "dsf.parquet"
-    pinned_schema = pwd._build_pinned_schema(
+    pinned_schema = lib._build_pinned_schema(
         ["permno", "date"], {"permno": "INTEGER", "date": "DATE"}
     )
-    total_rows, wrote_any = pwd._stream_query_to_parquet(
+    total_rows, wrote_any = lib._stream_query_to_parquet(
         FakeDB(), "crsp", "dsf", ["permno", "date"], "", out_path, pinned_schema
     )
 
@@ -857,15 +876,15 @@ def test_stream_query_to_parquet_writer_is_used_incrementally_not_accumulated(tm
     # Confirm none of round 5's whole-table-accumulation/lookahead-buffer
     # primitives are used anywhere in this function's source anymore.
     import inspect
-    source = inspect.getsource(pwd._stream_query_to_parquet)
+    source = inspect.getsource(lib._stream_query_to_parquet)
     _docstring_parts = source.split('"""')
     code_only = _docstring_parts[0] + "".join(_docstring_parts[2:])
     assert "concat_tables(" not in code_only
     assert "replace_schema_metadata(" not in code_only
     assert "pending" not in code_only
-    assert not hasattr(pwd, "_widen_integers_to_float64")
-    assert not hasattr(pwd, "_merge_schema_resolving_nulls")
-    assert not hasattr(pwd, "_SCHEMA_RESOLUTION_CHUNK_CAP")
+    assert not hasattr(lib, "_widen_integers_to_float64")
+    assert not hasattr(lib, "_merge_schema_resolving_nulls")
+    assert not hasattr(lib, "_SCHEMA_RESOLUTION_CHUNK_CAP")
 
 
 def test_stream_query_to_parquet_cleans_up_tmp_file_on_keyboard_interrupt(tmp_path, monkeypatch):
@@ -884,11 +903,11 @@ def test_stream_query_to_parquet_cleans_up_tmp_file_on_keyboard_interrupt(tmp_pa
 
     monkeypatch.setattr(pq, "ParquetWriter", _raise_on_init)
 
-    pinned_schema = pwd._build_pinned_schema(
+    pinned_schema = lib._build_pinned_schema(
         ["permno", "date"], {"permno": "INTEGER", "date": "DATE"}
     )
     with pytest.raises(KeyboardInterrupt):
-        pwd._stream_query_to_parquet(
+        lib._stream_query_to_parquet(
             FakeDB(), "crsp", "dsf", ["permno", "date"], "", out_path, pinned_schema
         )
 
@@ -903,14 +922,14 @@ def test_stream_query_to_parquet_cleans_up_tmp_file_on_keyboard_interrupt(tmp_pa
 
 def test_sanitize_error_text_truncates_long_text():
     long_text = "x" * 1000
-    result = pwd._sanitize_error_text(long_text)
-    assert len(result) == pwd._MAX_ERROR_LEN
+    result = lib._sanitize_error_text(long_text)
+    assert len(result) == lib._MAX_ERROR_LEN
 
 
 def test_sanitize_error_text_redacts_wrds_username(monkeypatch):
     monkeypatch.setenv("WRDS_USERNAME", "jdoe123")
     text = 'FATAL: password authentication failed for user "jdoe123" at host db.wrds.upenn.edu'
-    result = pwd._sanitize_error_text(text)
+    result = lib._sanitize_error_text(text)
     assert "jdoe123" not in result
     assert "[REDACTED_WRDS_USERNAME]" in result
 
@@ -918,19 +937,19 @@ def test_sanitize_error_text_redacts_wrds_username(monkeypatch):
 def test_sanitize_error_text_noop_without_username_set(monkeypatch):
     monkeypatch.delenv("WRDS_USERNAME", raising=False)
     text = "some ordinary error message"
-    assert pwd._sanitize_error_text(text) == text
+    assert lib._sanitize_error_text(text) == text
 
 
 def test_sanitize_error_text_handles_empty_string():
-    assert pwd._sanitize_error_text("") == ""
-    assert pwd._sanitize_error_text(None) is None
+    assert lib._sanitize_error_text("") == ""
+    assert lib._sanitize_error_text(None) is None
 
 
 def test_append_manifest_row_sanitizes_error_field_before_writing(tmp_path, monkeypatch):
     monkeypatch.setenv("WRDS_USERNAME", "secretuser99")
     manifest_path = tmp_path / "manifest.csv"
 
-    pwd.append_manifest_row(
+    lib.append_manifest_row(
         {
             "library": "crsp", "table": "dsf", "status": "query_failed",
             "rows": 0, "path": "", "missing_columns": "",
@@ -944,7 +963,7 @@ def test_append_manifest_row_sanitizes_error_field_before_writing(tmp_path, monk
     error_text = manifest.iloc[0]["error"]
     assert "secretuser99" not in error_text
     assert "[REDACTED_WRDS_USERNAME]" in error_text
-    assert len(error_text) <= pwd._MAX_ERROR_LEN
+    assert len(error_text) <= lib._MAX_ERROR_LEN
 
 
 def test_pull_table_query_failed_error_is_sanitized_in_manifest(tmp_path, monkeypatch):
@@ -960,7 +979,7 @@ def test_pull_table_query_failed_error_is_sanitized_in_manifest(tmp_path, monkey
     log = []
     manifest_path = tmp_path / "manifest.csv"
 
-    pwd.pull_table(
+    lib.pull_table(
         FakeDB(), log, "crsp", "dsf", ["permno"],
         raw_dir=tmp_path / "raw", manifest_path=manifest_path,
     )
@@ -975,228 +994,11 @@ def test_pull_table_query_failed_error_is_sanitized_in_manifest(tmp_path, monkey
     assert "myuser42" in log[0]["error"]
 
 
-# ---------------------------------------------------------------------------
-# main()'s per-table required/optional column lists, and the test fixture
-# that mirrors them.
-#
-# Rather than hand-copying a second "full column set" list here (the exact
-# duplication that already drifted out of sync once), TABLE_SPECS below
-# imports the SAME per-table required/optional column-list constants main()
-# itself uses. There is exactly one place any column is ever added to or
-# removed from a given table's pull, and both main() and this test suite
-# read it from there, so this fixture cannot drift out of sync with main()
-# the way an old hand-maintained duplicate list did.
-# ---------------------------------------------------------------------------
-
-TABLE_SPECS = [
-    ("ibes", "statsumu_epsus", pwd.IBES_STATSUMU_EPSUS_REQUIRED_COLUMNS, pwd.IBES_STATSUMU_EPSUS_OPTIONAL_COLUMNS),
-    ("ibes", "actu_epsus", pwd.IBES_ACTU_EPSUS_REQUIRED_COLUMNS, pwd.IBES_ACTU_EPSUS_OPTIONAL_COLUMNS),
-    ("ibes", "idsum", pwd.IBES_IDSUM_REQUIRED_COLUMNS, pwd.IBES_IDSUM_OPTIONAL_COLUMNS),
-    ("ibes", "detu_epsus", pwd.IBES_DETU_EPSUS_REQUIRED_COLUMNS, pwd.IBES_DETU_EPSUS_OPTIONAL_COLUMNS),
-    ("crsp", "dsf", pwd.CRSP_DSF_REQUIRED_COLUMNS, pwd.CRSP_DSF_OPTIONAL_COLUMNS),
-    ("crsp", "dsi", pwd.CRSP_DSI_REQUIRED_COLUMNS, pwd.CRSP_DSI_OPTIONAL_COLUMNS),
-    ("crsp", "dsedelist", pwd.CRSP_DSEDELIST_REQUIRED_COLUMNS, pwd.CRSP_DSEDELIST_OPTIONAL_COLUMNS),
-    ("crsp", "stocknames", pwd.CRSP_STOCKNAMES_REQUIRED_COLUMNS, pwd.CRSP_STOCKNAMES_OPTIONAL_COLUMNS),
-    ("comp", "fundq", pwd.COMP_FUNDQ_REQUIRED_COLUMNS, pwd.COMP_FUNDQ_OPTIONAL_COLUMNS),
-    ("comp", "company", pwd.COMP_COMPANY_REQUIRED_COLUMNS, pwd.COMP_COMPANY_OPTIONAL_COLUMNS),
-    ("comp", "funda", pwd.COMP_FUNDA_REQUIRED_COLUMNS, pwd.COMP_FUNDA_OPTIONAL_COLUMNS),
-    ("wrdsapps", "ibcrsphist", pwd.WRDSAPPS_IBCRSPHIST_REQUIRED_COLUMNS, pwd.WRDSAPPS_IBCRSPHIST_OPTIONAL_COLUMNS),
-    ("crsp", "ccmxpf_lnkhist", pwd.CRSP_CCMXPF_LNKHIST_REQUIRED_COLUMNS, pwd.CRSP_CCMXPF_LNKHIST_OPTIONAL_COLUMNS),
-]
-
-# Every one of main()'s 13 pull_table() call sites must appear here exactly
-# once -- this assertion catches a NEW call site being added to main()
-# without a matching entry being added here, which is exactly the kind of
-# drift this fixture exists to prevent.
-assert len(TABLE_SPECS) == 13
-
-# Union of every column name (required OR optional) requested by ANY
-# pull_table(...) call in main(), derived (not hand-copied) from
-# TABLE_SPECS above, so a FakeMainDB with the full set never spuriously
-# triggers "missing_required_columns" for a table under test unless a test
-# deliberately removes one column.
-FULL_COLUMN_SET = set().union(
-    *(set(req) | set(opt) for _lib, _tbl, req, opt in TABLE_SPECS)
-)
-
-
-class FakeMainDB:
-    """Stand-in for the whole wrds.Connection used by main(), not just one
-    table. Tracks every raw_sql call (which library.table, the full SQL
-    text, whether it was a streaming call) so a test can assert which
-    tables got queried, with what WHERE clause, how many times.
-    """
-
-    def __init__(
-        self,
-        libraries=("ibes", "crsp", "comp", "wrdsapps"),
-        missing_columns_by_table=None,
-        chunks_by_table=None,
-        raise_after_n_chunks_by_table=None,
-    ):
-        self.libraries = list(libraries)
-        self.missing_columns_by_table = missing_columns_by_table or {}
-        self.chunks_by_table = chunks_by_table or {}
-        self.raise_after_n_chunks_by_table = raise_after_n_chunks_by_table or {}
-        self.calls = []
-        self.closed = False
-
-    def list_libraries(self):
-        return self.libraries
-
-    def describe_table(self, library, table):
-        missing = self.missing_columns_by_table.get(f"{library}.{table}", set())
-        cols = sorted(FULL_COLUMN_SET - set(missing))
-        # See StubDB.describe_table's comment -- real describe_table() always
-        # has a "type" column too; "VARCHAR" for everything is fine here
-        # since these tests assert status/SQL text, not pinned-schema dtypes.
-        return pd.DataFrame({"name": cols, "type": ["VARCHAR"] * len(cols)})
-
-    def raw_sql(self, sql, return_iter=False):
-        match = re.search(r"FROM (\S+)", sql)
-        key = match.group(1) if match else "?"
-        self.calls.append({"key": key, "sql": sql, "return_iter": return_iter})
-        if return_iter:
-            chunks = self.chunks_by_table.get(key)
-            if chunks is None:
-                # Build a default one-row chunk containing exactly the
-                # columns THIS query actually selected, not a fixed
-                # ["permno", "date"] -- the pinned-schema streaming path
-                # (unlike round 5's data-inferred approach) requires a
-                # chunk's columns to match query_columns exactly, since the
-                # schema now comes from declared types for those specific
-                # columns, built independently of any chunk's content.
-                select_list = sql.split("FROM")[0].replace("SELECT", "")
-                cols = [c.strip() for c in select_list.split(",") if c.strip()]
-                chunks = [pd.DataFrame({c: [1] for c in cols})]
-            raise_after = self.raise_after_n_chunks_by_table.get(key)
-
-            def _gen(chunks=chunks, raise_after=raise_after):
-                for i, c in enumerate(chunks):
-                    if raise_after is not None and i == raise_after:
-                        raise RuntimeError(f"simulated mid-stream failure for {key}")
-                    yield c
-
-            return _gen()
-        # Non-streaming default: build a one-row DataFrame containing
-        # exactly the columns THIS query actually selected (mirroring the
-        # streaming branch's default above), rather than a fixed
-        # {"permno": [1]} regardless of table. Phase B's resolve_universe
-        # now reads these non-streaming pulls' real output files
-        # (crsp.stocknames, crsp.ccmxpf_lnkhist, wrdsapps.ibcrsphist) back
-        # off disk and expects their real column names (cusip/ncusip/
-        # permno, lpermno/gvkey, permno/ticker) to actually be present --
-        # a fixed "permno"-only frame would silently fail that requirement
-        # for every non-streaming table except the ones that happen to
-        # select a column literally named "permno".
-        select_list = sql.split("FROM")[0].replace("SELECT", "")
-        cols = [c.strip() for c in select_list.split(",") if c.strip()]
-        return pd.DataFrame({c: [1] for c in cols})
-
-    def close(self):
-        self.closed = True
-
-
-def _patch_main_env(monkeypatch, tmp_path, enforce_universe_floor=False):
-    """Point RAW_DIR/METADATA_DIR/MANIFEST_PATH at a tmp_path sandbox so
-    main() never touches the real repo's data/ directory during tests, and
-    return the paths a test needs to make assertions against.
-
-    Also monkeypatches load_env_file to a no-op: main() unconditionally
-    calls load_env_file(REPO_ROOT / ".env") first thing, which would
-    otherwise read the developer's actual .env file (real WRDS credentials)
-    into the test process's environment. Harmless today since connect() is
-    always mocked in these tests, but a unit test shouldn't touch a real
-    credentials file at all.
-
-    `enforce_universe_floor` (default False): Fix 4 added an ABSOLUTE floor
-    (MIN_UNIVERSE_SECID_COUNT, 8,000) on the universe file's row count,
-    checked before any WRDS connection at all -- but nearly every main()-
-    level test in this file uses a deliberately tiny (1-10 row) synthetic
-    universe fixture that has nothing to do with what Fix 4 is testing.
-    Patch the floor down to 0 by default so those tests keep exercising
-    what they were written for; the dedicated Fix 4 test passes
-    enforce_universe_floor=True to get the real 8,000 floor back.
-    """
-    raw_dir = tmp_path / "raw"
-    metadata_dir = tmp_path / "metadata"
-    manifest_path = metadata_dir / "wrds_pull_manifest.csv"
-    monkeypatch.setattr(pwd, "RAW_DIR", raw_dir)
-    monkeypatch.setattr(pwd, "METADATA_DIR", metadata_dir)
-    monkeypatch.setattr(pwd, "MANIFEST_PATH", manifest_path)
-    monkeypatch.setattr(pwd, "load_env_file", lambda path: None)
-    if not enforce_universe_floor:
-        monkeypatch.setattr(pwd, "MIN_UNIVERSE_SECID_COUNT", 0)
-
-    # Phase B (resolve_universe) reads data/metadata/optionmetrics_universe*
-    # .parquet -- real files that live in the actual repo and are NOT
-    # regenerated by this script. main()-level tests here don't exercise
-    # resolution logic itself (see the dedicated resolve_universe tests
-    # below for that), they just need Phase B to succeed so Phase C runs at
-    # all -- so write a minimal synthetic universe here whose single secid
-    # (cusip "1") matches FakeMainDB's default one-row-of-1s output for
-    # crsp.stocknames (cusip/ncusip 1 -> permno 1), giving a clean
-    # resolution: permno 1 -> gvkey "1" (via ccmxpf_lnkhist) -> ibes ticker
-    # "1" (via ibcrsphist).
-    metadata_dir.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame({
-        "secid": [999], "cusip": ["1"], "ticker": ["OMX"],
-        "issuer": ["OM FIXTURE ISSUER"], "sic": ["9999"],
-    }).to_parquet(metadata_dir / "optionmetrics_universe.parquet", index=False)
-    pd.DataFrame({
-        "secid": pd.Series([], dtype="int64"), "cusip": pd.Series([], dtype="object"),
-    }).to_parquet(metadata_dir / "optionmetrics_universe_history.parquet", index=False)
-
-    return raw_dir, metadata_dir, manifest_path
-
-
-# ---------------------------------------------------------------------------
-# --force flag must actually reach pull_table(), and argparse must reject
-# unrecognized flags rather than silently ignoring them.
-# ---------------------------------------------------------------------------
-
-
-def test_main_force_flag_rewires_all_pull_table_calls(tmp_path, monkeypatch):
-    raw_dir, _metadata_dir, _manifest_path = _patch_main_env(monkeypatch, tmp_path)
-
-    # Pre-create an output file for crsp.dsf, as if a prior run already
-    # pulled it -- idempotency would normally skip re-querying it.
-    (raw_dir / "crsp").mkdir(parents=True)
-    (raw_dir / "crsp" / "dsf.parquet").write_bytes(b"stale-marker")
-
-    fake_db = FakeMainDB()
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py", "--force"])
-
-    pwd.main()
-
-    dsf_calls = [c for c in fake_db.calls if c["key"] == "crsp.dsf"]
-    assert len(dsf_calls) == 1, (
-        "with --force on the command line, crsp.dsf must be re-queried even "
-        "though its output file already existed -- the flag must not be a "
-        "no-op"
-    )
-
-
-def test_main_without_force_flag_skips_existing_output(tmp_path, monkeypatch):
-    raw_dir, _metadata_dir, _manifest_path = _patch_main_env(monkeypatch, tmp_path)
-    (raw_dir / "crsp").mkdir(parents=True)
-    (raw_dir / "crsp" / "dsf.parquet").write_bytes(b"stale-marker")
-
-    fake_db = FakeMainDB()
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    pwd.main()
-
-    dsf_calls = [c for c in fake_db.calls if c["key"] == "crsp.dsf"]
-    assert len(dsf_calls) == 0
-    assert (raw_dir / "crsp" / "dsf.parquet").read_bytes() == b"stale-marker"
 
 
 def test_parse_args_accepts_force_flag():
-    assert pwd._parse_args([]).force is False
-    assert pwd._parse_args(["--force"]).force is True
+    assert lib.parse_common_args([]).force is False
+    assert lib.parse_common_args(["--force"]).force is True
 
 
 def test_parse_args_rejects_unrecognized_flag():
@@ -1206,306 +1008,11 @@ def test_parse_args_rejects_unrecognized_flag():
     # hadn't been passed, skipping every already-pulled table and exiting
     # looking successful.
     with pytest.raises(SystemExit):
-        pwd._parse_args(["--Force"])
+        lib.parse_common_args(["--Force"])
     with pytest.raises(SystemExit):
-        pwd._parse_args(["-force"])
+        lib.parse_common_args(["-force"])
 
 
-def test_main_unrecognized_flag_errors_out_before_connecting(tmp_path, monkeypatch, capsys):
-    _patch_main_env(monkeypatch, tmp_path)
-    # connect() is deliberately NOT patched to a working fake here: if
-    # argument parsing didn't fail fast, this test would blow up trying to
-    # make a real WRDS connection instead of cleanly asserting SystemExit.
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py", "--Force"])
-
-    with pytest.raises(SystemExit):
-        pwd.main()
-
-
-# ---------------------------------------------------------------------------
-# Every column in every one of main()'s 13 pull_table() call sites: a full
-# run with nothing missing must succeed for all 13 tables. Removing a
-# REQUIRED column must block that table specifically. Removing an OPTIONAL
-# column must NOT block that table -- it must still succeed, with the
-# column noted in optional_columns_missing (Fix 2).
-# ---------------------------------------------------------------------------
-
-
-def test_main_full_column_set_succeeds_for_every_table(tmp_path, monkeypatch):
-    """With every column main() currently asks for present in the (fake)
-    schema, all 13 pull_table() call sites must succeed -- proving the
-    corrected, cross-checked TABLE_SPECS/FULL_COLUMN_SET fixture actually
-    matches what main() asks for today.
-    """
-    _raw_dir, _metadata_dir, manifest_path = _patch_main_env(monkeypatch, tmp_path)
-
-    fake_db = FakeMainDB()
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    pwd.main()
-
-    manifest = pd.read_csv(manifest_path, keep_default_na=False)
-    for library, table, _req, _opt in TABLE_SPECS:
-        matches = manifest[(manifest["library"] == library) & (manifest["table"] == table)]
-        assert len(matches) == 1, f"expected exactly one manifest row for {library}.{table}"
-        status = matches.iloc[0]["status"]
-        assert status == "ok", (
-            f"{library}.{table} did not succeed with every currently-defined "
-            f"column present (got status {status!r}) -- TABLE_SPECS/"
-            f"FULL_COLUMN_SET may have drifted from main()'s real calls, or "
-            f"main() itself is broken"
-        )
-        assert matches.iloc[0]["optional_columns_missing"] == ""
-
-
-# Every (library, table, required_column) triple across all 13 real call
-# sites -- built from TABLE_SPECS itself (not hand-enumerated) so this
-# parametrized test automatically covers every REQUIRED column of every
-# table, not just a hand-picked subset. Per Fix 2, only REQUIRED columns are
-# tested here -- removing an OPTIONAL column must NOT abort the pull (tested
-# separately below).
-REQUIRED_TABLE_COLUMN_CASES = [
-    (library, table, column)
-    for library, table, required, _optional in TABLE_SPECS
-    for column in required
-]
-
-
-# Phase B's resolve_universe reads crsp.stocknames/crsp.ccmxpf_lnkhist/
-# wrdsapps.ibcrsphist back off disk once Phase A pulls them. Per Fix 3, only
-# crsp.stocknames (the PERMNO resolution stage) is allowed to hard-abort the
-# whole run if its pull is itself blocked by a missing required column and
-# its output file never gets written -- crsp.ccmxpf_lnkhist (GVKEY
-# resolution) and wrdsapps.ibcrsphist (I/B/E/S ticker resolution) instead
-# degrade that ONE identifier family (see test_main_missing_ccmxpf_lnkhist_
-# degrades_gvkey_only_not_whole_run / test_main_missing_ibcrsphist_degrades_
-# ibes_ticker_only_not_whole_run below for the dedicated coverage of that
-# degrade behavior) -- main() still completes normally for those two.
-PHASE_B_INPUT_TABLES = {("crsp", "stocknames")}
-
-
-@pytest.mark.parametrize("library,table,column", REQUIRED_TABLE_COLUMN_CASES)
-def test_main_missing_any_single_required_column_blocks_that_tables_pull(
-    tmp_path, monkeypatch, library, table, column
-):
-    _raw_dir, _metadata_dir, manifest_path = _patch_main_env(monkeypatch, tmp_path)
-
-    fake_db = FakeMainDB(missing_columns_by_table={f"{library}.{table}": {column}})
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    if (library, table) in PHASE_B_INPUT_TABLES:
-        with pytest.raises(SystemExit):
-            pwd.main()
-    else:
-        pwd.main()
-
-    manifest = pd.read_csv(manifest_path, keep_default_na=False)
-    matches = manifest[(manifest["library"] == library) & (manifest["table"] == table)]
-    assert len(matches) == 1, f"expected exactly one manifest row for {library}.{table}"
-    row = matches.iloc[0]
-    assert row["status"] == "missing_required_columns", (
-        f"{library}.{table} missing REQUIRED column {column!r} produced "
-        f"status {row['status']!r} -- every required column's absence must "
-        f"always abort the pull rather than silently proceeding crippled"
-    )
-    # And that table must not have been queried at all.
-    assert not any(c["key"] == f"{library}.{table}" for c in fake_db.calls)
-
-
-# Every (library, table, optional_column) triple across all 13 real call
-# sites, proving the flip side of Fix 2: removing an OPTIONAL column must
-# NOT abort the pull -- it must still succeed, with the column dropped from
-# the query and noted in optional_columns_missing.
-OPTIONAL_TABLE_COLUMN_CASES = [
-    (library, table, column)
-    for library, table, _required, optional in TABLE_SPECS
-    for column in optional
-]
-
-
-@pytest.mark.parametrize("library,table,column", OPTIONAL_TABLE_COLUMN_CASES)
-def test_main_missing_any_single_optional_column_does_not_block_that_tables_pull(
-    tmp_path, monkeypatch, library, table, column
-):
-    _raw_dir, _metadata_dir, manifest_path = _patch_main_env(monkeypatch, tmp_path)
-
-    fake_db = FakeMainDB(missing_columns_by_table={f"{library}.{table}": {column}})
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    pwd.main()
-
-    manifest = pd.read_csv(manifest_path, keep_default_na=False)
-    matches = manifest[(manifest["library"] == library) & (manifest["table"] == table)]
-    assert len(matches) == 1, f"expected exactly one manifest row for {library}.{table}"
-    row = matches.iloc[0]
-    assert row["status"] == "ok", (
-        f"{library}.{table} missing OPTIONAL column {column!r} produced "
-        f"status {row['status']!r} -- an optional column's absence must "
-        f"never abort the pull (Fix 2)"
-    )
-    assert column in row["optional_columns_missing"].split(",")
-    # And the table WAS queried (unlike the required-column case).
-    assert any(c["key"] == f"{library}.{table}" for c in fake_db.calls)
-    # The dropped column must not appear in the actual query's SELECT list
-    # (as a whole column token -- substring containment isn't enough, since
-    # e.g. "at" is a substring of "datadate" and "ask" is a substring of
-    # "askhi").
-    matching_calls = [c for c in fake_db.calls if c["key"] == f"{library}.{table}"]
-    for c in matching_calls:
-        select_list = c["sql"].split("FROM")[0]
-        selected_columns = {tok.strip() for tok in select_list.replace("SELECT", "").split(",")}
-        assert column not in selected_columns
-
-
-# ---------------------------------------------------------------------------
-# Fix 3: crsp.ccmxpf_lnkhist / wrdsapps.ibcrsphist being missing/unpullable
-# must degrade ONLY their own identifier family (GVKEY / I/B/E/S ticker
-# resolution respectively), never abort the whole run -- unlike
-# crsp.stocknames (PERMNO resolution), which remains the one hard-fail case
-# (covered generically above via PHASE_B_INPUT_TABLES).
-# ---------------------------------------------------------------------------
-
-
-def test_main_missing_ccmxpf_lnkhist_degrades_gvkey_only_not_whole_run(tmp_path, monkeypatch):
-    """crsp.ccmxpf_lnkhist's pull blocked by a missing required column ->
-    its output file never gets written -> GVKEY resolution is skipped, NOT
-    the whole run. comp.fundq/comp.funda must not be queried (nothing to
-    filter them by), but every CRSP-permno-filtered and I/B/E/S-ticker-
-    filtered table must still succeed normally."""
-    _raw_dir, _metadata_dir, manifest_path = _patch_main_env(monkeypatch, tmp_path)
-
-    fake_db = FakeMainDB(
-        missing_columns_by_table={"crsp.ccmxpf_lnkhist": {"gvkey"}}
-    )
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    pwd.main()  # must NOT raise SystemExit
-
-    queried_keys = {c["key"] for c in fake_db.calls}
-    assert "comp.fundq" not in queried_keys, (
-        "GVKEY resolution was skipped -- comp.fundq must not be queried "
-        "unfiltered or at all"
-    )
-    assert "comp.funda" not in queried_keys
-    # Nothing else needs GVKEY/CCM linkage, so it must all still run.
-    assert "crsp.dsf" in queried_keys
-    assert "ibes.statsumu_epsus" in queried_keys
-    assert "ibes.actu_epsus" in queried_keys
-    assert "ibes.detu_epsus" in queried_keys
-
-    manifest = pd.read_csv(manifest_path, keep_default_na=False)
-    skip_rows = manifest[manifest["status"] == "gvkey_resolution_skipped"]
-    assert len(skip_rows) == 1, (
-        "expected exactly one manifest row recording the GVKEY-resolution "
-        "skip with a clear reason"
-    )
-    assert "ccmxpf_lnkhist" in skip_rows.iloc[0]["error"]
-
-
-def test_main_missing_ibcrsphist_degrades_ibes_ticker_only_not_whole_run(tmp_path, monkeypatch):
-    """wrdsapps.ibcrsphist's pull blocked by a missing required column ->
-    its output file never gets written -> I/B/E/S ticker resolution is
-    skipped, NOT the whole run. All three ibes.* Phase C pulls must not be
-    queried, but CRSP- and Compustat-filtered tables must still succeed
-    normally."""
-    _raw_dir, _metadata_dir, manifest_path = _patch_main_env(monkeypatch, tmp_path)
-
-    fake_db = FakeMainDB(
-        missing_columns_by_table={"wrdsapps.ibcrsphist": {"ticker"}}
-    )
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    pwd.main()  # must NOT raise SystemExit
-
-    queried_keys = {c["key"] for c in fake_db.calls}
-    assert "ibes.statsumu_epsus" not in queried_keys, (
-        "I/B/E/S ticker resolution was skipped -- none of the ibes.* Phase "
-        "C pulls should run"
-    )
-    assert "ibes.actu_epsus" not in queried_keys
-    assert "ibes.detu_epsus" not in queried_keys
-    # Nothing else needs I/B/E/S ticker linkage, so it must all still run.
-    assert "crsp.dsf" in queried_keys
-    assert "comp.fundq" in queried_keys
-    assert "comp.funda" in queried_keys
-
-    manifest = pd.read_csv(manifest_path, keep_default_na=False)
-    skip_rows = manifest[manifest["status"] == "ibes_ticker_resolution_skipped"]
-    assert len(skip_rows) == 1, (
-        "expected exactly one manifest row recording the I/B/E/S-ticker- "
-        "resolution skip with a clear reason"
-    )
-    assert "ibcrsphist" in skip_rows.iloc[0]["error"]
-
-
-# ---------------------------------------------------------------------------
-# I/B/E/S detail file must be the unadjusted variant (detu_epsus), matching
-# the basis of statsumu_epsus/actu_epsus, not the split-adjusted det_epsus
-# (which also carries look-ahead via its adjustment factor).
-# ---------------------------------------------------------------------------
-
-
-def test_main_ibes_detail_pull_uses_unadjusted_table(tmp_path, monkeypatch):
-    _patch_main_env(monkeypatch, tmp_path)
-
-    fake_db = FakeMainDB()
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    pwd.main()
-
-    queried_keys = {c["key"] for c in fake_db.calls}
-    assert "ibes.detu_epsus" in queried_keys, (
-        "expected the split-UNADJUSTED detail file (detu_epsus) to match "
-        "the basis of statsumu_epsus/actu_epsus"
-    )
-    assert "ibes.det_epsus" not in queried_keys, (
-        "the split-ADJUSTED detail file (det_epsus) uses a different "
-        "adjustment basis and carries look-ahead -- must not be pulled"
-    )
-    assert "value" in pwd.IBES_DETU_EPSUS_REQUIRED_COLUMNS
-
-
-# ---------------------------------------------------------------------------
-# Event-date filters need the RETURN_END_DATE forward buffer too, not just
-# the return series (crsp.dsf/dsi/dsedelist).
-# ---------------------------------------------------------------------------
-
-
-def test_main_event_date_filters_use_return_end_date_buffer(tmp_path, monkeypatch):
-    _patch_main_env(monkeypatch, tmp_path)
-
-    fake_db = FakeMainDB()
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    pwd.main()
-
-    sql_by_key = {c["key"]: c["sql"] for c in fake_db.calls}
-
-    # Event-occurred-by-X filters: must extend to RETURN_END_DATE.
-    assert pwd.RETURN_END_DATE in sql_by_key["ibes.actu_epsus"]
-    assert pwd.END_DATE not in sql_by_key["ibes.actu_epsus"]
-
-    assert pwd.RETURN_END_DATE in sql_by_key["ibes.detu_epsus"]
-    assert pwd.END_DATE not in sql_by_key["ibes.detu_epsus"]
-
-    assert pwd.RETURN_END_DATE in sql_by_key["comp.fundq"]
-    assert pwd.END_DATE not in sql_by_key["comp.fundq"]
-
-    # Estimate/observation-dated-by-X filters: intentionally stay at the
-    # sample cutoff (END_DATE), not the return buffer -- see reasoning
-    # comments in main().
-    assert pwd.END_DATE in sql_by_key["ibes.statsumu_epsus"]
-    assert pwd.RETURN_END_DATE not in sql_by_key["ibes.statsumu_epsus"]
-
-    assert pwd.END_DATE in sql_by_key["comp.funda"]
-    assert pwd.RETURN_END_DATE not in sql_by_key["comp.funda"]
 
 
 # ---------------------------------------------------------------------------
@@ -1540,7 +1047,7 @@ def test_pull_table_force_failure_preserves_original_file_non_streaming(
     db = StubDB(columns=["permno"], rows=pd.DataFrame({"permno": [1]}))
     log = []
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf", ["permno"],
         raw_dir=raw_dir, manifest_path=tmp_path / "manifest.csv",
         force=True,
@@ -1572,7 +1079,7 @@ def test_pull_table_force_failure_preserves_original_file_streaming(tmp_path):
     )
 
     log = []
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf", ["permno", "date"],
         raw_dir=raw_dir, manifest_path=tmp_path / "manifest.csv",
         force=True, stream=True,
@@ -1601,7 +1108,7 @@ def test_pull_table_streaming_exception_on_third_chunk_leaves_no_output_file(tmp
     log = []
     out_path = tmp_path / "raw" / "crsp" / "dsf.parquet"
 
-    pwd.pull_table(
+    lib.pull_table(
         db, log, "crsp", "dsf", ["permno", "date"],
         raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
         stream=True,
@@ -1626,7 +1133,7 @@ def test_pull_table_cleans_up_tmp_file_on_keyboard_interrupt_non_streaming(
     raw_dir = tmp_path / "raw"
 
     with pytest.raises(KeyboardInterrupt):
-        pwd.pull_table(
+        lib.pull_table(
             db, log, "crsp", "dsf", ["permno"],
             raw_dir=raw_dir, manifest_path=tmp_path / "manifest.csv",
         )
@@ -1651,7 +1158,7 @@ def test_pull_table_rejects_unsafe_library_name(tmp_path):
     log = []
 
     with pytest.raises(ValueError):
-        pwd.pull_table(
+        lib.pull_table(
             db, log, "crsp; DROP TABLE x; --", "dsf", ["permno"],
             raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
         )
@@ -1662,7 +1169,7 @@ def test_pull_table_rejects_unsafe_table_name(tmp_path):
     log = []
 
     with pytest.raises(ValueError):
-        pwd.pull_table(
+        lib.pull_table(
             db, log, "crsp", "dsf; DROP TABLE x; --", ["permno"],
             raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
         )
@@ -1676,7 +1183,7 @@ def test_pull_table_rejects_unsafe_column_name(tmp_path):
     log = []
 
     with pytest.raises(ValueError):
-        pwd.pull_table(
+        lib.pull_table(
             db, log, "crsp", "dsf", ["permno", "date; DROP TABLE x; --"],
             raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
         )
@@ -1687,7 +1194,7 @@ def test_pull_table_rejects_unsafe_optional_column_name(tmp_path):
     log = []
 
     with pytest.raises(ValueError):
-        pwd.pull_table(
+        lib.pull_table(
             db, log, "crsp", "dsf", ["permno"],
             optional_columns=["date; DROP TABLE x; --"],
             raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
@@ -1709,7 +1216,7 @@ def test_pull_table_rejects_unsafe_name_before_describe_table_is_called(tmp_path
 
     log = []
     with pytest.raises(ValueError):
-        pwd.pull_table(
+        lib.pull_table(
             ExplodingDB(), log, "crsp; DROP TABLE x; --", "dsf", ["permno"],
             raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
         )
@@ -1719,10 +1226,10 @@ def test_sql_identifier_regex_rejects_trailing_newline():
     # `$` in Python regex also matches immediately before a trailing
     # newline, so "dsf\n" would incorrectly pass a "$"-anchored pattern.
     # `\Z` is a true end-of-string anchor and must reject it.
-    assert pwd._SQL_IDENTIFIER_RE.match("dsf") is not None
-    assert pwd._SQL_IDENTIFIER_RE.match("dsf\n") is None
+    assert lib._SQL_IDENTIFIER_RE.match("dsf") is not None
+    assert lib._SQL_IDENTIFIER_RE.match("dsf\n") is None
     with pytest.raises(ValueError):
-        pwd._validate_sql_identifier("table", "dsf\n")
+        lib._validate_sql_identifier("table", "dsf\n")
 
 
 # ---------------------------------------------------------------------------
@@ -1770,7 +1277,7 @@ def _resolve_universe_fixture(tmp_path, om=None, om_hist=None, stocknames=None, 
     without_gvkey_out = tmp_path / "metadata" / "permnos_without_gvkey.csv"
     without_ibes_ticker_out = tmp_path / "metadata" / "permnos_without_ibes_ticker.csv"
 
-    resolved = pwd.resolve_universe(
+    resolved = lib.resolve_universe(
         om_universe_path=om_path,
         om_universe_history_path=om_hist_path,
         stocknames_path=stocknames_path,
@@ -1963,8 +1470,8 @@ def test_resolve_universe_missing_input_file_raises_before_any_output_written(tm
         pd.DataFrame({"secid": [], "cusip": []}),
     )
 
-    with pytest.raises(pwd.UniverseResolutionError):
-        pwd.resolve_universe(
+    with pytest.raises(lib.UniverseResolutionError):
+        lib.resolve_universe(
             om_universe_path=om_path,
             om_universe_history_path=om_hist_path,
             stocknames_path=tmp_path / "raw" / "crsp" / "stocknames.parquet",  # never written
@@ -2001,8 +1508,8 @@ def test_resolve_universe_missing_required_column_raises(tmp_path):
         pd.DataFrame({"permno": [1], "ticker": ["A"]}),
     )
 
-    with pytest.raises(pwd.UniverseResolutionError):
-        pwd.resolve_universe(
+    with pytest.raises(lib.UniverseResolutionError):
+        lib.resolve_universe(
             om_universe_path=om_path,
             om_universe_history_path=om_hist_path,
             stocknames_path=stocknames_path,
@@ -2137,7 +1644,7 @@ def test_resolve_universe_gvkey_survives_as_zero_padded_string_despite_numeric_s
         "GVKEY must come back as its correct zero-padded 6-digit string "
         "form even when the source column was a numeric dtype"
     )
-    clause = pwd.build_string_in_clause("gvkey", resolved.gvkeys)
+    clause = lib.build_string_in_clause("gvkey", resolved.gvkeys)
     assert clause == "gvkey IN ('001000')", (
         f"expected the quoted, zero-padded clause; got {clause!r} -- "
         f"build_numeric_in_clause (Fix 1's bug) would instead produce an "
@@ -2187,7 +1694,7 @@ def test_resolve_universe_gvkey_survives_as_zero_padded_string_despite_float64_s
         f"The pre-fix bug would have silently produced ['1000.0'] instead, "
         f"which matches nothing in Compustat."
     )
-    clause = pwd.build_string_in_clause("gvkey", resolved.gvkeys)
+    clause = lib.build_string_in_clause("gvkey", resolved.gvkeys)
     assert clause == "gvkey IN ('001000')"
 
 
@@ -2199,22 +1706,22 @@ def test_resolve_universe_gvkey_survives_as_zero_padded_string_despite_float64_s
 
 
 def test_normalize_gvkeys_handles_float64_dtype():
-    result = pwd._normalize_gvkeys(pd.Series([1000.0, 2.0], dtype="float64"))
+    result = lib._normalize_gvkeys(pd.Series([1000.0, 2.0], dtype="float64"))
     assert list(result) == ["001000", "000002"]
 
 
 def test_normalize_gvkeys_handles_int64_dtype():
-    result = pwd._normalize_gvkeys(pd.Series([1000, 2], dtype="int64"))
+    result = lib._normalize_gvkeys(pd.Series([1000, 2], dtype="int64"))
     assert list(result) == ["001000", "000002"]
 
 
 def test_normalize_gvkeys_handles_object_dtype_already_correct():
-    result = pwd._normalize_gvkeys(pd.Series(["001000", "000002"], dtype="object"))
+    result = lib._normalize_gvkeys(pd.Series(["001000", "000002"], dtype="object"))
     assert list(result) == ["001000", "000002"]
 
 
 def test_validate_gvkeys_accepts_well_formed():
-    pwd._validate_gvkeys(["001000", "999999"])  # must not raise
+    lib._validate_gvkeys(["001000", "999999"])  # must not raise
 
 
 def test_validate_gvkeys_rejects_float_like_string():
@@ -2222,14 +1729,14 @@ def test_validate_gvkeys_rejects_float_like_string():
     # catch it even if _normalize_gvkeys's root-cause fix were ever
     # bypassed or regressed.
     with pytest.raises(ValueError):
-        pwd._validate_gvkeys(["1000.0"])
+        lib._validate_gvkeys(["1000.0"])
 
 
 def test_validate_gvkeys_rejects_wrong_length():
     with pytest.raises(ValueError):
-        pwd._validate_gvkeys(["12345"])
+        lib._validate_gvkeys(["12345"])
     with pytest.raises(ValueError):
-        pwd._validate_gvkeys(["1234567"])
+        lib._validate_gvkeys(["1234567"])
 
 
 # ---------------------------------------------------------------------------
@@ -2261,7 +1768,7 @@ def test_resolve_universe_missing_ccmxpf_lnkhist_skips_gvkey_only(tmp_path):
     # crsp.ccmxpf_lnkhist.parquet is deliberately never written -- simulates
     # the table being missing/unpullable on this account.
 
-    resolved = pwd.resolve_universe(
+    resolved = lib.resolve_universe(
         om_universe_path=om_path,
         om_universe_history_path=om_hist_path,
         stocknames_path=stocknames_path,
@@ -2311,7 +1818,7 @@ def test_resolve_universe_missing_ibcrsphist_skips_ibes_ticker_only(tmp_path):
     ccmxpf_path = _write_parquet(tmp_path / "raw" / "crsp" / "ccmxpf_lnkhist.parquet", ccmxpf)
     # wrdsapps.ibcrsphist.parquet is deliberately never written.
 
-    resolved = pwd.resolve_universe(
+    resolved = lib.resolve_universe(
         om_universe_path=om_path,
         om_universe_history_path=om_hist_path,
         stocknames_path=stocknames_path,
@@ -2449,22 +1956,22 @@ def test_resolve_universe_ambiguous_gvkey_and_ticker_stages_carry_om_detail(tmp_
 
 
 def test_validate_ibes_tickers_accepts_typical_tickers():
-    pwd._validate_ibes_tickers(["AAPL", "BRK.A", "BF-B", "A", "1234567890"])
+    lib._validate_ibes_tickers(["AAPL", "BRK.A", "BF-B", "A", "1234567890"])
 
 
 def test_validate_ibes_tickers_rejects_disallowed_characters():
     with pytest.raises(ValueError):
-        pwd._validate_ibes_tickers(["AAPL; DROP TABLE x; --"])
+        lib._validate_ibes_tickers(["AAPL; DROP TABLE x; --"])
 
 
 def test_validate_ibes_tickers_rejects_too_long_ticker():
     with pytest.raises(ValueError):
-        pwd._validate_ibes_tickers(["A" * 11])
+        lib._validate_ibes_tickers(["A" * 11])
 
 
 def test_validate_ibes_tickers_rejects_lowercase():
     with pytest.raises(ValueError):
-        pwd._validate_ibes_tickers(["aapl"])
+        lib._validate_ibes_tickers(["aapl"])
 
 
 # ---------------------------------------------------------------------------
@@ -2512,164 +2019,6 @@ def test_resolve_universe_blank_ibes_ticker_treated_as_missing_link(tmp_path):
     )
 
 
-class _FakeMainDBTwoSecidsWithBlankTicker(FakeMainDB):
-    """Two OM secids/permnos; wrdsapps.ibcrsphist returns a valid ticker for
-    permno 1 and a blank (whitespace-only) ticker for permno 2. Fix 2(a)
-    must silently drop the blank one (reducing I/B/E/S coverage) rather
-    than letting it reach ticker-format validation -- while permno 1's
-    valid ticker keeps the I/B/E/S family non-empty, so this test isn't
-    confused with the unrelated "attempted but zero tickers" floor check.
-    """
-
-    def raw_sql(self, sql, return_iter=False):
-        match = re.search(r"FROM (\S+)", sql)
-        key = match.group(1) if match else "?"
-        if not return_iter and key in (
-            "crsp.stocknames", "crsp.ccmxpf_lnkhist", "wrdsapps.ibcrsphist",
-        ):
-            self.calls.append({"key": key, "sql": sql, "return_iter": return_iter})
-            select_list = sql.split("FROM")[0].replace("SELECT", "")
-            cols = [c.strip() for c in select_list.split(",") if c.strip()]
-            if key == "crsp.stocknames":
-                data = {"permno": [1, 2], "cusip": ["1", "2"], "ncusip": ["1", "2"]}
-            elif key == "crsp.ccmxpf_lnkhist":
-                data = {"lpermno": [1, 2], "gvkey": [1, 2]}
-            else:  # wrdsapps.ibcrsphist
-                data = {"permno": [1, 2], "ticker": ["AAA", "   "]}
-            return pd.DataFrame({c: data.get(c, [1, 1]) for c in cols})
-        return super().raw_sql(sql, return_iter=return_iter)
-
-
-def test_main_blank_ibes_ticker_does_not_block_crsp_or_compustat_pulls(tmp_path, monkeypatch):
-    """Fix 2(a) end-to-end via main(): a blank ticker for one permno must
-    NOT prevent crsp.dsf/comp.fundq from being pulled -- it can only ever
-    affect the I/B/E/S family, and even that family must keep running here
-    (permno 1's valid ticker means resolution isn't zero)."""
-    _raw_dir, metadata_dir, _manifest_path = _patch_main_env(monkeypatch, tmp_path)
-    pd.DataFrame({
-        "secid": [1, 2], "cusip": ["1", "2"], "ticker": ["OMX1", "OMX2"],
-        "issuer": ["ISSUER 1", "ISSUER 2"], "sic": ["9999", "9999"],
-    }).to_parquet(metadata_dir / "optionmetrics_universe.parquet", index=False)
-
-    fake_db = _FakeMainDBTwoSecidsWithBlankTicker()
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    pwd.main()  # must NOT raise SystemExit
-
-    queried_keys = {c["key"] for c in fake_db.calls}
-    assert "crsp.dsf" in queried_keys
-    assert "comp.fundq" in queried_keys
-    assert "ibes.statsumu_epsus" in queried_keys, (
-        "the I/B/E/S family must still run: permno 1's valid ticker means "
-        "resolution wasn't zero, and permno 2's blank ticker must have been "
-        "silently dropped rather than raising"
-    )
-
-
-class _FakeMainDBMalformedIbesTicker(FakeMainDB):
-    """wrdsapps.ibcrsphist returns a non-blank, malformed ticker ("BAD
-    TICKER!" -- fails the _IBES_TICKER_RE allowlist) for the one resolved
-    permno. Used to prove BOTH (a) Fix 2: a malformed ticker degrades ONLY
-    the I/B/E/S family, never aborts the whole run, and (b) Fix 3: main()
-    actually calls _validate_ibes_tickers somewhere reachable -- if that
-    call were ever removed/bypassed (e.g. replaced with `pass`), this
-    malformed ticker would sail through build_string_in_clause unchecked
-    and the ibes.* pulls would run normally, making this test's "must be
-    skipped" assertion fail.
-    """
-
-    def raw_sql(self, sql, return_iter=False):
-        match = re.search(r"FROM (\S+)", sql)
-        key = match.group(1) if match else "?"
-        if key == "wrdsapps.ibcrsphist" and not return_iter:
-            self.calls.append({"key": key, "sql": sql, "return_iter": return_iter})
-            select_list = sql.split("FROM")[0].replace("SELECT", "")
-            cols = [c.strip() for c in select_list.split(",") if c.strip()]
-            return pd.DataFrame({c: (["BAD TICKER!"] if c == "ticker" else [1]) for c in cols})
-        return super().raw_sql(sql, return_iter=return_iter)
-
-
-def test_main_malformed_ibes_ticker_degrades_ibes_family_only_not_whole_run(tmp_path, monkeypatch):
-    """Fix 2 + Fix 3 combined: a genuinely malformed (non-blank) I/B/E/S
-    ticker must degrade ONLY the ibes.* pulls -- never abort crsp.dsf/
-    comp.fundq, which don't need I/B/E/S linkage at all. See the fake DB
-    class docstring above for why this also proves main()'s
-    _validate_ibes_tickers call is load-bearing (Fix 3)."""
-    _raw_dir, _metadata_dir, manifest_path = _patch_main_env(monkeypatch, tmp_path)
-    fake_db = _FakeMainDBMalformedIbesTicker()
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    pwd.main()  # must NOT raise SystemExit -- this is the core Fix 2 bug
-
-    queried_keys = {c["key"] for c in fake_db.calls}
-    assert "ibes.statsumu_epsus" not in queried_keys, (
-        "a malformed ticker must skip the I/B/E/S family -- if this "
-        "assertion fails, main()'s _validate_ibes_tickers call may have "
-        "been removed or bypassed (Fix 3)"
-    )
-    assert "ibes.actu_epsus" not in queried_keys
-    assert "ibes.detu_epsus" not in queried_keys
-    assert "crsp.dsf" in queried_keys, (
-        "CRSP pulls must not be held hostage by a bad I/B/E/S ticker"
-    )
-    assert "comp.fundq" in queried_keys, (
-        "Compustat pulls must not be held hostage by a bad I/B/E/S ticker"
-    )
-
-    manifest = pd.read_csv(manifest_path, keep_default_na=False)
-    skip_rows = manifest[manifest["status"] == "ibes_ticker_validation_failed"]
-    assert len(skip_rows) == 1, (
-        "expected exactly one manifest row recording the ticker-validation "
-        "failure with a clear reason"
-    )
-
-
-class _FakeMainDBMalformedGvkey(FakeMainDB):
-    """Like _FakeMainDBMalformedIbesTicker, but for crsp.ccmxpf_lnkhist's
-    gvkey column (Fix 1's _validate_gvkeys safety net) -- must degrade ONLY
-    comp.fundq/comp.funda, never abort the whole run."""
-
-    def raw_sql(self, sql, return_iter=False):
-        match = re.search(r"FROM (\S+)", sql)
-        key = match.group(1) if match else "?"
-        if key == "crsp.ccmxpf_lnkhist" and not return_iter:
-            self.calls.append({"key": key, "sql": sql, "return_iter": return_iter})
-            select_list = sql.split("FROM")[0].replace("SELECT", "")
-            cols = [c.strip() for c in select_list.split(",") if c.strip()]
-            return pd.DataFrame({c: (["BAD-GVKEY!"] if c == "gvkey" else [1]) for c in cols})
-        return super().raw_sql(sql, return_iter=return_iter)
-
-
-def test_main_gvkey_validation_failure_degrades_compustat_only_not_whole_run(tmp_path, monkeypatch):
-    """Fix 1's _validate_gvkeys safety net: a GVKEY that fails shape
-    validation must degrade ONLY comp.fundq/comp.funda, never abort
-    crsp.dsf or the ibes.* pulls, which don't need GVKEY linkage at all --
-    the same per-family-degrade discipline Fix 2 establishes for I/B/E/S
-    tickers."""
-    _raw_dir, _metadata_dir, manifest_path = _patch_main_env(monkeypatch, tmp_path)
-    fake_db = _FakeMainDBMalformedGvkey()
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    pwd.main()  # must NOT raise SystemExit
-
-    queried_keys = {c["key"] for c in fake_db.calls}
-    assert "comp.fundq" not in queried_keys, (
-        "a malformed GVKEY must skip ONLY comp.fundq/comp.funda -- if this "
-        "assertion fails, main()'s _validate_gvkeys call or gvkey_ok gating "
-        "may have been removed or bypassed"
-    )
-    assert "comp.funda" not in queried_keys
-    assert "crsp.dsf" in queried_keys, "CRSP pulls must not be held hostage by a bad GVKEY"
-    assert "ibes.statsumu_epsus" in queried_keys, (
-        "I/B/E/S pulls must not be held hostage by a bad GVKEY"
-    )
-
-    manifest = pd.read_csv(manifest_path, keep_default_na=False)
-    skip_rows = manifest[manifest["status"] == "gvkey_validation_failed"]
-    assert len(skip_rows) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -2679,79 +2028,18 @@ def test_main_gvkey_validation_failure_degrades_compustat_only_not_whole_run(tmp
 
 
 def test_check_cusip_lengths_warns_on_mismatched_length(capsys):
-    pwd._check_cusip_lengths(pd.Series(["12345678", "1234", "ABCDEFGH"]), "test context")
+    lib._check_cusip_lengths(pd.Series(["12345678", "1234", "ABCDEFGH"]), "test context")
     captured = capsys.readouterr()
     assert "WARNING" in captured.out
     assert "test context" in captured.out
 
 
 def test_check_cusip_lengths_silent_when_all_length_8(capsys):
-    pwd._check_cusip_lengths(pd.Series(["12345678", "ABCDEFGH"]), "test context")
+    lib._check_cusip_lengths(pd.Series(["12345678", "ABCDEFGH"]), "test context")
     captured = capsys.readouterr()
     assert "WARNING" not in captured.out
 
 
-# ---------------------------------------------------------------------------
-# Fix 2: a zero-resolution (or below-floor, or attempted-but-empty GVKEY/
-# ticker) outcome must hard-abort BEFORE any Phase C query, rather than
-# silently producing an IN (NULL) filter and exiting looking successful.
-# ---------------------------------------------------------------------------
-
-
-def test_main_zero_resolved_secids_aborts_before_phase_c(tmp_path, monkeypatch):
-    """The OM universe's only secid has a CUSIP that can never match
-    FakeMainDB's default stocknames row (cusip/ncusip always "1") -- zero
-    secids resolve, and main() must abort before any Phase C query."""
-    _raw_dir, metadata_dir, _manifest_path = _patch_main_env(monkeypatch, tmp_path)
-    pd.DataFrame({
-        "secid": [999], "cusip": ["NEVERMATCHES"], "ticker": ["OMX"],
-        "issuer": ["OM FIXTURE ISSUER"], "sic": ["9999"],
-    }).to_parquet(metadata_dir / "optionmetrics_universe.parquet", index=False)
-
-    fake_db = FakeMainDB()
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    with pytest.raises(SystemExit):
-        pwd.main()
-
-    # No Phase C (big-table) query may have been attempted.
-    phase_c_keys = {
-        "crsp.dsf", "comp.fundq", "comp.funda",
-        "ibes.statsumu_epsus", "ibes.actu_epsus", "ibes.detu_epsus",
-    }
-    queried_keys = {c["key"] for c in fake_db.calls}
-    assert not (phase_c_keys & queried_keys), (
-        f"Phase C tables were queried despite zero resolved secids: "
-        f"{phase_c_keys & queried_keys}"
-    )
-
-
-def test_main_resolution_rate_below_floor_aborts_before_phase_c(tmp_path, monkeypatch):
-    """9 of 10 OM secids can never match FakeMainDB's single stocknames row
-    -- a 10% resolution rate, far below MIN_PERMNO_RESOLUTION_RATE (90%) but
-    NOT zero -- must still abort before Phase C."""
-    _raw_dir, metadata_dir, _manifest_path = _patch_main_env(monkeypatch, tmp_path)
-    secids = list(range(1, 11))
-    cusips = ["1"] + [f"NOMATCH{i}" for i in range(2, 11)]  # only secid 1 matches
-    pd.DataFrame({
-        "secid": secids, "cusip": cusips, "ticker": [f"T{i}" for i in secids],
-        "issuer": [f"ISSUER {i}" for i in secids], "sic": ["9999"] * 10,
-    }).to_parquet(metadata_dir / "optionmetrics_universe.parquet", index=False)
-
-    fake_db = FakeMainDB()
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    with pytest.raises(SystemExit):
-        pwd.main()
-
-    phase_c_keys = {
-        "crsp.dsf", "comp.fundq", "comp.funda",
-        "ibes.statsumu_epsus", "ibes.actu_epsus", "ibes.detu_epsus",
-    }
-    queried_keys = {c["key"] for c in fake_db.calls}
-    assert not (phase_c_keys & queried_keys)
 
 
 # ---------------------------------------------------------------------------
@@ -2766,105 +2054,22 @@ def test_main_resolution_rate_below_floor_aborts_before_phase_c(tmp_path, monkey
 def test_check_universe_secid_floor_rejects_below_threshold(tmp_path):
     path = tmp_path / "tiny_universe.parquet"
     pd.DataFrame({"secid": [1, 2, 3]}).to_parquet(path, index=False)
-    with pytest.raises(pwd.UniverseResolutionError):
-        pwd._check_universe_secid_floor(path)
+    with pytest.raises(lib.UniverseResolutionError):
+        lib._check_universe_secid_floor(path)
 
 
 def test_check_universe_secid_floor_accepts_at_threshold(tmp_path, monkeypatch):
-    monkeypatch.setattr(pwd, "MIN_UNIVERSE_SECID_COUNT", 3)
+    monkeypatch.setattr(lib, "MIN_UNIVERSE_SECID_COUNT", 3)
     path = tmp_path / "universe.parquet"
     pd.DataFrame({"secid": [1, 2, 3]}).to_parquet(path, index=False)
-    assert pwd._check_universe_secid_floor(path) == 3
+    assert lib._check_universe_secid_floor(path) == 3
 
 
 def test_check_universe_secid_floor_missing_file_raises(tmp_path):
-    with pytest.raises(pwd.UniverseResolutionError):
-        pwd._check_universe_secid_floor(tmp_path / "does_not_exist.parquet")
+    with pytest.raises(lib.UniverseResolutionError):
+        lib._check_universe_secid_floor(tmp_path / "does_not_exist.parquet")
 
 
-def test_main_tiny_universe_file_rejected_by_absolute_floor_even_at_100pct_resolution(
-    tmp_path, monkeypatch
-):
-    """A 3-row universe file must be rejected by the ABSOLUTE secid-count
-    floor even though every row uses the SAME cusip ("1") that FakeMainDB's
-    default crsp.stocknames row resolves -- i.e. it would resolve at 100%
-    against the rate-based floor alone. connect() is deliberately NOT
-    patched to a working fake: the absolute floor must fire BEFORE any
-    WRDS connection is attempted at all (see main()'s call site, which
-    runs this check ahead of connect())."""
-    _raw_dir, metadata_dir, _manifest_path = _patch_main_env(
-        monkeypatch, tmp_path, enforce_universe_floor=True
-    )
-    pd.DataFrame({
-        "secid": [1, 2, 3], "cusip": ["1", "1", "1"], "ticker": ["A", "B", "C"],
-        "issuer": ["A CORP", "B CORP", "C CORP"], "sic": ["9999"] * 3,
-    }).to_parquet(metadata_dir / "optionmetrics_universe.parquet", index=False)
-
-    def _unexpected_connect():
-        raise AssertionError(
-            "connect() must not be called -- the absolute universe-size "
-            "floor should abort before any WRDS connection is attempted"
-        )
-
-    monkeypatch.setattr(pwd, "connect", _unexpected_connect)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    with pytest.raises(SystemExit):
-        pwd.main()
-
-
-class _FakeMainDBUnlinkedGvkey(FakeMainDB):
-    """Like FakeMainDB, but crsp.ccmxpf_lnkhist links a PERMNO (999) that
-    never resolves from the OM universe -- a real, present, non-empty
-    ccmxpf_lnkhist pull that simply has no row for any resolved PERMNO.
-    GVKEY resolution is attempted (the table IS available), but comes back
-    with zero GVKEYs -- the "broken join, not genuinely empty" case Fix 2's
-    floor check must catch (as opposed to Fix 3's "table missing entirely"
-    degrade case, already covered above)."""
-
-    def raw_sql(self, sql, return_iter=False):
-        match = re.search(r"FROM (\S+)", sql)
-        key = match.group(1) if match else "?"
-        if key == "crsp.ccmxpf_lnkhist" and not return_iter:
-            self.calls.append({"key": key, "sql": sql, "return_iter": return_iter})
-            select_list = sql.split("FROM")[0].replace("SELECT", "")
-            cols = [c.strip() for c in select_list.split(",") if c.strip()]
-            return pd.DataFrame({c: ([999] if c == "lpermno" else [1]) for c in cols})
-        return super().raw_sql(sql, return_iter=return_iter)
-
-
-class _FakeMainDBUnlinkedIbesTicker(FakeMainDB):
-    """Same idea as _FakeMainDBUnlinkedGvkey, for wrdsapps.ibcrsphist."""
-
-    def raw_sql(self, sql, return_iter=False):
-        match = re.search(r"FROM (\S+)", sql)
-        key = match.group(1) if match else "?"
-        if key == "wrdsapps.ibcrsphist" and not return_iter:
-            self.calls.append({"key": key, "sql": sql, "return_iter": return_iter})
-            select_list = sql.split("FROM")[0].replace("SELECT", "")
-            cols = [c.strip() for c in select_list.split(",") if c.strip()]
-            return pd.DataFrame({c: ([999] if c == "permno" else [1]) for c in cols})
-        return super().raw_sql(sql, return_iter=return_iter)
-
-
-def test_main_gvkey_attempted_but_empty_aborts_before_phase_c(tmp_path, monkeypatch):
-    _patch_main_env(monkeypatch, tmp_path)
-    fake_db = _FakeMainDBUnlinkedGvkey()
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    with pytest.raises(SystemExit):
-        pwd.main()
-
-
-def test_main_ibes_ticker_attempted_but_empty_aborts_before_phase_c(tmp_path, monkeypatch):
-    _patch_main_env(monkeypatch, tmp_path)
-    fake_db = _FakeMainDBUnlinkedIbesTicker()
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
-
-    with pytest.raises(SystemExit):
-        pwd.main()
 
 
 # ---------------------------------------------------------------------------
@@ -2875,89 +2080,135 @@ def test_main_ibes_ticker_attempted_but_empty_aborts_before_phase_c(tmp_path, mo
 
 
 def test_build_numeric_in_clause_basic():
-    assert pwd.build_numeric_in_clause("permno", [3, 1, 2]) == "permno IN (1, 2, 3)"
+    assert lib.build_numeric_in_clause("permno", [3, 1, 2]) == "permno IN (1, 2, 3)"
 
 
 def test_build_numeric_in_clause_dedupes():
-    assert pwd.build_numeric_in_clause("permno", [1, 1, 2]) == "permno IN (1, 2)"
+    assert lib.build_numeric_in_clause("permno", [1, 1, 2]) == "permno IN (1, 2)"
 
 
 def test_build_numeric_in_clause_empty_list_matches_nothing_not_everything():
     # An empty resolved-ID list must produce a filter that matches NOTHING
     # (IN (NULL)), not an omitted/empty filter that would silently pull an
     # unfiltered table.
-    assert pwd.build_numeric_in_clause("permno", []) == "permno IN (NULL)"
+    assert lib.build_numeric_in_clause("permno", []) == "permno IN (NULL)"
 
 
 def test_build_numeric_in_clause_rejects_non_numeric_value():
     with pytest.raises(ValueError):
-        pwd.build_numeric_in_clause("permno", ["1; DROP TABLE x; --"])
+        lib.build_numeric_in_clause("permno", ["1; DROP TABLE x; --"])
 
 
 def test_build_numeric_in_clause_rejects_unsafe_column_name():
     with pytest.raises(ValueError):
-        pwd.build_numeric_in_clause("permno; DROP TABLE x; --", [1])
+        lib.build_numeric_in_clause("permno; DROP TABLE x; --", [1])
 
 
 def test_build_string_in_clause_basic():
-    assert pwd.build_string_in_clause("ticker", ["MSFT", "AAPL"]) == "ticker IN ('AAPL', 'MSFT')"
+    assert lib.build_string_in_clause("ticker", ["MSFT", "AAPL"]) == "ticker IN ('AAPL', 'MSFT')"
 
 
 def test_build_string_in_clause_escapes_embedded_quote():
-    assert pwd.build_string_in_clause("ticker", ["O'BRIEN"]) == "ticker IN ('O''BRIEN')"
+    assert lib.build_string_in_clause("ticker", ["O'BRIEN"]) == "ticker IN ('O''BRIEN')"
 
 
 def test_build_string_in_clause_empty_list_matches_nothing_not_everything():
-    assert pwd.build_string_in_clause("ticker", []) == "ticker IN (NULL)"
+    assert lib.build_string_in_clause("ticker", []) == "ticker IN (NULL)"
 
 
 def test_build_string_in_clause_drops_blank_values():
-    assert pwd.build_string_in_clause("ticker", ["AAPL", "", "   ", None]) == "ticker IN ('AAPL')"
+    assert lib.build_string_in_clause("ticker", ["AAPL", "", "   ", None]) == "ticker IN ('AAPL')"
 
 
-def test_main_filtered_where_sql_combines_with_existing_filters_for_every_big_table(
-    tmp_path, monkeypatch
-):
-    """End-to-end (through main()) check that every Phase C table's WHERE
-    clause contains BOTH its existing date/format filter AND the new
-    permno/gvkey/ticker IN (...) filter, combined with AND -- neither one
-    lost or overwritten by the other."""
-    _patch_main_env(monkeypatch, tmp_path)
+# ---------------------------------------------------------------------------
+# NEW this round: helpers specifically needed by the split-scripts design --
+# require_resolved_universe_file() (the "run pull_wrds_reference.py first"
+# guard shared by the three consumer scripts) and load_resolved_filter_lists()
+# (reconstructing resolve_universe()'s in-memory PERMNO/GVKEY/ticker filter
+# lists from resolved_universe_ids.parquet on disk, since each consumer
+# script is now its own process and never calls resolve_universe() itself).
+# ---------------------------------------------------------------------------
 
-    fake_db = FakeMainDB()
-    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
-    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
 
-    pwd.main()
+def test_require_resolved_universe_file_missing_raises_systemexit_with_clear_message(tmp_path):
+    missing_path = tmp_path / "metadata" / "resolved_universe_ids.parquet"
+    with pytest.raises(SystemExit) as exc_info:
+        lib.require_resolved_universe_file(missing_path)
+    message = str(exc_info.value)
+    assert "pull_wrds_reference.py" in message
+    assert str(missing_path) in message
 
-    sql_by_key = {c["key"]: c["sql"] for c in fake_db.calls}
 
-    # crsp.dsf/dsedelist: date filter AND permno IN (...).
-    assert pwd.LOOKBACK_START_DATE in sql_by_key["crsp.dsf"]
-    assert "permno IN (1)" in sql_by_key["crsp.dsf"]
-    assert pwd.LOOKBACK_START_DATE in sql_by_key["crsp.dsedelist"]
-    assert "permno IN (1)" in sql_by_key["crsp.dsedelist"]
+def test_require_resolved_universe_file_existing_returns_path(tmp_path):
+    path = tmp_path / "metadata" / "resolved_universe_ids.parquet"
+    path.parent.mkdir(parents=True)
+    pd.DataFrame({"secid": [1]}).to_parquet(path, index=False)
+    assert lib.require_resolved_universe_file(path) == path
 
-    # crsp.dsi: unfiltered by ID, as required -- no IN (...) clause at all.
-    assert "IN (" not in sql_by_key["crsp.dsi"]
 
-    # comp.fundq/funda: date + COMPUSTAT_STD_FILTER AND gvkey IN (...).
-    # Fix 1/Fix 4(d): GVKEY must render as a QUOTED string with its
-    # zero-padding preserved -- "gvkey IN ('000001')" -- never the bare
-    # numeric "gvkey IN (1)" or "gvkey IN (000001)" a build_numeric_in_
-    # clause call (Fix 1's actual bug) would produce. FakeMainDB's default
-    # one-row-of-1s fixture makes crsp.ccmxpf_lnkhist's gvkey column come
-    # back as the integer 1 -- exactly the "read back as a numeric dtype"
-    # case _norm/zfill(6) must recover from, giving "000001" here.
-    assert pwd.COMPUSTAT_STD_FILTER in sql_by_key["comp.fundq"]
-    assert "gvkey IN ('000001')" in sql_by_key["comp.fundq"], (
-        f"expected a quoted, zero-padded GVKEY clause; got: "
-        f"{sql_by_key['comp.fundq']!r}"
-    )
-    assert pwd.COMPUSTAT_STD_FILTER in sql_by_key["comp.funda"]
-    assert "gvkey IN ('000001')" in sql_by_key["comp.funda"]
+def test_load_resolved_filter_lists_reconstructs_exact_union_of_per_secid_lists(tmp_path):
+    """Two secids with overlapping and distinct permno/gvkey/ticker values,
+    including a genuinely unresolved secid (all-null row) -- the returned
+    lists must be the deduplicated, sorted UNION across every row, exactly
+    matching what resolve_universe() itself would have returned as
+    all_permnos/all_gvkeys/all_tickers for the same underlying data."""
+    path = tmp_path / "resolved_universe_ids.parquet"
+    pd.DataFrame({
+        "secid": [1, 2, 3],
+        "cusip": ["A", "B", "C"],
+        "ticker": ["AAA", "BBB", "CCC"],
+        "issuer": ["A CORP", "B CORP", "C CORP"],
+        "permno": ["100,200", "200", None],
+        "gvkey": ["001000", "001000,002000", None],
+        "ibes_ticker": ["AAA", None, None],
+    }).to_parquet(path, index=False)
 
-    # ibes.statsumu_epsus/actu_epsus/detu_epsus: date filter AND ticker IN (...).
-    for table in ("statsumu_epsus", "actu_epsus", "detu_epsus"):
-        key = f"ibes.{table}"
-        assert "ticker IN ('1')" in sql_by_key[key], f"{key} missing quoted ticker IN (...) filter"
+    permnos, gvkeys, ibes_tickers = lib.load_resolved_filter_lists(path)
+
+    assert permnos == [100, 200]
+    assert gvkeys == ["001000", "002000"]
+    assert ibes_tickers == ["AAA"]
+
+
+def test_load_resolved_filter_lists_all_empty_when_family_skipped(tmp_path):
+    """If an identifier family was skipped upstream (e.g. GVKEY resolution
+    because crsp.ccmxpf_lnkhist was unavailable), every row's gvkey column
+    is null -- load_resolved_filter_lists must come back with an empty list
+    for that family, not raise or fabricate a value."""
+    path = tmp_path / "resolved_universe_ids.parquet"
+    pd.DataFrame({
+        "secid": [1],
+        "cusip": ["A"],
+        "ticker": ["AAA"],
+        "issuer": ["A CORP"],
+        "permno": ["100"],
+        "gvkey": [None],
+        "ibes_ticker": [None],
+    }).to_parquet(path, index=False)
+
+    permnos, gvkeys, ibes_tickers = lib.load_resolved_filter_lists(path)
+
+    assert permnos == [100]
+    assert gvkeys == []
+    assert ibes_tickers == []
+
+
+def test_load_resolved_filter_lists_missing_expected_column_raises(tmp_path):
+    path = tmp_path / "resolved_universe_ids.parquet"
+    pd.DataFrame({"secid": [1], "permno": ["1"]}).to_parquet(path, index=False)
+    with pytest.raises(lib.UniverseResolutionError):
+        lib.load_resolved_filter_lists(path)
+
+
+def test_max_concurrent_connections_is_a_small_positive_int():
+    # A named, easy-to-adjust constant, not a magic number -- but it must
+    # still be a sane positive value (real concurrency, not accidentally 0
+    # or negative, and not so large it risks tripping a WRDS connection
+    # limit).
+    assert isinstance(lib.MAX_CONCURRENT_CONNECTIONS, int)
+    assert 1 <= lib.MAX_CONCURRENT_CONNECTIONS <= 10
+
+
+def test_parse_common_args_rejects_unrecognized_flag():
+    with pytest.raises(SystemExit):
+        lib.parse_common_args(["--Force"])

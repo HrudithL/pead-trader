@@ -1,71 +1,46 @@
-"""
-One-time WRDS bulk pull for pead-trading.
+"""Shared library for pead-trading's WRDS bulk-pull scripts.
 
-Pulls I/B/E/S (analyst estimates + actuals), CRSP (returns, market benchmark,
-delistings, identifiers), and Compustat (fundamentals, lower priority) for
-1996-01-01 through 2013-12-31 -- the OptionMetrics archive's native window on
-the external drive, so the earnings/estimates side and the options side line
-up on the same period for the first time.
+This module holds everything that survived 7 rounds of review/fix against
+the original monolithic `pull_wrds_data.py` (now split into
+`pull_wrds_reference.py`, `pull_wrds_crsp.py`, `pull_wrds_compustat.py`, and
+`pull_wrds_ibes.py` -- see `memory/phase1-equity-pead-plan.md`'s "Split Into
+Parallel Scripts" section): `connect()`, `pull_table()` and everything it
+depends on (schema pinning, atomic writes, identifier validation, the
+manifest), and `resolve_universe()` and everything IT depends on (the
+CUSIP/PERMNO/GVKEY/ticker resolution logic). None of that logic's behavior
+changed as part of this split -- this is a pure extraction, moved verbatim
+out of the old single-file script, plus a small number of NEW helpers this
+round explicitly added to make the split possible:
 
-Deliberately does NOT check for or pull OptionMetrics/options data. This WRDS
-account does not have that access, and options data comes from the external
-drive archive instead. Do not add an optionm check here without confirming
-that's actually changed.
+  - `MAX_CONCURRENT_CONNECTIONS`: the shared concurrency cap for every
+    script's internal thread pool.
+  - `load_resolved_filter_lists()`: lets each of the three consumer scripts
+    (crsp/compustat/ibes) reconstruct the PERMNO/GVKEY/I-B-E-S-ticker filter
+    lists from `resolved_universe_ids.parquet` on disk, since they no longer
+    share a single in-process `ResolvedUniverse` object with the reference
+    script the way one monolithic `main()` used to.
+  - `require_resolved_universe_file()`: the "run pull_wrds_reference.py
+    first" guard shared by all three consumer scripts.
+  - `parse_common_args()`: the `--force` flag parsing shared by all four
+    scripts' `main()`.
+  - A `threading.Lock` around the manifest append, needed now that a single
+    script (`pull_wrds_crsp.py`) can have multiple threads -- each with its
+    own WRDS connection -- calling `pull_table()` (and therefore
+    `append_manifest_row()`) concurrently. This wasn't a risk before this
+    round: the original script was single-threaded throughout.
 
-This is meant to run ONCE. Every table lands under data/raw_wrds/<library>/ as
-Parquet, gitignored, so this should not need to run again except for a
-deliberate, explicit refresh -- per the standing "minimize WRDS queries" rule.
-Re-running is idempotent by default: pull_table() skips any table whose output
-Parquet file already exists (logged as "skipped_exists"), unless --force is
-passed on the command line. That way a re-run after a partial failure doesn't
-re-query tables that already succeeded. NOTE: this means if a Phase C output
-file from a prior UNFILTERED run (i.e. before universe filtering existed)
-ever exists on disk, a re-run will silently keep serving that stale,
-unfiltered data unless --force is passed -- pull_table's skip-if-exists check
-has no way to tell "already correctly filtered" apart from "exists for any
-other reason". This is a documentation note, not a behavior change.
-
-Column lists are checked against the account's actual schema via
-db.describe_table() before each query, rather than assumed blind, since exact
-column/table names can vary slightly by WRDS account vintage. Any table that
-doesn't exist, or whose real schema is missing a REQUIRED column, is logged
-and skipped rather than crashing the run.
-
-Columns come in two tiers per table (see each *_REQUIRED_COLUMNS /
-*_OPTIONAL_COLUMNS pair below):
-  - required: load-bearing payload/join-key/point-in-time-validity columns.
-    Missing ANY of these aborts that table's pull entirely (logged as
-    "missing_required_columns"), because a result missing one of these would
-    look complete in the manifest while silently lacking something a
-    downstream join or calculation depends on.
-  - optional: genuinely speculative "grab it now since this is a one-shot
-    pull" extras (transaction-cost fields, GICS sector, analyst-count detail
-    beyond what this project's Phase I signal needs, etc.) whose exact name
-    can vary by WRDS account vintage/subscription tier. A missing optional
-    column is dropped from that table's query and noted in the manifest's
-    "optional_columns_missing" field -- visible, but never fatal.
-Every column named in either tier for a given table IS requested from the
-real query when present; only a missing REQUIRED column can abort the pull.
-
-Every table's outcome -- success, skip, or failure -- is appended to
-data/metadata/wrds_pull_manifest.csv immediately after that table's attempt,
-not buffered in memory until the end, so an interrupted run still leaves an
-accurate manifest for everything it got through. Error text written to that
-manifest is sanitized first (see _sanitize_error_text) since the manifest is
-git-tracked.
-
-Usage:
-    python scripts/pull_wrds_data.py [--force]
-Requires WRDS_USERNAME and WRDS_PASSWORD in a .env file at the repo root.
+Every table/library/column-list constant that used to live only in
+`pull_wrds_data.py` also moves here, so every script that needs
+`START_DATE`/`END_DATE`/`CRSP_DSF_REQUIRED_COLUMNS`/etc. imports the exact
+same values instead of each keeping its own copy that could drift.
 """
 
-import argparse
 import builtins
 import csv
 import datetime as dt
 import os
 import re
-import sys
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -78,6 +53,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = REPO_ROOT / "data" / "raw_wrds"
 METADATA_DIR = REPO_ROOT / "data" / "metadata"
 MANIFEST_PATH = METADATA_DIR / "wrds_pull_manifest.csv"
+RESOLVED_IDS_PATH = METADATA_DIR / "resolved_universe_ids.parquet"
 
 # Matches the OptionMetrics archive's native coverage (verified in
 # memory/pead-trading-spec.md section 6b: 1996-2013, not 1997-2013).
@@ -109,24 +85,15 @@ RETURN_END_DATE = "2014-06-30"
 # pulls contain duplicate, unusable rows.
 COMPUSTAT_STD_FILTER = "indfmt='INDL' AND datafmt='STD' AND popsrc='D' AND consol='C'"
 
-# Per-table required/optional column lists for every pull_table() call in
-# main(), pulled out to module level (rather than inline list literals in
-# main()) for one reason: tests/test_pull_wrds_data.py needs these same lists
-# to build fake schemas that never spuriously fail a table's pull, and a
-# previous round's hand-copied duplicate of that set drifted out of sync
-# with main()'s real calls. Defining the lists once here and having BOTH
-# main() and the test suite import these same constants makes that kind of
-# drift structurally impossible instead of merely policed by hand -- there is
-# only one place a column ever gets added or removed for a given table.
+# Round-of-review discipline (unchanged from the original single-file
+# script): per-table required/optional column lists live at module level,
+# not as inline list literals at each pull_table() call site, so every
+# script AND the test suite import these same constants instead of each
+# keeping a hand-copied duplicate that could drift out of sync.
 #
 # required = aborts the whole table's pull if missing from the real schema.
 # optional = dropped from the query (and noted in the manifest) if missing;
 #            never aborts the pull.
-#
-# The required/optional split below reflects what this project's Phase I
-# signal-and-returns equity study actually needs as load-bearing vs. what was
-# added purely as "grab it now, it's a one-shot pull" speculation (see the
-# per-table reasoning comments at each constant).
 
 # ibes.statsumu_epsus: meanest/fpi/fpedats/statpers/ticker are the consensus
 # estimate itself, its forecast-horizon identification, and its snapshot
@@ -301,6 +268,39 @@ MANIFEST_FIELDNAMES = [
 # ever reaches that file.
 _MAX_ERROR_LEN = 300
 
+# NEW this round: bounded concurrency cap shared by every script's internal
+# thread pool (pull_wrds_crsp.py's per-year crsp.dsf chunks + crsp.dsi/
+# crsp.dsedelist, pull_wrds_compustat.py's fundq/funda, pull_wrds_ibes.py's
+# statsumu_epsus/actu_epsus/detu_epsus). The user explicitly prioritized
+# speed over minimizing WRDS connections for this split, so this is a
+# deliberate middle ground: real concurrency (not one sequential connection),
+# without opening enough simultaneous WRDS sessions at once to risk tripping
+# a per-account connection limit or a rate flag. A single, named, easy-to-
+# adjust constant rather than a magic number repeated at each call site.
+MAX_CONCURRENT_CONNECTIONS = 4
+
+# Manifest writes can now come from multiple THREADS within one script
+# (pull_wrds_crsp.py's per-year connections all append to the same
+# MANIFEST_PATH concurrently) -- append_manifest_row's read-then-write
+# "is this file new" check plus its append are not atomic as a pair, so two
+# threads racing on a brand-new manifest file could both decide "file is new"
+# and both write a header, or interleave partial writes. This lock protects
+# exactly that: it's process-local (threading, not multiprocessing/fcntl),
+# which is all that's needed for a single script's internal thread pool.
+#
+# KNOWN LIMITATION (documented, not solved here -- out of this round's
+# scope): the three consumer scripts are meant to run concurrently as
+# SEPARATE PROCESSES (per the split design), each with its own instance of
+# this lock -- this does NOT protect the manifest CSV against interleaved
+# writes from those separate processes. Cross-process file locking (e.g.
+# fcntl) would be needed to close that gap; it isn't attempted here because
+# the task this round is scoped to is the thread-safety needed for
+# pull_wrds_crsp.py's internal per-year thread pool, not a general-purpose
+# multi-process-safe manifest. Worst case today is an occasional interleaved
+# or malformed manifest row across processes, not data loss in the actual
+# pulled Parquet files.
+_MANIFEST_LOCK = threading.Lock()
+
 
 def _sanitize_error_text(text: str) -> str:
     """Best-effort scrub of an exception message before it's written to the
@@ -405,28 +405,42 @@ def append_manifest_row(row: dict, manifest_path: Path = None) -> None:
     at the single choke point where a row actually reaches the git-tracked
     CSV -- rather than at each call site that sets "error" -- so a future
     call site can't forget to sanitize its own error text.
+
+    Guarded by _MANIFEST_LOCK (new this round): pull_wrds_crsp.py's per-year
+    thread pool means multiple threads within ONE process can call this
+    concurrently against the same manifest_path -- see _MANIFEST_LOCK's
+    docstring for exactly what this does and does not protect against.
     """
     manifest_path = Path(manifest_path) if manifest_path is not None else MANIFEST_PATH
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
     row = dict(row)
     if row.get("error"):
         row["error"] = _sanitize_error_text(str(row["error"]))
     row.setdefault(
         "pulled_at", dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     )
-    file_is_new = not manifest_path.exists() or manifest_path.stat().st_size == 0
-    with manifest_path.open("a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=MANIFEST_FIELDNAMES)
-        if file_is_new:
-            writer.writeheader()
-        writer.writerow({k: row.get(k, "") for k in MANIFEST_FIELDNAMES})
+    with _MANIFEST_LOCK:
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        file_is_new = not manifest_path.exists() or manifest_path.stat().st_size == 0
+        with manifest_path.open("a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=MANIFEST_FIELDNAMES)
+            if file_is_new:
+                writer.writeheader()
+            writer.writerow({k: row.get(k, "") for k in MANIFEST_FIELDNAMES})
 
 
 def record(log: list, row: dict, manifest_path: Path = None) -> None:
     """Add one entry to both the in-memory run log (used only for the final
     printed summary -- kept un-sanitized since it's console-only, never
     committed) and the on-disk manifest (the durable, git-tracked record,
-    sanitized by append_manifest_row)."""
+    sanitized by append_manifest_row).
+
+    `log` is a plain list. Callers that share a `log` across THREADS (none
+    of this library's own code does -- each of pull_wrds_crsp.py's per-year
+    worker functions uses its own thread-local log list, merged by the
+    caller after all futures complete) are responsible for their own
+    thread-safety around it; append_manifest_row's own lock only protects
+    the shared on-disk manifest file, not this in-memory list.
+    """
     row = dict(row)
     row.setdefault(
         "pulled_at", dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
@@ -453,7 +467,6 @@ def _validate_sql_identifier(kind: str, name: str) -> None:
             f"Unsafe SQL {kind} name {name!r}: must match "
             f"{_SQL_IDENTIFIER_RE.pattern!r}"
         )
-
 
 
 # Round 5's approach (removed) tried to *infer* the pinned schema from real
@@ -613,50 +626,6 @@ def _stream_query_to_parquet(db, library, table, columns, where_sql, out_path, p
     written via ParquetWriter, which is opened against `pinned_schema`
     immediately, before the first chunk is even requested.
 
-    WHY NOT INFER THE SCHEMA FROM DATA (round 5's approach, removed): round
-    5 widened integer fields to float64 and buffered a few chunks to
-    "resolve" any column that showed pa.null() in an early chunk. That
-    logic never actually fires against the real driver: verified directly
-    against the installed pandas==2.2.3 source
-    (pandas.io.sql._convert_arrays_to_dataframe, used internally by
-    wrds.Connection.raw_sql's dtype_backend="numpy_nullable" path) that a
-    column which is entirely NULL in a chunk comes back as pandas
-    `string[python]` (StringDtype), NOT pa.null() --
-
-        >>> df = pandas.io.sql._convert_arrays_to_dataframe(
-        ...     [(1, None), (2, None)], ["permno", "numtrd"],
-        ...     dtype_backend="numpy_nullable")
-        >>> pyarrow.Table.from_pandas(df, preserve_index=False).schema
-        permno: int64
-        numtrd: string
-
-    so round 5's "still unresolved" check (looking for pa.null()) never
-    triggers, the buffer accepts `numtrd: string` from the very first
-    all-NULL chunk as final, and every later chunk's real integer values
-    silently get cast DOWN to strings for the whole table -- no error, no
-    warning. This was confirmed by running round 5's actual buffering/merge
-    functions against this real-driver chunk output, not just inferred from
-    the diff.
-
-    Building the pinned schema from declared SQL types up front sidesteps
-    this class of bug entirely: the schema no longer depends on which
-    values happen to land in which chunk, so there is nothing to buffer,
-    infer, or get wrong-by-coincidence. It is also identical run to run
-    regardless of chunk order/composition.
-
-    DEVIATION FROM THE ORIGINALLY SUGGESTED "zero-row probe query" APPROACH
-    (documented here because this project's verification discipline asks
-    for this, and it's still relevant context even though it no longer
-    matters for schema pinning specifically): a zero-row `SELECT ... WHERE
-    1=0` query does NOT give per-column type info either -- pandas takes the
-    `DataFrame(columns=columns)` fallback branch for a genuinely zero-row
-    result, and every column comes back plain `object` dtype (pa.null() for
-    every field), regardless of the column's real type. db.describe_table()
-    (already called by pull_table for the required/optional column check)
-    is the actual source of real per-column type info, with no extra query
-    needed -- consistent with this project's "minimize WRDS query volume"
-    constraint.
-
     The final write goes to a temporary path and is moved into place with
     os.replace() only after it fully succeeds, so a failure partway through
     (e.g. on a --force re-pull) can never truncate or destroy a
@@ -734,6 +703,10 @@ def pull_table(
     `db` only needs to satisfy the small interface actually used here --
     `describe_table(library, table)` and `raw_sql(sql, return_iter=...)` --
     so tests can pass a lightweight stub instead of a real wrds.Connection.
+    This also means a script can safely call pull_table() concurrently from
+    multiple threads, each with its OWN `db` (see pull_wrds_crsp.py) --
+    nothing here shares mutable state across `db` instances except the
+    manifest file itself, which append_manifest_row's lock protects.
 
     `required_columns` is the must-have subset: every one of these must be
     present in the real schema (per db.describe_table()) or the pull does
@@ -747,6 +720,12 @@ def pull_table(
     and every dropped optional column across the whole call is recorded in
     the manifest's "optional_columns_missing" field so the gap is visible
     without being fatal.
+
+    `out_name` (default: `table`) controls the output Parquet's filename
+    (`<out_name>.parquet`) independent of the real SQL table name queried --
+    this is what lets pull_wrds_crsp.py write one file per calendar year
+    (`out_name="dsf_1996"`, etc.) while still querying the real `crsp.dsf`
+    table every time.
 
     `stream=True` uses `_stream_query_to_parquet` (schema pinned from
     db.describe_table()'s declared column types, via _build_pinned_schema,
@@ -966,11 +945,12 @@ class UniverseResolutionError(RuntimeError):
     loaded DataFrame is missing a column that stage structurally depends
     on.
 
-    main() catches this and aborts the ENTIRE run before attempting any of
-    Phase C's expensive WRDS queries -- a broken PERMNO resolution step must
-    never be allowed to silently fall through to an empty/missing filter
-    that then pulls either the whole market (no filter) or nothing (an
-    accidentally always-false filter) from WRDS.
+    pull_wrds_reference.py's main() catches this and aborts the ENTIRE run
+    before writing anything the three consumer scripts would trust -- a
+    broken PERMNO resolution step must never be allowed to silently fall
+    through to an empty/missing filter that then pulls either the whole
+    market (no filter) or nothing (an accidentally always-false filter)
+    from WRDS.
 
     Fix 3: GVKEY resolution (crsp.ccmxpf_lnkhist) and I/B/E/S ticker
     resolution (wrdsapps.ibcrsphist) are DELIBERATELY NOT covered by this
@@ -1285,11 +1265,12 @@ def resolve_universe(
     Returns a ResolvedUniverse with the deduplicated PERMNO/GVKEY/ticker
     filter lists Phase C's pull_table() calls use, favoring over-inclusion
     for any ambiguous link (see ResolvedUniverse's docstring). Callers
-    (main()) MUST check gvkey_resolution_skipped/ibes_ticker_resolution_
-    skipped before deciding whether to run the GVKEY-/ticker-filtered Phase
-    C pulls, and MUST apply the MIN_PERMNO_RESOLUTION_RATE floor check
-    themselves (Fix 2) -- this function does not raise on a low-but-nonzero
-    resolution rate, only on the PERMNO stage being entirely unusable.
+    (pull_wrds_reference.py's main()) MUST check gvkey_resolution_skipped/
+    ibes_ticker_resolution_skipped before deciding whether to run the
+    GVKEY-/ticker-filtered Phase C pulls, and MUST apply the
+    MIN_PERMNO_RESOLUTION_RATE floor check themselves (Fix 2) -- this
+    function does not raise on a low-but-nonzero resolution rate, only on
+    the PERMNO stage being entirely unusable.
     """
     om = _load_parquet_or_raise(om_universe_path, "optionmetrics_universe.parquet")
     om_hist = _load_parquet_or_raise(
@@ -1765,505 +1746,103 @@ def _validate_ibes_tickers(tickers) -> None:
         )
 
 
-def _parse_args(argv):
-    """Parse this script's own command-line arguments via argparse (rather
-    than a hand-rolled `"--force" in sys.argv` check), so a typo like
-    `--Force` or `-force` errors out immediately instead of silently being
-    ignored -- which would otherwise proceed as if --force hadn't been
-    passed (skipping every already-pulled table) and exit looking
-    successful.
+# ---------------------------------------------------------------------------
+# NEW this round: helpers specifically needed by the split (never existed in
+# the monolithic script, since one process used to hold the whole
+# ResolvedUniverse in memory from resolve_universe() through every Phase C
+# pull_table() call in the same main()).
+# ---------------------------------------------------------------------------
+
+
+def require_resolved_universe_file(path=None) -> Path:
+    """Guard shared by the three consumer scripts (pull_wrds_crsp.py,
+    pull_wrds_compustat.py, pull_wrds_ibes.py): raise SystemExit with a
+    clear, actionable message if data/metadata/resolved_universe_ids.parquet
+    doesn't exist yet, instead of proceeding to build an empty/unfiltered
+    query or crashing on a confusing FileNotFoundError deep inside pandas.
+
+    Returns the resolved Path on success (so callers can pass it straight to
+    load_resolved_filter_lists without repeating the default-path logic).
     """
-    parser = argparse.ArgumentParser(description=__doc__)
+    path = Path(path) if path is not None else RESOLVED_IDS_PATH
+    if not path.exists():
+        raise SystemExit(
+            f"FATAL: {path} does not exist yet. Run `python "
+            f"scripts/pull_wrds_reference.py` FIRST and ALONE -- it produces "
+            f"this file, which every other WRDS pull script filters on. "
+            f"Nothing here was queried."
+        )
+    return path
+
+
+def load_resolved_filter_lists(resolved_ids_path=None):
+    """Reconstruct the deduplicated PERMNO/GVKEY/I-B-E-S-ticker filter lists
+    from data/metadata/resolved_universe_ids.parquet -- the on-disk
+    equivalent of a resolve_universe() call's in-memory
+    ResolvedUniverse.permnos/.gvkeys/.ibes_tickers, for a consumer script
+    that didn't itself call resolve_universe() (each of pull_wrds_crsp.py/
+    pull_wrds_compustat.py/pull_wrds_ibes.py runs as its own process and
+    only ever reads this file, produced earlier by pull_wrds_reference.py).
+
+    Each row of that Parquet file is one OM secid, with `permno`/`gvkey`/
+    `ibes_ticker` as comma-joined strings (or null) per resolve_universe's
+    own writer above. Exploding and unioning those comma-joined values
+    across every row reconstructs EXACTLY the same sets resolve_universe()
+    itself returned: every permno/gvkey/ticker in resolve_universe()'s
+    all_permnos/all_gvkeys/all_tickers appears in at least one secid's row
+    (by construction -- see resolve_universe()'s `rows.append(...)` loop),
+    and nothing else does.
+
+    Deliberately does NOT try to distinguish "GVKEY resolution was skipped
+    entirely" from "GVKEY resolution was attempted but returned zero rows
+    for every secid" -- pull_wrds_reference.py's own abort checks (mirroring
+    the original script's FATAL checks) guarantee that if this file exists
+    and its writer exited successfully, the only way an identifier family's
+    column can be all-null here is that the family was genuinely skipped
+    (an attempted-but-completely-empty family is a FATAL abort in
+    pull_wrds_reference.py itself, before this file's caller would ever be
+    told it's safe to proceed) -- so "no gvkeys found in this file" and
+    "GVKEY resolution was skipped" are the same actionable fact from a
+    consumer script's point of view: don't pull comp.fundq/comp.funda.
+
+    Returns (permnos: list[int], gvkeys: list[str], ibes_tickers: list[str]),
+    each deduplicated and sorted, matching resolve_universe()'s own
+    all_permnos/all_gvkeys/all_tickers construction.
+    """
+    resolved_ids_path = Path(resolved_ids_path) if resolved_ids_path is not None else RESOLVED_IDS_PATH
+    df = pd.read_parquet(resolved_ids_path)
+    _require_columns(df, ["permno", "gvkey", "ibes_ticker"], str(resolved_ids_path))
+
+    def _explode_unique(col_name, caster):
+        values = set()
+        for cell in df[col_name].dropna():
+            for token in str(cell).split(","):
+                token = token.strip()
+                if token:
+                    values.add(caster(token))
+        return values
+
+    permnos = sorted(_explode_unique("permno", int))
+    gvkeys = sorted(_explode_unique("gvkey", str))
+    ibes_tickers = sorted(_explode_unique("ibes_ticker", str))
+    return permnos, gvkeys, ibes_tickers
+
+
+def parse_common_args(argv, description=None):
+    """Parse the `--force` flag shared by every script's main() via argparse
+    (rather than a hand-rolled `"--force" in sys.argv` check), so a typo
+    like `--Force` or `-force` errors out immediately instead of silently
+    being ignored -- which would otherwise proceed as if --force hadn't
+    been passed (skipping every already-pulled table) and exit looking
+    successful. One shared implementation so all four scripts parse this
+    flag identically instead of each hand-rolling its own argparse setup.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
         "--force",
         action="store_true",
         help="Re-pull every table even if its output Parquet file already exists.",
     )
     return parser.parse_args(argv)
-
-
-def main():
-    load_env_file(REPO_ROOT / ".env")
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-    METADATA_DIR.mkdir(parents=True, exist_ok=True)
-
-    args = _parse_args(sys.argv[1:])
-    force = args.force
-
-    # Fix 4: absolute-count floor on the universe file, checked BEFORE
-    # connecting to WRDS at all -- see _check_universe_secid_floor's
-    # docstring for why the existing RATE-based floor
-    # (MIN_PERMNO_RESOLUTION_RATE, checked later, after resolution) isn't
-    # enough on its own: a truncated/corrupted universe file that happens to
-    # resolve at 100% would sail straight past a rate-only check.
-    try:
-        _check_universe_secid_floor(METADATA_DIR / "optionmetrics_universe.parquet")
-    except UniverseResolutionError as e:
-        print(
-            f"FATAL: universe file failed the absolute-count floor check -- "
-            f"aborting before connecting to WRDS or attempting any "
-            f"resolution: {e}",
-            flush=True,
-        )
-        raise SystemExit(1) from e
-
-    db = connect()
-    log = []
-
-    try:
-        # --- One-time library audit ---
-        libraries = sorted(db.list_libraries())
-        (METADATA_DIR / "wrds_available_libraries.txt").write_text(
-            "\n".join(libraries) + "\n"
-        )
-        print(
-            f"{len(libraries)} libraries visible. "
-            f"Saved to data/metadata/wrds_available_libraries.txt",
-            flush=True,
-        )
-
-        have_ibes = "ibes" in libraries
-        have_crsp = "crsp" in libraries
-        comp_candidates = [lib for lib in ("comp", "compa", "compustat") if lib in libraries]
-        have_comp = bool(comp_candidates)
-        comp_lib = comp_candidates[0] if have_comp else None
-        # Deliberately not checking for optionm/OptionMetrics here -- see module
-        # docstring. Options data comes from the external drive archive.
-
-        for lib_name, available in (("ibes", have_ibes), ("crsp", have_crsp), ("comp", have_comp)):
-            if not available:
-                print(f"{lib_name} library not visible on this account -- skipping.", flush=True)
-                record(
-                    log,
-                    {"library": lib_name, "table": "*", "status": "library_unavailable",
-                     "rows": 0, "path": "", "missing_columns": "", "error": "",
-                     "start_date": "", "end_date": ""},
-                )
-
-        # =====================================================================
-        # Phase A -- small reference/linking tables, pulled unfiltered (as
-        # before). These ARE the resolution mechanism Phase B uses below, or
-        # are already small regardless (tens of thousands of rows) -- no
-        # universe filter needed or possible yet at this point.
-        # =====================================================================
-        if have_crsp:
-            # siccd is the point-in-time SIC code (unlike comp.company.sic
-            # below, which is the firm's current/most-recent classification
-            # only) -- needed for historically-accurate sector attribution,
-            # but downgraded to optional here (it's still useful even if
-            # missing, unlike the identity/validity-window columns).
-            pull_table(
-                db, log, "crsp", "stocknames",
-                CRSP_STOCKNAMES_REQUIRED_COLUMNS,
-                optional_columns=CRSP_STOCKNAMES_OPTIONAL_COLUMNS,
-                start_date=None, end_date=None,
-                force=force,
-            )
-        if have_comp:
-            pull_table(
-                db, log, comp_lib, "company",
-                COMP_COMPANY_REQUIRED_COLUMNS,
-                optional_columns=COMP_COMPANY_OPTIONAL_COLUMNS,
-                start_date=None, end_date=None,
-                force=force,
-            )
-        # wrdsapps.iclink was removed: confirmed via a prior run's manifest
-        # that it doesn't exist on this account (no_such_table) -- dead code.
-        if have_ibes and have_crsp:
-            pull_table(
-                db, log, "wrdsapps", "ibcrsphist",
-                WRDSAPPS_IBCRSPHIST_REQUIRED_COLUMNS,
-                optional_columns=WRDSAPPS_IBCRSPHIST_OPTIONAL_COLUMNS,
-                start_date=None, end_date=None,
-                force=force,
-            )
-        if have_crsp and have_comp:
-            pull_table(
-                db, log, "crsp", "ccmxpf_lnkhist",
-                CRSP_CCMXPF_LNKHIST_REQUIRED_COLUMNS,
-                optional_columns=CRSP_CCMXPF_LNKHIST_OPTIONAL_COLUMNS,
-                start_date=None, end_date=None,
-                force=force,
-            )
-        if have_ibes:
-            pull_table(
-                db, log, "ibes", "idsum",
-                IBES_IDSUM_REQUIRED_COLUMNS,
-                optional_columns=IBES_IDSUM_OPTIONAL_COLUMNS,
-                start_date=None, end_date=None,
-                force=force,
-            )
-
-        # =====================================================================
-        # Phase B -- local universe resolution (no WRDS query). Resolves the
-        # ~8,358-secid OptionMetrics universe (data/metadata/
-        # optionmetrics_universe*.parquet, built elsewhere, not touched here)
-        # to CRSP PERMNO / Compustat GVKEY / I/B/E/S ticker using the Phase A
-        # tables just pulled above. See resolve_universe's docstring for the
-        # full join logic and the mandatory auditability outputs.
-        #
-        # A failure in the PERMNO resolution stage (missing input file,
-        # unexpected schema) MUST abort the whole run before Phase C's
-        # expensive WRDS queries -- a broken resolution step must never
-        # silently fall through to an empty filter that then pulls either
-        # the entire market or nothing. GVKEY/I/B/E/S ticker resolution are
-        # each allowed to degrade independently instead (Fix 3) -- see the
-        # gating below.
-        # =====================================================================
-        try:
-            resolved = resolve_universe(
-                om_universe_path=METADATA_DIR / "optionmetrics_universe.parquet",
-                om_universe_history_path=METADATA_DIR / "optionmetrics_universe_history.parquet",
-                stocknames_path=RAW_DIR / "crsp" / "stocknames.parquet",
-                ccmxpf_lnkhist_path=RAW_DIR / "crsp" / "ccmxpf_lnkhist.parquet",
-                ibcrsphist_path=RAW_DIR / "wrdsapps" / "ibcrsphist.parquet",
-                unresolved_secids_out=METADATA_DIR / "unresolved_secids.csv",
-                ambiguous_links_out=METADATA_DIR / "ambiguous_links.csv",
-                resolved_ids_out=METADATA_DIR / "resolved_universe_ids.parquet",
-                permnos_without_gvkey_out=METADATA_DIR / "permnos_without_gvkey.csv",
-                permnos_without_ibes_ticker_out=METADATA_DIR / "permnos_without_ibes_ticker.csv",
-            )
-        except UniverseResolutionError as e:
-            print(
-                f"FATAL: universe resolution failed -- aborting before any "
-                f"Phase C (big-table) query is attempted: {e}",
-                flush=True,
-            )
-            raise SystemExit(1) from e
-
-        # Finding 5 (round 2 review): a dedicated "zero resolved" check used
-        # to sit here, ahead of the rate-floor check below. It's fully
-        # subsumed by that rate floor: 0 resolved out of N total is a 0%
-        # rate, and 0 resolved out of 0 total is handled by the `else 0.0`
-        # fallback just below, both comfortably under MIN_PERMNO_RESOLUTION_
-        # RATE (90%). Removed as redundant rather than kept as an
-        # independently-tested branch -- especially now that Fix 4's
-        # absolute-count floor (checked before WRDS is even connected)
-        # already guards the "suspiciously tiny/corrupted universe file"
-        # failure mode this project cares about most.
-        #
-        # This project's documented expectation is ~99.99% secid-to-PERMNO
-        # resolution once real CRSP data is pulled -- MIN_PERMNO_RESOLUTION_
-        # RATE (90%) is a floor far below that, so it only fires on a
-        # systemic break (not ordinary real-world linking gaps).
-        resolution_rate = resolved.n_secids_resolved / resolved.n_secids_total if resolved.n_secids_total else 0.0
-        if resolution_rate < MIN_PERMNO_RESOLUTION_RATE:
-            print(
-                f"FATAL: secid-to-PERMNO resolution rate {resolution_rate:.1%} "
-                f"is below the {MIN_PERMNO_RESOLUTION_RATE:.0%} floor -- "
-                f"aborting before any Phase C (big-table) query is attempted. "
-                f"This is far below this project's ~99.99% documented "
-                f"expectation and points at a systemic linking failure, not "
-                f"ordinary real-world gaps.",
-                flush=True,
-            )
-            raise SystemExit(1)
-
-        # GVKEY/ticker resolution are each allowed to degrade independently
-        # (Fix 3) -- but if the linking table WAS available (not skipped)
-        # and resolution still came back with zero GVKEYs/tickers, that's a
-        # broken join, not a genuine empty result, and must still abort.
-        if not resolved.gvkey_resolution_skipped and not resolved.gvkeys:
-            print(
-                "FATAL: GVKEY resolution was attempted (crsp.ccmxpf_lnkhist "
-                "was available) but produced ZERO GVKEYs -- this points at a "
-                "broken join, not a genuinely empty universe. Aborting "
-                "before any Phase C (big-table) query is attempted.",
-                flush=True,
-            )
-            raise SystemExit(1)
-        if not resolved.ibes_ticker_resolution_skipped and not resolved.ibes_tickers:
-            print(
-                "FATAL: I/B/E/S ticker resolution was attempted "
-                "(wrdsapps.ibcrsphist was available) but produced ZERO "
-                "tickers -- this points at a broken join, not a genuinely "
-                "empty universe. Aborting before any Phase C (big-table) "
-                "query is attempted.",
-                flush=True,
-            )
-            raise SystemExit(1)
-
-        permno_filter = build_numeric_in_clause("permno", resolved.permnos)
-
-        # Fix 1 (round 2): _normalize_gvkeys (inside resolve_universe) fixes
-        # the actual root cause of a GVKEY silently coercing to the wrong
-        # value, but _validate_gvkeys is still run here as a safety net.
-        # Per this round's Fix 2 lesson (below): a validation failure for
-        # ONE identifier family must never abort pulls for families that
-        # don't need it -- so a bad GVKEY only skips comp.fundq/funda (the
-        # same degrade pattern as crsp.ccmxpf_lnkhist being missing
-        # entirely), never CRSP or I/B/E/S.
-        gvkey_ok = not resolved.gvkey_resolution_skipped
-        if gvkey_ok:
-            try:
-                _validate_gvkeys(resolved.gvkeys)
-            except ValueError as e:
-                gvkey_ok = False
-                print(
-                    f"WARNING: GVKEY validation failed -- comp.fundq/"
-                    f"comp.funda will NOT be pulled: {e}",
-                    flush=True,
-                )
-                record(
-                    log,
-                    {"library": "comp", "table": "fundq,funda",
-                     "status": "gvkey_validation_failed", "rows": 0, "path": "",
-                     "missing_columns": "", "error": str(e),
-                     "start_date": "", "end_date": ""},
-                )
-        gvkey_filter = build_string_in_clause("gvkey", resolved.gvkeys)
-
-        # Fix 2 (round 2): blank/whitespace-only tickers are already
-        # dropped inside resolve_universe (treated as a missing link, not a
-        # validation failure -- see the ic["ticker"] != "" filter there).
-        # What reaches _validate_ibes_tickers here is only a genuinely
-        # malformed NON-blank value. Previously this call sat ahead of ALL
-        # Phase C pulls and, on failure, raised an uncaught ValueError that
-        # aborted the entire run -- crsp.dsf, crsp.dsedelist, comp.fundq,
-        # and comp.funda included, none of which need the I/B/E/S ticker
-        # list at all. Now it's called only within this "about to pull
-        # I/B/E/S tables" path (mirroring the ibes_ticker_resolution_
-        # skipped gate below), and a failure degrades ONLY the I/B/E/S
-        # family via ibes_ticker_ok, logged the same way an unavailable
-        # wrdsapps.ibcrsphist already is.
-        ibes_ticker_ok = not resolved.ibes_ticker_resolution_skipped
-        if ibes_ticker_ok:
-            try:
-                _validate_ibes_tickers(resolved.ibes_tickers)
-            except ValueError as e:
-                ibes_ticker_ok = False
-                print(
-                    f"WARNING: I/B/E/S ticker validation failed -- the "
-                    f"ibes.* Phase C pulls will NOT run: {e}",
-                    flush=True,
-                )
-                record(
-                    log,
-                    {"library": "ibes", "table": "statsumu_epsus,actu_epsus,detu_epsus",
-                     "status": "ibes_ticker_validation_failed", "rows": 0,
-                     "path": "", "missing_columns": "", "error": str(e),
-                     "start_date": "", "end_date": ""},
-                )
-        ticker_filter = build_string_in_clause("ticker", resolved.ibes_tickers)
-
-        # Fix 3: record each degraded family in the manifest too (not just
-        # the console warning already printed inside resolve_universe), same
-        # pattern as the have_ibes/have_crsp/have_comp "library_unavailable"
-        # rows above, so the reason is visible without reading run logs.
-        if resolved.gvkey_resolution_skipped:
-            record(
-                log,
-                {"library": "comp", "table": "fundq,funda", "status": "gvkey_resolution_skipped",
-                 "rows": 0, "path": "", "missing_columns": "",
-                 "error": resolved.gvkey_skip_reason,
-                 "start_date": "", "end_date": ""},
-            )
-        if resolved.ibes_ticker_resolution_skipped:
-            record(
-                log,
-                {"library": "ibes", "table": "statsumu_epsus,actu_epsus,detu_epsus",
-                 "status": "ibes_ticker_resolution_skipped",
-                 "rows": 0, "path": "", "missing_columns": "",
-                 "error": resolved.ibes_ticker_skip_reason,
-                 "start_date": "", "end_date": ""},
-            )
-
-        # =====================================================================
-        # Phase C -- big tables, now filtered by the resolved IDs above (in
-        # addition to the existing date/format filters -- combined with AND,
-        # nothing lost or overwritten). crsp.dsi is deliberately left
-        # unfiltered: one row per trading day market-wide, already tiny.
-        #
-        # Fix 3: the ibes.* pulls additionally require ticker resolution to
-        # have actually run (not skipped for a missing/unpullable
-        # wrdsapps.ibcrsphist) -- crsp.dsf/dsi/dsedelist and comp.fundq/funda
-        # don't need I/B/E/S linkage at all and must not be held hostage by
-        # its absence. Fix 2 (round 2): also require ibes_ticker_ok -- a
-        # ticker-format validation failure degrades this family exactly the
-        # same way a missing ibcrsphist table does.
-        # =====================================================================
-        if have_ibes and not resolved.ibes_ticker_resolution_skipped and ibes_ticker_ok:
-            # NOTE: these use LOOKBACK_START_DATE (not START_DATE) for the same
-            # reason CRSP/Compustat do -- rolling-window/history features need
-            # a runway before START_DATE, so early-1996 events have a chance at
-            # a prior consensus snapshot.
-            # statpers is the consensus SNAPSHOT date, not an event date --
-            # intentionally left at END_DATE (not RETURN_END_DATE): extending
-            # it would pull in consensus snapshots past the sample cutoff
-            # rather than giving an in-sample event more drift-window room,
-            # which is what RETURN_END_DATE is for.
-            pull_table(
-                db, log, "ibes", "statsumu_epsus",
-                IBES_STATSUMU_EPSUS_REQUIRED_COLUMNS,
-                optional_columns=IBES_STATSUMU_EPSUS_OPTIONAL_COLUMNS,
-                where_sql=(
-                    f"statpers BETWEEN '{LOOKBACK_START_DATE}' AND '{END_DATE}' "
-                    f"AND {ticker_filter}"
-                ),
-                stream=True,
-                start_date=LOOKBACK_START_DATE, end_date=END_DATE,
-                force=force,
-            )
-            # anndats is the earnings ANNOUNCEMENT date -- an actual PEAD
-            # trigger event, so (per the module-level RETURN_END_DATE
-            # comment) it gets the forward buffer like the return series,
-            # not just END_DATE.
-            pull_table(
-                db, log, "ibes", "actu_epsus",
-                IBES_ACTU_EPSUS_REQUIRED_COLUMNS,
-                optional_columns=IBES_ACTU_EPSUS_OPTIONAL_COLUMNS,
-                where_sql=(
-                    f"anndats BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}' "
-                    f"AND {ticker_filter}"
-                ),
-                stream=True,
-                start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
-                force=force,
-            )
-            # Analyst-level detail: STDEV/NUMEST from the summary file already
-            # cover dispersion and analyst count for most purposes, but this is
-            # a one-shot pull, so grab it now rather than come back for it
-            # later if a future slice wants revision-level detail.
-            #
-            # detu_epsus is expected to share det_epsus's column names (IBES
-            # detail tables conventionally do between adjusted/unadjusted
-            # variants) -- this should still be spot-checked against this
-            # account's actual schema on the next real run; most of this
-            # table's columns are optional precisely because that hasn't been
-            # verified yet (see IBES_DETU_EPSUS_OPTIONAL_COLUMNS above).
-            # revdats (the estimate REVISION date) is an actual event date for
-            # this table's purposes, so it gets the RETURN_END_DATE buffer
-            # too, same reasoning as actu_epsus.anndats above.
-            pull_table(
-                db, log, "ibes", "detu_epsus",
-                IBES_DETU_EPSUS_REQUIRED_COLUMNS,
-                optional_columns=IBES_DETU_EPSUS_OPTIONAL_COLUMNS,
-                where_sql=(
-                    f"revdats BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}' "
-                    f"AND {ticker_filter}"
-                ),
-                stream=True,
-                start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
-                force=force,
-            )
-
-        if have_crsp:
-            # Return series get a forward buffer (RETURN_END_DATE, not
-            # END_DATE) so events near the end of the sample still have a
-            # full post-event drift window. bid/ask/bidlo/askhi/openprc/numtrd
-            # are optional here -- they exist purely for a future
-            # transaction-cost/capacity phase this project isn't in yet, so a
-            # renamed/missing one shouldn't take down the whole table.
-            pull_table(
-                db, log, "crsp", "dsf",
-                CRSP_DSF_REQUIRED_COLUMNS,
-                optional_columns=CRSP_DSF_OPTIONAL_COLUMNS,
-                where_sql=(
-                    f"date BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}' "
-                    f"AND {permno_filter}"
-                ),
-                stream=True,
-                start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
-                force=force,
-            )
-            # This is the market-benchmark counterpart to dsf above. Left
-            # unfiltered by design -- one row per trading day market-wide,
-            # already tiny, and there is no per-security ID to filter it by.
-            pull_table(
-                db, log, "crsp", "dsi",
-                CRSP_DSI_REQUIRED_COLUMNS,
-                optional_columns=CRSP_DSI_OPTIONAL_COLUMNS,
-                where_sql=f"date BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
-                start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
-                force=force,
-            )
-            pull_table(
-                db, log, "crsp", "dsedelist",
-                CRSP_DSEDELIST_REQUIRED_COLUMNS,
-                optional_columns=CRSP_DSEDELIST_OPTIONAL_COLUMNS,
-                where_sql=(
-                    f"dlstdt BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}' "
-                    f"AND {permno_filter}"
-                ),
-                start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
-                force=force,
-            )
-
-        # Fix 3: comp.fundq/funda additionally require GVKEY resolution to
-        # have actually run (not skipped for a missing/unpullable
-        # crsp.ccmxpf_lnkhist) -- nothing else in Phase C needs Compustat
-        # linkage, so its absence must not hold the other tables hostage.
-        # Fix 1 (round 2): also require gvkey_ok -- a GVKEY shape-validation
-        # failure degrades this family exactly the same way a missing
-        # ccmxpf_lnkhist table does.
-        if have_comp and not resolved.gvkey_resolution_skipped and gvkey_ok:
-            # datadate here gates fundq's rdq (report date of quarterly
-            # earnings) -- Compustat's standard PEAD event-date field -- so
-            # it gets the RETURN_END_DATE forward buffer for the same reason
-            # ibes.actu_epsus.anndats does above: standard PEAD practice
-            # truncates the holding window at the next earnings announcement,
-            # and without this buffer the last couple of in-sample quarters
-            # would have no visibility into that next announcement.
-            fundq_where = (
-                f"datadate BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}' "
-                f"AND {COMPUSTAT_STD_FILTER} AND {gvkey_filter}"
-            )
-            # funda (annual) is intentionally left at END_DATE, not
-            # RETURN_END_DATE: it's lower-priority annual control data
-            # (book-to-market, etc.), not itself a quarterly PEAD trigger
-            # date the way fundq's rdq is, so it doesn't need the
-            # next-announcement forward buffer.
-            funda_where = (
-                f"datadate BETWEEN '{LOOKBACK_START_DATE}' AND '{END_DATE}' "
-                f"AND {COMPUSTAT_STD_FILTER} AND {gvkey_filter}"
-            )
-            # indfmt/datafmt/popsrc/consol select the standard
-            # industrial/domestic/consolidated statement -- Compustat stores
-            # multiple rows per gvkey/datadate across these dimensions, so
-            # without both the columns AND the where-clause filter this
-            # produces duplicate, unusable rows downstream. rdq (report date
-            # of quarterly earnings) is Compustat's standard PEAD event-date
-            # field.
-            #
-            # CAVEAT (fundq/funda both): Compustat fundamentals are
-            # as-CURRENTLY-reported, i.e. restated -- a firm's FY2005 numbers
-            # here reflect any later restatement, not what the market
-            # actually saw on the original rdq. Do not treat this as
-            # point-in-time data without accounting for that; downstream
-            # feature work should not assume point-in-time correctness this
-            # pull doesn't have.
-            pull_table(
-                db, log, comp_lib, "fundq",
-                COMP_FUNDQ_REQUIRED_COLUMNS,
-                optional_columns=COMP_FUNDQ_OPTIONAL_COLUMNS,
-                where_sql=fundq_where,
-                stream=True,
-                start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
-                force=force,
-            )
-            # Annual fundamentals alongside quarterly -- book-to-market and
-            # other annual-basis controls aren't in fundq, and this is a
-            # one-shot pull, so grab it now. See the restated-data caveat
-            # above fundq's pull_table call -- it applies here too.
-            pull_table(
-                db, log, comp_lib, "funda",
-                COMP_FUNDA_REQUIRED_COLUMNS,
-                optional_columns=COMP_FUNDA_OPTIONAL_COLUMNS,
-                where_sql=funda_where,
-                stream=True,
-                start_date=LOOKBACK_START_DATE, end_date=END_DATE,
-                force=force,
-            )
-    finally:
-        db.close()
-        print("Connection closed.", flush=True)
-
-    # --- Summary (the manifest itself was already written incrementally,
-    # row by row, above -- this just prints what this run did) ---
-    print("\nManifest is at data/metadata/wrds_pull_manifest.csv")
-    if log:
-        print(pd.DataFrame(log).to_string(index=False))
-
-
-if __name__ == "__main__":
-    main()
