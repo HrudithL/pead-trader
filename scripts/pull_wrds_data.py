@@ -45,6 +45,7 @@ import builtins
 import csv
 import datetime as dt
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -68,9 +69,18 @@ LOOKBACK_START_DATE = "1995-01-01"
 # CRSP return data needs a buffer PAST END_DATE too: an I/B/E/S event dated
 # right at END_DATE otherwise gets zero post-event return days, truncating
 # the drift window for the last several months of events. ~6 months covers a
-# 60-trading-day forward window with room to spare. Only used for the return
-# series themselves (crsp.dsf/dsi/dsedelist) -- event filters (I/B/E/S
-# statpers/anndats/revdats) and Compustat still use END_DATE.
+# 60-trading-day forward window with room to spare. Used for:
+#   - the return series themselves (crsp.dsf/dsi/dsedelist), and
+#   - "event occurred by X" filters, i.e. dates that gate an actual PEAD
+#     trigger event needing a post-event drift window: ibes.actu_epsus.anndats
+#     (earnings announcement date), ibes.detu_epsus.revdats (analyst estimate
+#     revision date), and comp.fundq.datadate (quarterly fundamentals/rdq).
+# Deliberately NOT extended for "estimate/observation dated by X" filters,
+# which describe when a snapshot or control variable was drawn rather than
+# an event with a drift window: ibes.statsumu_epsus.statpers (a consensus
+# snapshot date, not an event) and comp.funda.datadate (annual control
+# fundamentals, not itself a quarterly PEAD trigger date -- see the
+# reasoning comments at each of those call sites below).
 RETURN_END_DATE = "2014-06-30"
 
 # Standard Compustat filter for ordinary industrial/domestic/consolidated
@@ -177,31 +187,80 @@ def record(log: list, row: dict, manifest_path: Path = None) -> None:
 
 
 def _stream_query_to_parquet(db, sql: str, out_path: Path):
-    """Run `sql` against `db` using chunked streaming (`return_iter=True`)
-    and write each chunk straight to `out_path` with a pyarrow ParquetWriter,
-    instead of materializing the whole result set in memory first.
+    """Run `sql` against `db` using chunked streaming (`return_iter=True`),
+    accumulating each chunk as a pyarrow Table, then write the combined
+    result to `out_path` once, atomically, at the end.
 
     wrds.Connection.raw_sql's default (non-streaming) path internally
     accumulates chunks via repeated pd.concat, which is O(n^2) in the number
-    of chunks -- risky for a table the size of crsp.dsf. This holds at most
-    one chunk in memory at a time.
+    of chunks -- risky for a table the size of crsp.dsf. Streaming via
+    `return_iter=True` avoids that repeated-pd.concat blowup.
+
+    We deliberately do NOT use a fixed-schema pyarrow.parquet.ParquetWriter
+    here (an earlier version did, seeded from the first chunk's schema):
+    per-chunk schemas can legitimately differ. E.g. crsp.dsf's `numtrd` is
+    NASDAQ-only and NULL for every NYSE/AMEX row -- if the first chunk
+    happens to be all-NULL for that column, pandas/pyarrow infer a null-type
+    column, and ParquetWriter.write_table() raises as soon as a later chunk
+    with real values (a different, incompatible dtype) arrives. Instead, we
+    hold every chunk's pyarrow Table in memory and combine them all at once
+    with pa.concat_tables(..., promote_options="default"), which correctly
+    unifies mismatched-but-compatible schemas (e.g. null-type promoted to
+    int64). This is a one-time bulk pull, not a recurring job, and this
+    project's per-table date range tops out at a few GB, so holding the
+    full set of chunks for one table is an acceptable trade-off for
+    correctness -- we're still never doing repeated pandas concat, which was
+    the original O(n^2) risk.
+
+    The final write goes to a temporary path and is moved into place with
+    os.replace() only after it fully succeeds, so a failure partway through
+    (e.g. on a --force re-pull) can never truncate or destroy a
+    previously-good `out_path` -- it is left completely untouched until the
+    new file is known-good.
 
     Returns (total_rows, wrote_any). wrote_any is False only if the query
-    returned zero chunks (no rows at all), in which case no file is created.
+    returned zero chunks (no rows at all), in which case no file is created
+    (and out_path is untouched).
     """
-    writer = None
+    tables = []
     total_rows = 0
+    for chunk in db.raw_sql(sql, return_iter=True):
+        tables.append(pa.Table.from_pandas(chunk, preserve_index=False))
+        total_rows += len(chunk)
+
+    if not tables:
+        return 0, False
+
+    combined = pa.concat_tables(tables, promote_options="default")
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
     try:
-        for chunk in db.raw_sql(sql, return_iter=True):
-            arrow_chunk = pa.Table.from_pandas(chunk, preserve_index=False)
-            if writer is None:
-                writer = pq.ParquetWriter(str(out_path), arrow_chunk.schema)
-            writer.write_table(arrow_chunk)
-            total_rows += len(chunk)
-    finally:
-        if writer is not None:
-            writer.close()
-    return total_rows, writer is not None
+        pq.write_table(combined, str(tmp_path))
+        os.replace(tmp_path, out_path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
+    return total_rows, True
+
+
+# Table/library/column names are f-string-interpolated into the SQL below.
+# Every call site in this file passes hardcoded literals, so this isn't
+# exploitable today -- but it's a cheap safety net against future misuse.
+_SQL_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _validate_sql_identifier(kind: str, name: str) -> None:
+    """Raise ValueError if `name` isn't a safe bare SQL identifier. This is a
+    defensive assertion about this script's OWN hardcoded inputs (library,
+    table, and column names), not user-facing validation -- failing loudly
+    here means a future typo or copy-paste mistake (e.g. an accidental
+    semicolon) can't silently become a malformed or dangerous query.
+    """
+    if not _SQL_IDENTIFIER_RE.match(name):
+        raise ValueError(
+            f"Unsafe SQL {kind} name {name!r}: must match "
+            f"{_SQL_IDENTIFIER_RE.pattern!r}"
+        )
 
 
 def pull_table(
@@ -316,6 +375,18 @@ def pull_table(
         )
         return
 
+    # Validate every identifier that's about to be interpolated into the SQL
+    # string -- see _validate_sql_identifier's docstring. where_sql is left
+    # as-is structurally: it's still a caller-controlled hardcoded literal
+    # here, not runtime/external input, so it isn't validated the same way.
+    # If this script ever accepts external/config-driven input for table
+    # names or WHERE clauses, that input MUST be validated identically (or
+    # parameterized via raw_sql's params support) before reaching here.
+    _validate_sql_identifier("library", library)
+    _validate_sql_identifier("table", table)
+    for col in cols_to_select:
+        _validate_sql_identifier("column", col)
+
     sql = f"SELECT {', '.join(cols_to_select)} FROM {library}.{table}"
     if where_sql:
         sql += f" WHERE {where_sql}"
@@ -330,7 +401,20 @@ def pull_table(
                 return
         else:
             df = db.raw_sql(sql)
-            df.to_parquet(out_path, index=False)
+            # Write to a temp path and move it into place atomically so a
+            # failure partway through to_parquet() can never leave a
+            # truncated file at out_path that a later --force-less run's
+            # idempotency check (out_path.exists()) would mistake for a
+            # complete, valid pull -- and, on a --force re-pull, can never
+            # destroy a previously-good out_path.
+            tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+            try:
+                df.to_parquet(tmp_path, index=False)
+                os.replace(tmp_path, out_path)
+            except Exception:
+                if tmp_path.exists():
+                    tmp_path.unlink(missing_ok=True)
+                raise
             rows = len(df)
         print(f"  {rows:,} rows.", flush=True)
         _log(
@@ -338,10 +422,11 @@ def pull_table(
         )
     except Exception as e:
         print(f"  FAILED: {e}", flush=True)
-        if stream and out_path.exists():
-            # Don't leave a partially-written parquet file behind that a
-            # later --force-less re-run would mistake for a complete pull.
-            out_path.unlink(missing_ok=True)
+        # Both write paths above are now atomic (write-to-temp, then
+        # os.replace only on full success) and clean up their own temp file
+        # on failure -- so out_path itself is never touched by a failed
+        # write and must be left alone here, whether it pre-existed (a
+        # previously-good file from an earlier run) or never existed.
         _log("query_failed", missing_columns=",".join(missing), error=str(e))
 
 
@@ -381,6 +466,15 @@ def main():
             # reason CRSP/Compustat do -- rolling-window/history features need
             # a runway before START_DATE, so early-1996 events have a chance at
             # a prior consensus snapshot.
+            # statpers is the consensus SNAPSHOT date, not an event date --
+            # intentionally left at END_DATE (not RETURN_END_DATE): extending
+            # it would pull in consensus snapshots past the sample cutoff
+            # rather than giving an in-sample event more drift-window room,
+            # which is what RETURN_END_DATE is for. meanest/fpi/fpedats added
+            # to required_columns: without them there's no consensus estimate
+            # value or forecast-horizon identification at all, so a schema
+            # missing any of them makes this table useless, not just
+            # incomplete.
             pull_table(
                 db, log, "ibes", "statsumu_epsus",
                 ["ticker", "cusip", "oftic", "cname", "statpers", "measure",
@@ -388,38 +482,65 @@ def main():
                  "numest", "numup", "numdown", "medest", "meanest",
                  "stdev", "highest", "lowest"],
                 where_sql=f"statpers BETWEEN '{LOOKBACK_START_DATE}' AND '{END_DATE}'",
-                required_columns=["ticker", "statpers"],
+                required_columns=["ticker", "statpers", "meanest", "fpi", "fpedats"],
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=END_DATE,
+                force=force,
             )
+            # anndats is the earnings ANNOUNCEMENT date -- an actual PEAD
+            # trigger event, so (per the module-level RETURN_END_DATE
+            # comment) it gets the forward buffer like the return series,
+            # not just END_DATE. value (the actual reported EPS) is now
+            # required: without it this table has no payload at all.
             pull_table(
                 db, log, "ibes", "actu_epsus",
                 ["ticker", "cusip", "oftic", "cname", "pends", "anndats",
                  "anntims", "value", "curr_act", "measure"],
-                where_sql=f"anndats BETWEEN '{LOOKBACK_START_DATE}' AND '{END_DATE}'",
-                required_columns=["ticker", "anndats"],
+                where_sql=f"anndats BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
+                required_columns=["ticker", "anndats", "value"],
                 stream=True,
-                start_date=LOOKBACK_START_DATE, end_date=END_DATE,
+                start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
+                force=force,
             )
             pull_table(
                 db, log, "ibes", "idsum",
                 ["ticker", "cusip", "cname", "oftic", "sdates"],
                 required_columns=["ticker"],
                 start_date=None, end_date=None,
+                force=force,
             )
             # Analyst-level detail: STDEV/NUMEST from the summary file already cover
             # dispersion and analyst count for most purposes, but this is a one-shot
             # pull, so grab it now rather than come back for it later if a future
             # slice wants revision-level detail. fpi needed to separate detail
             # estimates by forecast horizon.
+            #
+            # detu_epsus (unadjusted), NOT det_epsus (split-adjusted): the
+            # other two I/B/E/S tables above (statsumu_epsus, actu_epsus) are
+            # both split-UNADJUSTED (that's what the "u" in their names
+            # means), so pulling the split-ADJUSTED detail file would mix
+            # incompatible adjustment bases and couldn't be combined with
+            # them. The adjusted file also carries look-ahead: its adjustment
+            # factor isn't knowable until the future split actually happens.
+            # detu_epsus is expected to share det_epsus's column names
+            # (IBES detail tables conventionally do between adjusted/
+            # unadjusted variants) -- this should still be spot-checked
+            # against this account's actual schema (e.g. via
+            # db.describe_table("ibes", "detu_epsus")) on the next real run;
+            # pull_table's own column-matching/required-columns check will
+            # catch a mismatch rather than silently mis-querying.
+            # revdats (the estimate REVISION date) is an actual event date
+            # for this table's purposes, so it gets the RETURN_END_DATE
+            # buffer too, same reasoning as actu_epsus.anndats above.
             pull_table(
-                db, log, "ibes", "det_epsus",
+                db, log, "ibes", "detu_epsus",
                 ["ticker", "cusip", "estimator", "analys", "fpedats", "fpi",
                  "revdats", "revtims", "value", "measure"],
-                where_sql=f"revdats BETWEEN '{LOOKBACK_START_DATE}' AND '{END_DATE}'",
+                where_sql=f"revdats BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
                 required_columns=["ticker", "revdats"],
                 stream=True,
-                start_date=LOOKBACK_START_DATE, end_date=END_DATE,
+                start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
+                force=force,
             )
         else:
             print("ibes library not visible on this account -- skipping.", flush=True)
@@ -438,15 +559,19 @@ def main():
             # added for any future transaction-cost/spread modeling -- this
             # table won't be re-pulled later per the "minimize WRDS queries"
             # rule, so grab them now.
+            # ret (the actual daily return) is now required: without it this
+            # table is useless for this project regardless of what else is
+            # present.
             pull_table(
                 db, log, "crsp", "dsf",
                 ["permno", "date", "ret", "retx", "prc", "vol", "shrout",
                  "cfacpr", "cfacshr", "bid", "ask", "bidlo", "askhi",
                  "openprc", "numtrd"],
                 where_sql=f"date BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
-                required_columns=["permno", "date"],
+                required_columns=["permno", "date", "ret"],
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
+                force=force,
             )
             pull_table(
                 db, log, "crsp", "dsi",
@@ -454,6 +579,7 @@ def main():
                 where_sql=f"date BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
                 required_columns=["date"],
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
+                force=force,
             )
             pull_table(
                 db, log, "crsp", "dsedelist",
@@ -461,18 +587,22 @@ def main():
                 where_sql=f"dlstdt BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
                 required_columns=["permno", "dlstdt"],
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
+                force=force,
             )
             # siccd is the point-in-time SIC code (unlike comp.company.sic
             # below, which is the firm's current/most-recent classification
             # only) -- needed for historically-accurate sector attribution.
             # nameenddt/namedt are required: point-in-time identifier
-            # validity depends on both bounds being present.
+            # validity depends on both bounds being present. permno is now
+            # required too: it's the actual join key this table exists to
+            # provide, alongside its validity window.
             pull_table(
                 db, log, "crsp", "stocknames",
                 ["permno", "permco", "namedt", "nameenddt", "ticker",
                  "comnam", "cusip", "shrcd", "exchcd", "siccd"],
-                required_columns=["namedt", "nameenddt"],
+                required_columns=["permno", "namedt", "nameenddt"],
                 start_date=None, end_date=None,
+                force=force,
             )
         else:
             print("crsp library not visible on this account -- skipping.", flush=True)
@@ -485,10 +615,22 @@ def main():
 
         # --- Compustat (lower priority) ---
         if have_comp:
+            # datadate here gates fundq's rdq (report date of quarterly
+            # earnings) -- Compustat's standard PEAD event-date field -- so
+            # it gets the RETURN_END_DATE forward buffer for the same reason
+            # ibes.actu_epsus.anndats does above: standard PEAD practice
+            # truncates the holding window at the next earnings announcement,
+            # and without this buffer the last couple of in-sample quarters
+            # would have no visibility into that next announcement.
             fundq_where = (
-                f"datadate BETWEEN '{LOOKBACK_START_DATE}' AND '{END_DATE}' "
+                f"datadate BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}' "
                 f"AND {COMPUSTAT_STD_FILTER}"
             )
+            # funda (annual) is intentionally left at END_DATE, not
+            # RETURN_END_DATE: it's lower-priority annual control data
+            # (book-to-market, etc.), not itself a quarterly PEAD trigger
+            # date the way fundq's rdq is, so it doesn't need the
+            # next-announcement forward buffer.
             funda_where = (
                 f"datadate BETWEEN '{LOOKBACK_START_DATE}' AND '{END_DATE}' "
                 f"AND {COMPUSTAT_STD_FILTER}"
@@ -500,6 +642,14 @@ def main():
             # produces duplicate, unusable rows downstream. rdq (report date
             # of quarterly earnings) is Compustat's standard PEAD event-date
             # field.
+            #
+            # CAVEAT (fundq/funda both): Compustat fundamentals are
+            # as-CURRENTLY-reported, i.e. restated -- a firm's FY2005 numbers
+            # here reflect any later restatement, not what the market
+            # actually saw on the original rdq. Do not treat this as
+            # point-in-time data without accounting for that; downstream
+            # feature work should not assume point-in-time correctness this
+            # pull doesn't have.
             pull_table(
                 db, log, comp_lib, "fundq",
                 ["gvkey", "datadate", "fyearq", "fqtr", "atq", "ceqq",
@@ -508,7 +658,8 @@ def main():
                 where_sql=fundq_where,
                 required_columns=["gvkey", "datadate"],
                 stream=True,
-                start_date=LOOKBACK_START_DATE, end_date=END_DATE,
+                start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
+                force=force,
             )
             # sic/gsector here are CURRENT-SNAPSHOT only (the firm's most
             # recent classification), NOT point-in-time -- do not use this
@@ -519,10 +670,12 @@ def main():
                 ["gvkey", "conm", "sic", "gsector"],
                 required_columns=["gvkey"],
                 start_date=None, end_date=None,
+                force=force,
             )
             # Annual fundamentals alongside quarterly -- book-to-market and
             # other annual-basis controls aren't in fundq, and this is a
-            # one-shot pull, so grab it now.
+            # one-shot pull, so grab it now. See the restated-data caveat
+            # above fundq's pull_table call -- it applies here too.
             pull_table(
                 db, log, comp_lib, "funda",
                 ["gvkey", "datadate", "fyear", "at", "ceq", "sale", "ni", "epspx",
@@ -531,6 +684,7 @@ def main():
                 required_columns=["gvkey", "datadate"],
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=END_DATE,
+                force=force,
             )
         else:
             print("Compustat library not visible on this account -- skipping.", flush=True)
@@ -548,19 +702,30 @@ def main():
             # ncusip is required: we rely on it for CUSIP-based identifier
             # matching between I/B/E/S and CRSP, so a silently-missing ncusip
             # would produce a link table that looks fine but can't actually
-            # be joined on.
+            # be joined on. permno/sdate/edate are also required: the whole
+            # point of this table is the permno link plus its point-in-time
+            # validity window, so a schema missing any of those produces a
+            # link table that can't actually be used for the thing it exists
+            # for.
             pull_table(
                 db, log, "wrdsapps", "ibcrsphist",
                 ["ticker", "permno", "ncusip", "score", "sdate", "edate"],
-                required_columns=["ncusip"],
+                required_columns=["permno", "ncusip", "sdate", "edate"],
                 start_date=None, end_date=None,
+                force=force,
             )
         if have_crsp and have_comp:
+            # linkdt/linkenddt are required for the same reason they're
+            # required on crsp.stocknames above: the point-in-time link
+            # validity bounds, without which this table can silently
+            # misattribute a gvkey/permno link outside its actually-valid
+            # window.
             pull_table(
                 db, log, "crsp", "ccmxpf_lnkhist",
                 ["gvkey", "lpermno", "linktype", "linkprim", "linkdt", "linkenddt"],
-                required_columns=["gvkey", "lpermno"],
+                required_columns=["gvkey", "lpermno", "linkdt", "linkenddt"],
                 start_date=None, end_date=None,
+                force=force,
             )
     finally:
         db.close()
