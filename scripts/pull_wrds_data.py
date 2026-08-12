@@ -22,14 +22,17 @@ re-query tables that already succeeded.
 
 Column lists are checked against the account's actual schema via
 db.describe_table() before each query, rather than assumed blind, since exact
-column/table names can vary slightly by WRDS account vintage. Any table or
-column that doesn't match is logged and skipped rather than crashing the run,
-so one wrong name doesn't take down an otherwise-successful pull. A small
-subset of columns per table is marked "required": if any of those are
-missing, the pull is skipped entirely (logged as "missing_required_columns")
-rather than silently proceeding with a crippled column set, since some
-columns (join keys, point-in-time validity bounds) would silently corrupt a
-downstream join or calculation if quietly dropped.
+column/table names can vary slightly by WRDS account vintage. Any table that
+doesn't exist, or whose real schema is missing ANY column this script asks
+for, is logged and skipped rather than crashing the run, so one wrong name
+doesn't take down an otherwise-successful pull -- but it is also never
+silently queried with a partial column set. There is no "optional column"
+tier: every column named in a pull_table() call is one this script actually
+needs downstream (a payload value, a join key, or a point-in-time validity
+bound), so a missing column always aborts that table's pull (logged as
+"missing_required_columns") rather than risking a silently-crippled result
+that looks complete in the manifest but is missing something a downstream
+join or calculation depends on.
 
 Every table's outcome -- success, skip, or failure -- is appended to
 data/metadata/wrds_pull_manifest.csv immediately after that table's attempt,
@@ -41,6 +44,7 @@ Usage:
 Requires WRDS_USERNAME and WRDS_PASSWORD in a .env file at the repo root.
 """
 
+import argparse
 import builtins
 import csv
 import datetime as dt
@@ -88,6 +92,69 @@ RETURN_END_DATE = "2014-06-30"
 # indfmt/datafmt/popsrc/consol combinations; without this filter fundq/funda
 # pulls contain duplicate, unusable rows.
 COMPUSTAT_STD_FILTER = "indfmt='INDL' AND datafmt='STD' AND popsrc='D' AND consol='C'"
+
+# Per-table column lists for every pull_table() call in main(), pulled out to
+# module level (rather than inline list literals in main()) for one reason:
+# tests/test_pull_wrds_data.py needs a "full column set" fixture to build a
+# fake schema that never spuriously fails any table's pull, and a previous
+# round's hand-copied duplicate of that set drifted out of sync with main()'s
+# real calls. Defining the lists once here and having BOTH main() and the
+# test suite import these same constants makes that kind of drift structurally
+# impossible instead of merely policed by hand -- there is only one place a
+# column ever gets added or removed for a given table.
+#
+# Every column below is required: see pull_table()'s docstring for why there
+# is no more "optional column" tier.
+IBES_STATSUMU_EPSUS_COLUMNS = [
+    "ticker", "cusip", "oftic", "cname", "statpers", "measure", "fiscalp",
+    "fpi", "curcode", "usfirm", "fpedats", "numest", "numup", "numdown",
+    "medest", "meanest", "stdev", "highest", "lowest",
+]
+IBES_ACTU_EPSUS_COLUMNS = [
+    "ticker", "cusip", "oftic", "cname", "pends", "anndats", "anntims",
+    "value", "curr_act", "measure",
+]
+IBES_IDSUM_COLUMNS = ["ticker", "cusip", "cname", "oftic", "sdates"]
+# detu_epsus (unadjusted), NOT det_epsus (split-adjusted): the other two
+# I/B/E/S tables above (statsumu_epsus, actu_epsus) are both split-UNADJUSTED
+# (that's what the "u" in their names means), so pulling the split-ADJUSTED
+# detail file would mix incompatible adjustment bases and couldn't be
+# combined with them. The adjusted file also carries look-ahead: its
+# adjustment factor isn't knowable until the future split actually happens.
+IBES_DETU_EPSUS_COLUMNS = [
+    "ticker", "cusip", "estimator", "analys", "fpedats", "fpi", "revdats",
+    "revtims", "value", "measure",
+]
+CRSP_DSF_COLUMNS = [
+    "permno", "date", "ret", "retx", "prc", "vol", "shrout", "cfacpr",
+    "cfacshr", "bid", "ask", "bidlo", "askhi", "openprc", "numtrd",
+]
+CRSP_DSI_COLUMNS = ["date", "vwretd", "vwretx", "ewretd", "ewretx", "sprtrn"]
+CRSP_DSEDELIST_COLUMNS = ["permno", "dlstdt", "dlret", "dlstcd"]
+# ncusip (the CUSIP actually in effect during [namedt, nameenddt]) is
+# required alongside cusip (the header/most-recent CUSIP, constant across a
+# permno's whole history): this table's pull is justified on point-in-time
+# grounds (hence namedt/nameenddt below), and cusip alone can't satisfy that
+# -- ncusip is the one that's actually valid for a given historical date.
+# cusip is kept too since some downstream uses legitimately want the current/
+# header identifier rather than the as-of-date one.
+CRSP_STOCKNAMES_COLUMNS = [
+    "permno", "permco", "namedt", "nameenddt", "ticker", "comnam", "cusip",
+    "ncusip", "shrcd", "exchcd", "siccd",
+]
+COMP_FUNDQ_COLUMNS = [
+    "gvkey", "datadate", "fyearq", "fqtr", "atq", "ceqq", "saleq", "niq",
+    "epspxq", "rdq", "indfmt", "datafmt", "popsrc", "consol",
+]
+COMP_COMPANY_COLUMNS = ["gvkey", "conm", "sic", "gsector"]
+COMP_FUNDA_COLUMNS = [
+    "gvkey", "datadate", "fyear", "at", "ceq", "sale", "ni", "epspx",
+    "indfmt", "datafmt", "popsrc", "consol",
+]
+WRDSAPPS_IBCRSPHIST_COLUMNS = ["ticker", "permno", "ncusip", "score", "sdate", "edate"]
+CRSP_CCMXPF_LNKHIST_COLUMNS = [
+    "gvkey", "lpermno", "linktype", "linkprim", "linkdt", "linkenddt",
+]
 
 MANIFEST_FIELDNAMES = [
     "library", "table", "status", "rows", "path", "missing_columns", "error",
@@ -198,19 +265,38 @@ def _stream_query_to_parquet(db, sql: str, out_path: Path):
 
     We deliberately do NOT use a fixed-schema pyarrow.parquet.ParquetWriter
     here (an earlier version did, seeded from the first chunk's schema):
-    per-chunk schemas can legitimately differ. E.g. crsp.dsf's `numtrd` is
-    NASDAQ-only and NULL for every NYSE/AMEX row -- if the first chunk
-    happens to be all-NULL for that column, pandas/pyarrow infer a null-type
-    column, and ParquetWriter.write_table() raises as soon as a later chunk
-    with real values (a different, incompatible dtype) arrives. Instead, we
-    hold every chunk's pyarrow Table in memory and combine them all at once
-    with pa.concat_tables(..., promote_options="default"), which correctly
-    unifies mismatched-but-compatible schemas (e.g. null-type promoted to
-    int64). This is a one-time bulk pull, not a recurring job, and this
-    project's per-table date range tops out at a few GB, so holding the
-    full set of chunks for one table is an acceptable trade-off for
-    correctness -- we're still never doing repeated pandas concat, which was
-    the original O(n^2) risk.
+    per-chunk schemas can legitimately differ in more than one way. The
+    obvious case is a null-type column (e.g. crsp.dsf's `numtrd`, NASDAQ-only
+    and NULL for every NYSE/AMEX row) promoted to a real type once a later
+    chunk has actual values. The subtler, ACTUALLY-observed case is two
+    chunks that both have real (non-null) values in a numeric column but
+    infer to different pandas/pyarrow dtypes: pandas' `convert_dtypes()`
+    (used internally by wrds's chunked reader) runs independently per chunk,
+    so a chunk whose values all happen to be whole numbers infers as `Int64`
+    while another chunk with a fractional value infers as `Float64` for the
+    very same column. `pa.concat_tables(..., promote_options="default")`
+    handles the null-type-promotion case but NOT the Int64-vs-Float64 case
+    -- it raises `ArrowTypeError` on that mismatch. `promote_options=
+    "permissive"` unifies both cases (e.g. Int64 and Float64 both promote to
+    a common `double` column), so that's what we use here. We also strip the
+    combined table's schema metadata before writing (see the inline comment
+    at that call) -- without that, stale per-chunk pandas-dtype metadata
+    makes a later read try to cast the unified column back to the ORIGINAL
+    (pre-promotion) dtype and fail all over again on the same data.
+
+    Holding every chunk's pyarrow Table in memory and combining them all at
+    once at the end -- rather than writing incrementally -- means this
+    function is NOT low-memory and does NOT avoid ever holding the full
+    table: it holds one table's entire chunk set (input data plus pyarrow's
+    in-memory Arrow representation of it) before the final concat+write.
+    That is an accepted, deliberate trade-off, not an oversight: this is a
+    one-time bulk pull, not a recurring job, and this project's per-table
+    date range tops out at a few GB, so the memory cost of holding one
+    table's chunks is acceptable in exchange for not having to build a fully
+    streaming, incremental schema-unification system (which would be more
+    code, and more surface area for a new subtle bug, than the memory this
+    saves is worth). We're still never doing repeated pandas concat, which
+    was the original O(n^2) risk this function replaced.
 
     The final write goes to a temporary path and is moved into place with
     os.replace() only after it fully succeeds, so a failure partway through
@@ -231,12 +317,27 @@ def _stream_query_to_parquet(db, sql: str, out_path: Path):
     if not tables:
         return 0, False
 
-    combined = pa.concat_tables(tables, promote_options="default")
+    combined = pa.concat_tables(tables, promote_options="permissive")
+    # `promote_options="permissive"` unifies the ARROW schema (e.g. Int64 and
+    # Float64 chunks both promote to a common `double` column) -- but each
+    # chunk's pyarrow Table also carries pandas-specific schema metadata
+    # (embedded by pa.Table.from_pandas) recording the ORIGINAL pandas dtype
+    # per column. After promotion that metadata is stale for any promoted
+    # column: it still says e.g. "this column is pandas Int64", even though
+    # the promoted Arrow column is now `double`. If left in place, a later
+    # pd.read_parquet() (or .to_pandas()) tries to honor that stale metadata
+    # and cast the double column back to Int64 -- which raises ArrowInvalid
+    # ("Float value ... was truncated converting to int64") on the very
+    # first non-whole-number value, i.e. exactly the case this promotion was
+    # supposed to fix. Dropping all schema metadata before writing forces a
+    # later read to infer dtypes fresh from the (already-correct) unified
+    # Arrow schema instead of trusting stale per-chunk pandas hints.
+    combined = combined.replace_schema_metadata(None)
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
     try:
         pq.write_table(combined, str(tmp_path))
         os.replace(tmp_path, out_path)
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         if tmp_path.exists():
             tmp_path.unlink(missing_ok=True)
         raise
@@ -246,7 +347,7 @@ def _stream_query_to_parquet(db, sql: str, out_path: Path):
 # Table/library/column names are f-string-interpolated into the SQL below.
 # Every call site in this file passes hardcoded literals, so this isn't
 # exploitable today -- but it's a cheap safety net against future misuse.
-_SQL_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+_SQL_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*\Z")
 
 
 def _validate_sql_identifier(kind: str, name: str) -> None:
@@ -268,10 +369,9 @@ def pull_table(
     log,
     library,
     table,
-    desired_columns,
+    columns,
     where_sql="",
     out_name=None,
-    required_columns=None,
     stream=False,
     start_date=None,
     end_date=None,
@@ -279,27 +379,43 @@ def pull_table(
     manifest_path=None,
     force=False,
 ):
-    """Check real columns first, select only what exists, save to Parquet, log the outcome.
+    """Check real columns first, save to Parquet, log the outcome.
 
     `db` only needs to satisfy the small interface actually used here --
     `describe_table(library, table)` and `raw_sql(sql, return_iter=...)` --
     so tests can pass a lightweight stub instead of a real wrds.Connection.
 
-    `required_columns` (a subset of `desired_columns`) must ALL be present in
-    the real schema or the pull is skipped entirely (status
-    "missing_required_columns") rather than silently proceeding with
-    whatever happened to match.
+    `columns` is the single, complete list of columns this table's pull
+    needs. There is no "optional column" tier: every column named here must
+    be present in the real schema (per db.describe_table()) or the pull does
+    not run at all (status "missing_required_columns", logged with the
+    actual missing names) -- never a partial column set. This is
+    deliberately strict: a caller that only weakly wants a column shouldn't
+    put it in `columns` at all, since its absence always aborts the pull.
 
-    `stream=True` uses `_stream_query_to_parquet` (chunked, low-memory)
-    instead of loading the full result into a DataFrame first; use it for
-    any table that could plausibly be large.
+    `stream=True` uses `_stream_query_to_parquet` (chunked reads, one
+    combined write at the end -- see that function's docstring for the
+    memory trade-off) instead of loading the full result into a DataFrame
+    first; use it for any table that could plausibly be large.
     """
+    # Validate every identifier that's about to be interpolated into the SQL
+    # string -- see _validate_sql_identifier's docstring -- before `library`
+    # or `table` is used for anything, including describe_table(). where_sql
+    # is left as-is structurally: it's still a caller-controlled hardcoded
+    # literal here, not runtime/external input, so it isn't validated the
+    # same way. If this script ever accepts external/config-driven input for
+    # table names or WHERE clauses, that input MUST be validated identically
+    # (or parameterized via raw_sql's params support) before reaching here.
+    _validate_sql_identifier("library", library)
+    _validate_sql_identifier("table", table)
+    for col in columns:
+        _validate_sql_identifier("column", col)
+
     out_name = out_name or table
     raw_dir = raw_dir if raw_dir is not None else RAW_DIR
     out_dir = raw_dir / library
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{out_name}.parquet"
-    required_columns = required_columns or []
 
     def _log(status, rows=0, path="", missing_columns="", error=""):
         record(
@@ -348,46 +464,21 @@ def pull_table(
         _log("describe_table_error", error=str(e))
         return
 
-    cols_to_select = [c for c in desired_columns if c.lower() in actual_columns]
-    missing = [c for c in desired_columns if c.lower() not in actual_columns]
+    missing = [c for c in columns if c.lower() not in actual_columns]
     if missing:
-        print(f"  {library}.{table}: columns not present, skipping: {missing}", flush=True)
-
-    missing_required = [c for c in required_columns if c.lower() not in actual_columns]
-    if missing_required:
         print(
-            f"  {library}.{table}: REQUIRED columns missing, NOT querying: "
-            f"{missing_required}",
+            f"  {library}.{table}: required columns missing, NOT querying: "
+            f"{missing}",
             flush=True,
         )
         _log(
             "missing_required_columns",
-            missing_columns=",".join(missing_required),
-            error=f"required columns missing: {missing_required}",
-        )
-        return
-
-    if not cols_to_select:
-        _log(
-            "no_matching_columns",
             missing_columns=",".join(missing),
-            error=f"none of {desired_columns} found",
+            error=f"required columns missing: {missing}",
         )
         return
 
-    # Validate every identifier that's about to be interpolated into the SQL
-    # string -- see _validate_sql_identifier's docstring. where_sql is left
-    # as-is structurally: it's still a caller-controlled hardcoded literal
-    # here, not runtime/external input, so it isn't validated the same way.
-    # If this script ever accepts external/config-driven input for table
-    # names or WHERE clauses, that input MUST be validated identically (or
-    # parameterized via raw_sql's params support) before reaching here.
-    _validate_sql_identifier("library", library)
-    _validate_sql_identifier("table", table)
-    for col in cols_to_select:
-        _validate_sql_identifier("column", col)
-
-    sql = f"SELECT {', '.join(cols_to_select)} FROM {library}.{table}"
+    sql = f"SELECT {', '.join(columns)} FROM {library}.{table}"
     if where_sql:
         sql += f" WHERE {where_sql}"
 
@@ -396,8 +487,21 @@ def pull_table(
         if stream:
             rows, wrote_any = _stream_query_to_parquet(db, sql, out_path)
             if not wrote_any:
-                print("  0 rows returned; no file written.", flush=True)
-                _log("ok", rows=0, missing_columns=",".join(missing))
+                if out_path.exists():
+                    # --force re-pull whose query legitimately returned zero
+                    # rows: the previous file at out_path was never touched
+                    # (no chunks means no write at all), so "rows: 0" alone
+                    # would misleadingly read as "this table is empty" when
+                    # actually the old data is still sitting on disk.
+                    print(
+                        "  0 rows returned; existing file at out_path left "
+                        "untouched (not overwritten with an empty result).",
+                        flush=True,
+                    )
+                    _log("ok_empty_query_kept_existing", rows=0)
+                else:
+                    print("  0 rows returned; no file written.", flush=True)
+                    _log("ok", rows=0)
                 return
         else:
             df = db.raw_sql(sql)
@@ -411,15 +515,13 @@ def pull_table(
             try:
                 df.to_parquet(tmp_path, index=False)
                 os.replace(tmp_path, out_path)
-            except Exception:
+            except (Exception, KeyboardInterrupt):
                 if tmp_path.exists():
                     tmp_path.unlink(missing_ok=True)
                 raise
             rows = len(df)
         print(f"  {rows:,} rows.", flush=True)
-        _log(
-            "ok", rows=rows, path=_rel(out_path), missing_columns=",".join(missing)
-        )
+        _log("ok", rows=rows, path=_rel(out_path))
     except Exception as e:
         print(f"  FAILED: {e}", flush=True)
         # Both write paths above are now atomic (write-to-temp, then
@@ -427,7 +529,24 @@ def pull_table(
         # on failure -- so out_path itself is never touched by a failed
         # write and must be left alone here, whether it pre-existed (a
         # previously-good file from an earlier run) or never existed.
-        _log("query_failed", missing_columns=",".join(missing), error=str(e))
+        _log("query_failed", error=str(e))
+
+
+def _parse_args(argv):
+    """Parse this script's own command-line arguments via argparse (rather
+    than a hand-rolled `"--force" in sys.argv` check), so a typo like
+    `--Force` or `-force` errors out immediately instead of silently being
+    ignored -- which would otherwise proceed as if --force hadn't been
+    passed (skipping every already-pulled table) and exit looking
+    successful.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-pull every table even if its output Parquet file already exists.",
+    )
+    return parser.parse_args(argv)
 
 
 def main():
@@ -435,7 +554,8 @@ def main():
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     METADATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    force = "--force" in sys.argv
+    args = _parse_args(sys.argv[1:])
+    force = args.force
 
     db = connect()
     log = []
@@ -470,19 +590,16 @@ def main():
             # intentionally left at END_DATE (not RETURN_END_DATE): extending
             # it would pull in consensus snapshots past the sample cutoff
             # rather than giving an in-sample event more drift-window room,
-            # which is what RETURN_END_DATE is for. meanest/fpi/fpedats added
-            # to required_columns: without them there's no consensus estimate
-            # value or forecast-horizon identification at all, so a schema
-            # missing any of them makes this table useless, not just
-            # incomplete.
+            # which is what RETURN_END_DATE is for. Every column in
+            # IBES_STATSUMU_EPSUS_COLUMNS is required (see pull_table's
+            # docstring): meanest/fpi/fpedats in particular, since without
+            # them there's no consensus estimate value or forecast-horizon
+            # identification at all, making a schema missing any of them
+            # useless for this project, not just incomplete.
             pull_table(
                 db, log, "ibes", "statsumu_epsus",
-                ["ticker", "cusip", "oftic", "cname", "statpers", "measure",
-                 "fiscalp", "fpi", "curcode", "usfirm", "fpedats",
-                 "numest", "numup", "numdown", "medest", "meanest",
-                 "stdev", "highest", "lowest"],
+                IBES_STATSUMU_EPSUS_COLUMNS,
                 where_sql=f"statpers BETWEEN '{LOOKBACK_START_DATE}' AND '{END_DATE}'",
-                required_columns=["ticker", "statpers", "meanest", "fpi", "fpedats"],
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=END_DATE,
                 force=force,
@@ -490,22 +607,19 @@ def main():
             # anndats is the earnings ANNOUNCEMENT date -- an actual PEAD
             # trigger event, so (per the module-level RETURN_END_DATE
             # comment) it gets the forward buffer like the return series,
-            # not just END_DATE. value (the actual reported EPS) is now
+            # not just END_DATE. value (the actual reported EPS) is
             # required: without it this table has no payload at all.
             pull_table(
                 db, log, "ibes", "actu_epsus",
-                ["ticker", "cusip", "oftic", "cname", "pends", "anndats",
-                 "anntims", "value", "curr_act", "measure"],
+                IBES_ACTU_EPSUS_COLUMNS,
                 where_sql=f"anndats BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
-                required_columns=["ticker", "anndats", "value"],
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
                 force=force,
             )
             pull_table(
                 db, log, "ibes", "idsum",
-                ["ticker", "cusip", "cname", "oftic", "sdates"],
-                required_columns=["ticker"],
+                IBES_IDSUM_COLUMNS,
                 start_date=None, end_date=None,
                 force=force,
             )
@@ -527,17 +641,15 @@ def main():
             # unadjusted variants) -- this should still be spot-checked
             # against this account's actual schema (e.g. via
             # db.describe_table("ibes", "detu_epsus")) on the next real run;
-            # pull_table's own column-matching/required-columns check will
-            # catch a mismatch rather than silently mis-querying.
+            # pull_table's own column-matching check will catch a mismatch
+            # rather than silently mis-querying.
             # revdats (the estimate REVISION date) is an actual event date
             # for this table's purposes, so it gets the RETURN_END_DATE
             # buffer too, same reasoning as actu_epsus.anndats above.
             pull_table(
                 db, log, "ibes", "detu_epsus",
-                ["ticker", "cusip", "estimator", "analys", "fpedats", "fpi",
-                 "revdats", "revtims", "value", "measure"],
+                IBES_DETU_EPSUS_COLUMNS,
                 where_sql=f"revdats BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
-                required_columns=["ticker", "revdats"],
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
                 force=force,
@@ -559,33 +671,34 @@ def main():
             # added for any future transaction-cost/spread modeling -- this
             # table won't be re-pulled later per the "minimize WRDS queries"
             # rule, so grab them now.
-            # ret (the actual daily return) is now required: without it this
+            # ret (the actual daily return) is required: without it this
             # table is useless for this project regardless of what else is
             # present.
             pull_table(
                 db, log, "crsp", "dsf",
-                ["permno", "date", "ret", "retx", "prc", "vol", "shrout",
-                 "cfacpr", "cfacshr", "bid", "ask", "bidlo", "askhi",
-                 "openprc", "numtrd"],
+                CRSP_DSF_COLUMNS,
                 where_sql=f"date BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
-                required_columns=["permno", "date", "ret"],
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
                 force=force,
             )
+            # This is the market-benchmark counterpart to dsf above --
+            # vwretd/vwretx/ewretd/ewretx/sprtrn are all required: without
+            # the benchmark return series itself, this table has no payload.
             pull_table(
                 db, log, "crsp", "dsi",
-                ["date", "vwretd", "vwretx", "ewretd", "ewretx", "sprtrn"],
+                CRSP_DSI_COLUMNS,
                 where_sql=f"date BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
-                required_columns=["date"],
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
                 force=force,
             )
+            # dlret (the delisting return) is required: without it this
+            # table has no payload -- just the fact that a delisting
+            # happened, with no return impact to attribute to it.
             pull_table(
                 db, log, "crsp", "dsedelist",
-                ["permno", "dlstdt", "dlret", "dlstcd"],
+                CRSP_DSEDELIST_COLUMNS,
                 where_sql=f"dlstdt BETWEEN '{LOOKBACK_START_DATE}' AND '{RETURN_END_DATE}'",
-                required_columns=["permno", "dlstdt"],
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
                 force=force,
             )
@@ -593,14 +706,14 @@ def main():
             # below, which is the firm's current/most-recent classification
             # only) -- needed for historically-accurate sector attribution.
             # nameenddt/namedt are required: point-in-time identifier
-            # validity depends on both bounds being present. permno is now
+            # validity depends on both bounds being present. permno is
             # required too: it's the actual join key this table exists to
-            # provide, alongside its validity window.
+            # provide, alongside its validity window. See
+            # CRSP_STOCKNAMES_COLUMNS' definition above for why ncusip (not
+            # just cusip) is required here.
             pull_table(
                 db, log, "crsp", "stocknames",
-                ["permno", "permco", "namedt", "nameenddt", "ticker",
-                 "comnam", "cusip", "shrcd", "exchcd", "siccd"],
-                required_columns=["permno", "namedt", "nameenddt"],
+                CRSP_STOCKNAMES_COLUMNS,
                 start_date=None, end_date=None,
                 force=force,
             )
@@ -650,13 +763,18 @@ def main():
             # point-in-time data without accounting for that; downstream
             # feature work should not assume point-in-time correctness this
             # pull doesn't have.
+            # indfmt/datafmt/popsrc/consol are required here (part of
+            # COMP_FUNDQ_COLUMNS): they're the same four columns
+            # COMPUSTAT_STD_FILTER filters on in fundq_where above, so if
+            # any of them were silently missing from this account's schema,
+            # the WHERE clause referencing them would be a raw SQL error at
+            # query time rather than a graceful skip. Requiring them means
+            # pull_table's own missing-required-columns check aborts BEFORE
+            # the query is ever built, not after a malformed one fails.
             pull_table(
                 db, log, comp_lib, "fundq",
-                ["gvkey", "datadate", "fyearq", "fqtr", "atq", "ceqq",
-                 "saleq", "niq", "epspxq", "rdq",
-                 "indfmt", "datafmt", "popsrc", "consol"],
+                COMP_FUNDQ_COLUMNS,
                 where_sql=fundq_where,
-                required_columns=["gvkey", "datadate"],
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=RETURN_END_DATE,
                 force=force,
@@ -667,21 +785,20 @@ def main():
             # crsp.stocknames.siccd (above) for point-in-time SIC instead.
             pull_table(
                 db, log, comp_lib, "company",
-                ["gvkey", "conm", "sic", "gsector"],
-                required_columns=["gvkey"],
+                COMP_COMPANY_COLUMNS,
                 start_date=None, end_date=None,
                 force=force,
             )
             # Annual fundamentals alongside quarterly -- book-to-market and
             # other annual-basis controls aren't in fundq, and this is a
             # one-shot pull, so grab it now. See the restated-data caveat
-            # above fundq's pull_table call -- it applies here too.
+            # above fundq's pull_table call -- it applies here too. Same
+            # indfmt/datafmt/popsrc/consol reasoning as fundq above applies:
+            # funda_where filters on those same four columns.
             pull_table(
                 db, log, comp_lib, "funda",
-                ["gvkey", "datadate", "fyear", "at", "ceq", "sale", "ni", "epspx",
-                 "indfmt", "datafmt", "popsrc", "consol"],
+                COMP_FUNDA_COLUMNS,
                 where_sql=funda_where,
-                required_columns=["gvkey", "datadate"],
                 stream=True,
                 start_date=LOOKBACK_START_DATE, end_date=END_DATE,
                 force=force,
@@ -709,8 +826,7 @@ def main():
             # for.
             pull_table(
                 db, log, "wrdsapps", "ibcrsphist",
-                ["ticker", "permno", "ncusip", "score", "sdate", "edate"],
-                required_columns=["permno", "ncusip", "sdate", "edate"],
+                WRDSAPPS_IBCRSPHIST_COLUMNS,
                 start_date=None, end_date=None,
                 force=force,
             )
@@ -722,8 +838,7 @@ def main():
             # window.
             pull_table(
                 db, log, "crsp", "ccmxpf_lnkhist",
-                ["gvkey", "lpermno", "linktype", "linkprim", "linkdt", "linkenddt"],
-                required_columns=["gvkey", "lpermno", "linkdt", "linkenddt"],
+                CRSP_CCMXPF_LNKHIST_COLUMNS,
                 start_date=None, end_date=None,
                 force=force,
             )
