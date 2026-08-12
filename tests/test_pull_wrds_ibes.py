@@ -65,16 +65,19 @@ def _write_resolved_ids(metadata_dir, tickers=("AAA",)):
 
 
 def _patch_ibes_env(monkeypatch, tmp_path, write_resolved_ids=True, tickers=("AAA",)):
+    """Finding 7: this script writes to its OWN manifest file
+    (wrds_pull_manifest_ibes.csv, via lib.manifest_path_for("ibes") --
+    computed fresh from METADATA_DIR), so patching METADATA_DIR alone is
+    enough; no separate MANIFEST_PATH patch needed anymore."""
     raw_dir = tmp_path / "raw"
     metadata_dir = tmp_path / "metadata"
-    manifest_path = metadata_dir / "wrds_pull_manifest.csv"
     monkeypatch.setattr(lib, "RAW_DIR", raw_dir)
     monkeypatch.setattr(lib, "METADATA_DIR", metadata_dir)
-    monkeypatch.setattr(lib, "MANIFEST_PATH", manifest_path)
     monkeypatch.setattr(lib, "RESOLVED_IDS_PATH", metadata_dir / "resolved_universe_ids.parquet")
     monkeypatch.setattr(lib, "load_env_file", lambda path: None)
     if write_resolved_ids:
         _write_resolved_ids(metadata_dir, tickers=tickers)
+    manifest_path = lib.manifest_path_for("ibes")
     return raw_dir, metadata_dir, manifest_path
 
 
@@ -171,7 +174,12 @@ def test_missing_required_column_blocks_that_tables_pull(tmp_path, monkeypatch, 
     )
     monkeypatch.setattr(sys, "argv", ["pull_wrds_ibes.py"])
 
-    ibes_script.main()  # graceful skip, not an exception
+    # Finding 3: "missing_required_columns" is a graceful, logged skip
+    # inside pull_table() (never an exception there) -- but it's NOT one of
+    # SUCCESS_STATUSES, so main() must still detect it via the run_log and
+    # exit non-zero rather than silently printing SUCCESS.
+    with pytest.raises(SystemExit):
+        ibes_script.main()
 
     manifest = pd.read_csv(manifest_path, keep_default_na=False)
     rows = manifest[(manifest["library"] == library) & (manifest["table"] == table)]
@@ -384,3 +392,30 @@ def test_one_task_connection_failure_does_not_prevent_the_others_and_is_reported
     manifest = pd.read_csv(manifest_path, keep_default_na=False)
     assert len(manifest) == 2
     assert (manifest["status"] == "ok").all()
+
+
+# ---------------------------------------------------------------------------
+# Finding 3: every query failing must exit non-zero and must NOT print
+# SUCCESS.
+# ---------------------------------------------------------------------------
+
+
+def test_every_query_failing_exits_nonzero_and_does_not_print_success(tmp_path, monkeypatch, capsys):
+    raw_dir, _metadata_dir, manifest_path = _patch_ibes_env(monkeypatch, tmp_path)
+
+    # An empty string is a substring of every SQL string built, so all
+    # three of statsumu_epsus/actu_epsus/detu_epsus's raw_sql() calls fail.
+    monkeypatch.setattr(lib, "connect", _connect_factory(fail_marker=""))
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_ibes.py"])
+
+    with pytest.raises(SystemExit):
+        ibes_script.main()
+
+    out = capsys.readouterr().out
+    assert "SUCCESS" not in out
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    assert len(manifest) == 3
+    assert (manifest["status"] == "query_failed").all()
+    for _lib_name, table, _req, _opt in TABLE_SPECS:
+        assert not (raw_dir / "ibes" / f"{table}.parquet").exists()

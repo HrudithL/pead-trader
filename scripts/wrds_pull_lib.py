@@ -38,6 +38,7 @@ same values instead of each keeping its own copy that could drift.
 import builtins
 import csv
 import datetime as dt
+import json
 import os
 import re
 import threading
@@ -277,6 +278,30 @@ _MAX_ERROR_LEN = 300
 # without opening enough simultaneous WRDS sessions at once to risk tripping
 # a per-account connection limit or a rate flag. A single, named, easy-to-
 # adjust constant rather than a magic number repeated at each call site.
+#
+# Finding 8 (review round 8): this caps each SCRIPT individually, but the
+# design explicitly intends all 3 consumer scripts to run SIMULTANEOUSLY, as
+# separate OS processes, in separate terminals -- so the REAL total peak
+# concurrent WRDS connection count when all 3 are running at once is the SUM
+# across scripts, not this one number. With MAX_CONCURRENT_CONNECTIONS == 4:
+#   pull_wrds_crsp.py:       min(4, 22 tasks)      = 4 connections
+#   pull_wrds_compustat.py:  min(4, 2 tasks)        = 2 connections
+#   pull_wrds_ibes.py:       min(4, 3 tasks)        = 3 connections
+#   -----------------------------------------------------------
+#   real simultaneous peak (all 3 running together)  = 9 connections
+#
+# DECISION (documented, not silently discovered): 9 is accepted as the real,
+# intentional ceiling, rather than shrinking MAX_CONCURRENT_CONNECTIONS to
+# force a lower total. Reasoning: this account's actual WRDS connection
+# limit is unknown (see memory/pead-trading-project.md), but crsp.dsf is by
+# far this project's largest and slowest pull (20 year-chunks vs. 2-3 tasks
+# for the other two scripts) -- shrinking ITS worker count to buy a lower
+# total would cost the most real wall-clock time for the least benefit,
+# against a connection-limit risk that has no evidence behind it yet. If a
+# real run against live WRDS ever shows connection-count sensitivity
+# (throttling, rejected connections), lower MAX_CONCURRENT_CONNECTIONS first
+# -- it is the single knob every script's cap already derives from.
+DOCUMENTED_PEAK_TOTAL_CONNECTIONS = 9
 MAX_CONCURRENT_CONNECTIONS = 4
 
 # Manifest writes can now come from multiple THREADS within one script
@@ -447,6 +472,37 @@ def record(log: list, row: dict, manifest_path: Path = None) -> None:
     )
     log.append(row)
     append_manifest_row(row, manifest_path=manifest_path)
+
+
+# Finding 3 (review round 8): the statuses pull_table()/record() can log that
+# mean "this table/chunk's data is genuinely present and usable" -- anything
+# else (missing_required_columns, no_such_table, describe_table_error,
+# query_failed, ...) means a table/chunk that was ATTEMPTED did not actually
+# produce usable data, and must not be silently reported as an overall
+# script SUCCESS. "ok_empty_query_kept_existing" counts as success: it means
+# a --force re-pull's query legitimately returned zero rows and the
+# previously-good file at out_path was correctly left untouched -- not a
+# failure, just a no-op this run.
+SUCCESS_STATUSES = {"ok", "skipped_exists", "ok_empty_query_kept_existing"}
+
+
+def find_run_log_failures(run_log) -> list:
+    """Return the subset of `run_log` rows (as built by pull_table() via
+    record()) whose status is NOT one of SUCCESS_STATUSES.
+
+    Used by each of the 3 consumer scripts' main() (pull_wrds_crsp.py,
+    pull_wrds_compustat.py, pull_wrds_ibes.py) to decide whether to print a
+    SUCCESS message and exit 0, or a FAILURE summary and exit non-zero --
+    IN ADDITION TO (not instead of) any executor-level exception already
+    collected via concurrent.futures.Future.result(). Before this check
+    existed, a table/chunk whose pull_table() call logged e.g.
+    "query_failed" (pull_table swallows query-level failures into the
+    manifest by design, so this never raises and never reaches the
+    Future.result()-based failure collection) was invisible to main() --
+    every task's Future.result() returned normally, so main() printed
+    SUCCESS and exited 0 even when every single query had actually failed.
+    """
+    return [row for row in run_log if row.get("status") not in SUCCESS_STATUSES]
 
 
 # Table/library/column names are f-string-interpolated into the SQL below.
@@ -1684,6 +1740,24 @@ def _validate_numeric_id(value) -> str:
     return s
 
 
+def _validate_numeric_ids(values) -> None:
+    """Finding 5 (review round 8): raise ValueError naming EVERY value that
+    fails _NUMERIC_ID_RE, mirroring _validate_gvkeys/_validate_ibes_tickers's
+    pattern -- a safety net callers (pull_wrds_crsp.py, for its resolved
+    PERMNO list) run explicitly BEFORE build_numeric_in_clause, so a
+    malformed PERMNO list degrades that script the same visible,
+    all-bad-values-named way a malformed GVKEY/ticker list already does for
+    pull_wrds_compustat.py/pull_wrds_ibes.py, rather than raising on just
+    the first bad value with no upstream classification (which is all
+    build_numeric_in_clause's own internal validation gives you)."""
+    bad = sorted({str(v) for v in values if not _NUMERIC_ID_RE.match(str(v).strip())})
+    if bad:
+        raise ValueError(
+            f"{len(bad)} numeric id(s) failed shape validation "
+            f"{_NUMERIC_ID_RE.pattern!r}: {bad[:20]}"
+        )
+
+
 def build_numeric_in_clause(column: str, values) -> str:
     """Build `"<column> IN (1, 2, 3)"` from an iterable of PERMNO/GVKEY-like
     values, after validating every value is digits-only. An empty `values`
@@ -1754,12 +1828,119 @@ def _validate_ibes_tickers(tickers) -> None:
 # ---------------------------------------------------------------------------
 
 
+def manifest_path_for(component: str) -> Path:
+    """Finding 7 (review round 8): per-script manifest path.
+
+    The reference/crsp/compustat/ibes scripts run as 4 SEPARATE OS
+    processes, by this split's own design -- the three consumer scripts are
+    explicitly meant to run SIMULTANEOUSLY, in separate terminals.
+    _MANIFEST_LOCK (a threading.Lock) only ever protected concurrent
+    THREADS within one process; it does nothing for 3 separate processes
+    all appending to (and, on a fresh run, racing to write the header row
+    of) one shared `wrds_pull_manifest.csv`.
+
+    CHOSEN FIX: separate manifest files per script/component
+    ("wrds_pull_manifest_<component>.csv") rather than a cross-process file
+    lock (e.g. fcntl.flock). This avoids the cross-process locking problem
+    entirely instead of trying to get it right -- there is no shared file
+    for two processes to ever race on, so there is nothing to lock. Each
+    script's own INTERNAL thread pool (currently only pull_wrds_crsp.py has
+    one, for its per-year crsp.dsf chunks) still shares ONE manifest path
+    across ITS OWN threads within that one process, which _MANIFEST_LOCK
+    continues to protect exactly as before.
+
+    `component` is one of "reference", "crsp", "compustat", "ibes". Computed
+    fresh from the module-level METADATA_DIR on every call (not cached at
+    import time) so it automatically follows METADATA_DIR being pointed at
+    a test sandbox, the same way RAW_DIR-derived paths already do elsewhere
+    in this module.
+    """
+    return METADATA_DIR / f"wrds_pull_manifest_{component}.csv"
+
+
+def library_availability_path() -> Path:
+    """Companion metadata file path for write_library_availability()/
+    load_library_availability() (Finding 4). Computed fresh from METADATA_DIR
+    on every call, same reasoning as manifest_path_for()."""
+    return METADATA_DIR / "wrds_library_availability.json"
+
+
+def write_library_availability(info: dict, path=None) -> None:
+    """Finding 4 (review round 8): persist the library-alias-resolution
+    result pull_wrds_reference.py's one-time `db.list_libraries()` audit
+    already computes (which of ibes/crsp/comp are visible on this account,
+    and -- since Compustat can be exposed under different names depending on
+    the account/subscription -- which alias comp/compa/compustat is the
+    real one) so pull_wrds_compustat.py (a separate process, with no access
+    to pull_wrds_reference.py's in-memory `comp_lib` variable) can read the
+    ACTUAL resolved library name instead of assuming a hardcoded literal.
+
+    Written atomically (temp file + os.replace), matching this codebase's
+    established Parquet atomic-write pattern -- see pull_table's/
+    _stream_query_to_parquet's docstrings -- so a failure partway through
+    the write can never leave a truncated/corrupt JSON file in place of a
+    previously-good one.
+    """
+    path = Path(path) if path is not None else library_availability_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(info, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp_path, path)
+
+
+def load_library_availability(path=None) -> dict:
+    """Finding 4: read back the library-alias-resolution result written by
+    write_library_availability(). Raises SystemExit with a clear, actionable
+    message (mirroring require_resolved_universe_file's pattern) if the file
+    doesn't exist yet or can't be parsed -- never a raw FileNotFoundError/
+    JSONDecodeError deep inside a consumer script.
+    """
+    path = Path(path) if path is not None else library_availability_path()
+    if not path.exists():
+        raise SystemExit(
+            f"FATAL: {path} does not exist yet. Run `python "
+            f"scripts/pull_wrds_reference.py` FIRST and ALONE -- it produces "
+            f"this file, which records the actual resolved WRDS library "
+            f"alias(es) for this account (e.g. whether Compustat is exposed "
+            f"as comp/compa/compustat here). Nothing here was queried."
+        )
+    try:
+        return json.loads(path.read_text())
+    except Exception as e:
+        raise SystemExit(
+            f"FATAL: {path} exists but could not be parsed as valid JSON -- "
+            f"{e}. Re-run scripts/pull_wrds_reference.py (with --force if "
+            f"needed) to regenerate it."
+        ) from e
+
+
+# Finding 12 (review round 8): the columns load_resolved_filter_lists()
+# structurally depends on. Shared by require_resolved_universe_file() (the
+# shape check below) and load_resolved_filter_lists() (_require_columns
+# call), so both check the exact same set -- one name, not two copies that
+# could drift.
+RESOLVED_IDS_REQUIRED_COLUMNS = ["permno", "gvkey", "ibes_ticker"]
+
+
 def require_resolved_universe_file(path=None) -> Path:
     """Guard shared by the three consumer scripts (pull_wrds_crsp.py,
     pull_wrds_compustat.py, pull_wrds_ibes.py): raise SystemExit with a
     clear, actionable message if data/metadata/resolved_universe_ids.parquet
-    doesn't exist yet, instead of proceeding to build an empty/unfiltered
-    query or crashing on a confusing FileNotFoundError deep inside pandas.
+    doesn't exist yet, OR exists but is missing a column
+    load_resolved_filter_lists() structurally depends on (Finding 12) --
+    instead of proceeding to build an empty/unfiltered query, or crashing on
+    a confusing FileNotFoundError/UniverseResolutionError deep inside
+    load_resolved_filter_lists() one line later. Both failure modes ("file
+    missing" and "file present but malformed") get the SAME clear,
+    actionable message and remediation step here, at the single guard every
+    consumer script calls first.
+
+    Only the SCHEMA (column names) is checked here, via pyarrow's schema
+    metadata -- deliberately not a full pd.read_parquet() of the whole file,
+    so this guard stays cheap even for the eventual real, larger resolved-
+    ids file. Cell-level malformation (e.g. a value that can't be parsed as
+    a PERMNO) is a separate concern, guarded where it's actually cast (see
+    load_resolved_filter_lists's _explode_unique).
 
     Returns the resolved Path on success (so callers can pass it straight to
     load_resolved_filter_lists without repeating the default-path logic).
@@ -1771,6 +1952,24 @@ def require_resolved_universe_file(path=None) -> Path:
             f"scripts/pull_wrds_reference.py` FIRST and ALONE -- it produces "
             f"this file, which every other WRDS pull script filters on. "
             f"Nothing here was queried."
+        )
+    try:
+        actual_columns = set(pq.ParquetFile(str(path)).schema_arrow.names)
+    except Exception as e:
+        raise SystemExit(
+            f"FATAL: {path} exists but could not be read as a valid Parquet "
+            f"file ({e}) -- this file is malformed. Re-run `python "
+            f"scripts/pull_wrds_reference.py` (with --force if needed) to "
+            f"regenerate it. Nothing here was queried."
+        ) from e
+    missing = [c for c in RESOLVED_IDS_REQUIRED_COLUMNS if c not in actual_columns]
+    if missing:
+        raise SystemExit(
+            f"FATAL: {path} exists but is missing expected column(s) "
+            f"{missing} (actual columns: {sorted(actual_columns)}) -- this "
+            f"file is malformed/incomplete. Re-run `python "
+            f"scripts/pull_wrds_reference.py` (with --force if needed) to "
+            f"regenerate it. Nothing here was queried."
         )
     return path
 
@@ -1810,16 +2009,45 @@ def load_resolved_filter_lists(resolved_ids_path=None):
     all_permnos/all_gvkeys/all_tickers construction.
     """
     resolved_ids_path = Path(resolved_ids_path) if resolved_ids_path is not None else RESOLVED_IDS_PATH
-    df = pd.read_parquet(resolved_ids_path)
-    _require_columns(df, ["permno", "gvkey", "ibes_ticker"], str(resolved_ids_path))
+    try:
+        df = pd.read_parquet(resolved_ids_path)
+    except Exception as e:
+        raise UniverseResolutionError(
+            f"{resolved_ids_path}: failed to read as Parquet -- resolved "
+            f"universe file is malformed, re-run "
+            f"scripts/pull_wrds_reference.py. ({e})"
+        ) from e
+    _require_columns(df, RESOLVED_IDS_REQUIRED_COLUMNS, str(resolved_ids_path))
 
     def _explode_unique(col_name, caster):
         values = set()
         for cell in df[col_name].dropna():
             for token in str(cell).split(","):
                 token = token.strip()
-                if token:
+                if not token:
+                    continue
+                # Finding 6 (review round 8): a malformed cell here (e.g. a
+                # non-numeric token in the "permno" column) must not surface
+                # as a raw pandas/Python traceback -- this is exactly the
+                # class of bug that already bit GVKEY once (a float-
+                # stringified numeric ID silently surviving a Parquet
+                # round-trip). resolve_universe()'s own writer guards against
+                # producing this (permno/lpermno are cast to int64 before
+                # being joined into a string -- see _normalize_gvkeys's
+                # docstring for the historical bug this pattern fixed), so
+                # this should not fire against real resolve_universe()
+                # output -- but a hand-edited or corrupted file should still
+                # fail loudly and actionably, not with a bare ValueError deep
+                # inside this loop.
+                try:
                     values.add(caster(token))
+                except (ValueError, TypeError) as e:
+                    raise UniverseResolutionError(
+                        f"{resolved_ids_path}: malformed {col_name!r} value "
+                        f"{token!r} could not be parsed -- resolved universe "
+                        f"file is malformed, re-run "
+                        f"scripts/pull_wrds_reference.py. ({e})"
+                    ) from e
         return values
 
     permnos = sorted(_explode_unique("permno", int))

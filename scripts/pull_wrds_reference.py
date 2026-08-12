@@ -42,6 +42,7 @@ Usage:
 Requires WRDS_USERNAME and WRDS_PASSWORD in a .env file at the repo root.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -67,8 +68,32 @@ def main():
     lib.RAW_DIR.mkdir(parents=True, exist_ok=True)
     lib.METADATA_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Finding 7: this script writes ONLY to its own manifest CSV (a separate
+    # OS process from the 3 consumer scripts, each of which also gets its
+    # own manifest file) -- see lib.manifest_path_for's docstring for why.
+    manifest_path = lib.manifest_path_for("reference")
+
     args = lib.parse_common_args(sys.argv[1:], description=__doc__)
     force = args.force
+
+    # Finding 1: resolve_universe() below writes the resolved-IDs Parquet to
+    # a TEMP path, not the final data/metadata/resolved_universe_ids.parquet
+    # path the 3 consumer scripts check for -- that final path is only ever
+    # populated (via os.replace, atomically) AFTER every one of this
+    # script's own floor/canary checks below has passed. Before this fix,
+    # resolve_universe() wrote directly to the final path, so an aborted run
+    # (a FATAL floor-check failure AFTER resolution already ran) still left
+    # a fully-formed file at the path the consumer scripts' guard
+    # (require_resolved_universe_file) checks with a bare path.exists() --
+    # i.e. a run this script itself judged unsafe could still let the 3
+    # consumer scripts proceed. Any SystemExit raised below (from this
+    # point on) leaves tmp_resolved_ids_path behind (harmless -- nothing
+    # checks that path) and the FINAL path completely untouched (still
+    # whatever a prior successful run left there, if anything).
+    final_resolved_ids_path = lib.METADATA_DIR / "resolved_universe_ids.parquet"
+    tmp_resolved_ids_path = final_resolved_ids_path.with_suffix(
+        final_resolved_ids_path.suffix + ".tmp"
+    )
 
     # Fix 4: absolute-count floor on the universe file, checked BEFORE
     # connecting to WRDS at all -- see _check_universe_secid_floor's
@@ -111,6 +136,22 @@ def main():
         # data comes from the external drive archive, per this project's
         # established data-source split.
 
+        # Finding 4: persist this account's ACTUAL resolved library
+        # alias(es) -- most importantly comp_lib, since Compustat can be
+        # exposed as comp/compa/compustat depending on the account/
+        # subscription -- so pull_wrds_compustat.py (a separate process,
+        # with no access to the comp_lib variable computed above) reads the
+        # real resolved name instead of assuming a hardcoded "comp" literal.
+        # Written unconditionally (even if a library is unavailable, in
+        # which case comp_lib is None and the compustat script degrades
+        # cleanly -- see its own gate) -- this file doesn't gate anything
+        # sensitive by itself, since every consumer script still requires
+        # resolved_universe_ids.parquet (gated, see Finding 1 above) first.
+        lib.write_library_availability({
+            "have_ibes": have_ibes, "have_crsp": have_crsp, "have_comp": have_comp,
+            "comp_lib": comp_lib,
+        })
+
         for lib_name, available in (("ibes", have_ibes), ("crsp", have_crsp), ("comp", have_comp)):
             if not available:
                 print(f"{lib_name} library not visible on this account -- skipping.", flush=True)
@@ -119,6 +160,7 @@ def main():
                     {"library": lib_name, "table": "*", "status": "library_unavailable",
                      "rows": 0, "path": "", "missing_columns": "", "error": "",
                      "start_date": "", "end_date": ""},
+                    manifest_path=manifest_path,
                 )
 
         # =====================================================================
@@ -138,6 +180,7 @@ def main():
                 lib.CRSP_STOCKNAMES_REQUIRED_COLUMNS,
                 optional_columns=lib.CRSP_STOCKNAMES_OPTIONAL_COLUMNS,
                 start_date=None, end_date=None,
+                manifest_path=manifest_path,
                 force=force,
             )
         if have_comp:
@@ -146,6 +189,7 @@ def main():
                 lib.COMP_COMPANY_REQUIRED_COLUMNS,
                 optional_columns=lib.COMP_COMPANY_OPTIONAL_COLUMNS,
                 start_date=None, end_date=None,
+                manifest_path=manifest_path,
                 force=force,
             )
         # wrdsapps.iclink was removed: confirmed via a prior run's manifest
@@ -156,6 +200,7 @@ def main():
                 lib.WRDSAPPS_IBCRSPHIST_REQUIRED_COLUMNS,
                 optional_columns=lib.WRDSAPPS_IBCRSPHIST_OPTIONAL_COLUMNS,
                 start_date=None, end_date=None,
+                manifest_path=manifest_path,
                 force=force,
             )
         if have_crsp and have_comp:
@@ -164,6 +209,7 @@ def main():
                 lib.CRSP_CCMXPF_LNKHIST_REQUIRED_COLUMNS,
                 optional_columns=lib.CRSP_CCMXPF_LNKHIST_OPTIONAL_COLUMNS,
                 start_date=None, end_date=None,
+                manifest_path=manifest_path,
                 force=force,
             )
         if have_ibes:
@@ -172,6 +218,7 @@ def main():
                 lib.IBES_IDSUM_REQUIRED_COLUMNS,
                 optional_columns=lib.IBES_IDSUM_OPTIONAL_COLUMNS,
                 start_date=None, end_date=None,
+                manifest_path=manifest_path,
                 force=force,
             )
 
@@ -192,6 +239,8 @@ def main():
         # allowed to degrade independently instead (Fix 3).
         # =====================================================================
         try:
+            # Finding 1: writes to the TEMP path, not final_resolved_ids_path
+            # -- see this function's top-of-main comment for why.
             resolved = lib.resolve_universe(
                 om_universe_path=lib.METADATA_DIR / "optionmetrics_universe.parquet",
                 om_universe_history_path=lib.METADATA_DIR / "optionmetrics_universe_history.parquet",
@@ -200,7 +249,7 @@ def main():
                 ibcrsphist_path=lib.RAW_DIR / "wrdsapps" / "ibcrsphist.parquet",
                 unresolved_secids_out=lib.METADATA_DIR / "unresolved_secids.csv",
                 ambiguous_links_out=lib.METADATA_DIR / "ambiguous_links.csv",
-                resolved_ids_out=lib.METADATA_DIR / "resolved_universe_ids.parquet",
+                resolved_ids_out=tmp_resolved_ids_path,
                 permnos_without_gvkey_out=lib.METADATA_DIR / "permnos_without_gvkey.csv",
                 permnos_without_ibes_ticker_out=lib.METADATA_DIR / "permnos_without_ibes_ticker.csv",
             )
@@ -257,13 +306,31 @@ def main():
                 flush=True,
             )
             raise SystemExit(1)
+    except BaseException:
+        # Finding 1: best-effort cleanup of the temp resolved-ids file on
+        # ANY abort path (including the SystemExit(1) calls above, which are
+        # BaseException, not Exception) -- not required for correctness
+        # (nothing else ever checks tmp_resolved_ids_path's existence), just
+        # tidiness so a failed run doesn't leave debris a human might
+        # mistake for something meaningful.
+        if tmp_resolved_ids_path.exists():
+            tmp_resolved_ids_path.unlink(missing_ok=True)
+        raise
     finally:
         db.close()
         print("Connection closed.", flush=True)
 
+    # Finding 1: every floor/canary check above has now passed -- ONLY now
+    # is the resolved-IDs file promoted (atomically, via os.replace) to the
+    # final path the 3 consumer scripts' require_resolved_universe_file()
+    # guard checks. If anything above raised, this line is never reached,
+    # so final_resolved_ids_path is left exactly as it was before this run
+    # (still absent, or still whatever a prior successful run produced).
+    os.replace(tmp_resolved_ids_path, final_resolved_ids_path)
+
     # --- Summary (the manifest itself was already written incrementally,
     # row by row, above -- this just prints what this run did) ---
-    print("\nManifest is at data/metadata/wrds_pull_manifest.csv")
+    print(f"\nManifest is at {manifest_path}")
     if log:
         print(pd.DataFrame(log).to_string(index=False))
 

@@ -2142,8 +2142,61 @@ def test_require_resolved_universe_file_missing_raises_systemexit_with_clear_mes
 def test_require_resolved_universe_file_existing_returns_path(tmp_path):
     path = tmp_path / "metadata" / "resolved_universe_ids.parquet"
     path.parent.mkdir(parents=True)
-    pd.DataFrame({"secid": [1]}).to_parquet(path, index=False)
+    pd.DataFrame({
+        "secid": [1], "permno": ["100"], "gvkey": ["001000"], "ibes_ticker": ["AAA"],
+    }).to_parquet(path, index=False)
     assert lib.require_resolved_universe_file(path) == path
+
+
+def test_require_resolved_universe_file_missing_columns_raises_systemexit_with_clear_message(tmp_path):
+    """Finding 12: a file that EXISTS but is missing a column
+    load_resolved_filter_lists() structurally depends on must be rejected by
+    THIS guard, with the same clear, actionable message as the missing-file
+    case -- not sail through here only to fail one line later inside
+    load_resolved_filter_lists with a less-actionable error."""
+    path = tmp_path / "metadata" / "resolved_universe_ids.parquet"
+    path.parent.mkdir(parents=True)
+    pd.DataFrame({"secid": [1]}).to_parquet(path, index=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        lib.require_resolved_universe_file(path)
+    message = str(exc_info.value)
+    assert "permno" in message
+    assert "gvkey" in message
+    assert "ibes_ticker" in message
+    assert "pull_wrds_reference.py" in message
+
+
+def test_require_resolved_universe_file_malformed_parquet_raises_systemexit(tmp_path):
+    path = tmp_path / "metadata" / "resolved_universe_ids.parquet"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"not actually parquet")
+
+    with pytest.raises(SystemExit) as exc_info:
+        lib.require_resolved_universe_file(path)
+    assert "pull_wrds_reference.py" in str(exc_info.value)
+
+
+def test_require_resolved_universe_file_guard_rejects_leftover_partial_state(tmp_path):
+    """Finding 1: proves the DOWNSTREAM guard itself (not just
+    pull_wrds_reference.py exiting 1) correctly refuses a resolved-ids file
+    left in a partial/leftover state -- e.g. a stale file from a run whose
+    floor check failed AFTER something had already been written to that
+    exact path in a pre-fix world. Simulates that leftover state directly
+    (a file missing the columns a real resolve_universe() output always
+    has) and confirms require_resolved_universe_file -- the exact function
+    every one of the 3 consumer scripts calls first -- rejects it, rather
+    than merely checking that path.exists() is True."""
+    path = tmp_path / "metadata" / "resolved_universe_ids.parquet"
+    path.parent.mkdir(parents=True)
+    # A bare/partial file, as could only ever be observed here if the
+    # atomic-gating fix (Finding 1) were removed or broken: exists, but
+    # missing the columns a genuine resolve_universe() output always has.
+    pd.DataFrame({"secid": [1]}).to_parquet(path, index=False)
+    assert path.exists(), "sanity check: the leftover file really is present"
+
+    with pytest.raises(SystemExit):
+        lib.require_resolved_universe_file(path)
 
 
 def test_load_resolved_filter_lists_reconstructs_exact_union_of_per_secid_lists(tmp_path):
@@ -2212,3 +2265,176 @@ def test_max_concurrent_connections_is_a_small_positive_int():
 def test_parse_common_args_rejects_unrecognized_flag():
     with pytest.raises(SystemExit):
         lib.parse_common_args(["--Force"])
+
+
+# ---------------------------------------------------------------------------
+# Finding 6: load_resolved_filter_lists round-tripped through REAL
+# resolve_universe() output (not a hand-built clean fixture), including a
+# fixture where an input column is genuinely float64-typed -- the exact
+# dtype-round-trip bug class that already bit GVKEY once.
+# ---------------------------------------------------------------------------
+
+
+def test_load_resolved_filter_lists_round_trip_through_real_resolve_universe_with_float_typed_source_columns(tmp_path):
+    """Every other load_resolved_filter_lists test hand-constructs a clean
+    Parquet file directly -- never runs it through the REAL resolve_universe()
+    first. Here: crsp.stocknames' permno column, crsp.ccmxpf_lnkhist's
+    lpermno column, and wrdsapps.ibcrsphist's permno column are all
+    genuinely float64-typed (pandas infers this from a null elsewhere in
+    each column -- the same real-world shape that produced the float64
+    GVKEY column that bit this codebase before resolve_universe's
+    _normalize_gvkeys fix). resolve_universe() itself must still recover
+    clean ints from these, and load_resolved_filter_lists() must then read
+    that real Parquet output back correctly -- not a hand-built fixture."""
+    om = pd.DataFrame({
+        "secid": [1, 2], "cusip": ["00000001", "00000002"],
+        "ticker": ["AAA", "BBB"], "issuer": ["AAA CORP", "BBB CORP"],
+    })
+    om_hist = pd.DataFrame({"secid": [], "cusip": []})
+    stocknames = pd.DataFrame({
+        # float64-typed: pandas infers this from the None in the third,
+        # non-matching row.
+        "permno": [100, 200, None],
+        "cusip": ["00000001", "00000002", "99999999"],
+        "ncusip": ["00000001", "00000002", "99999999"],
+    })
+    assert stocknames["permno"].dtype == "float64", (
+        "sanity check: this test is only meaningful if the source column "
+        "really is float64"
+    )
+    ccmxpf = pd.DataFrame({
+        "lpermno": pd.array([100.0, 200.0, None], dtype="float64"),
+        "gvkey": ["001000", "002000", None],
+    })
+    ibcrsphist = pd.DataFrame({
+        "permno": pd.array([100.0, 200.0, None], dtype="float64"),
+        "ticker": ["AAA", "BBB", None],
+    })
+
+    resolved_out = tmp_path / "metadata" / "resolved_universe_ids.parquet"
+    _resolve_universe_fixture(
+        tmp_path, om=om, om_hist=om_hist, stocknames=stocknames,
+        ccmxpf=ccmxpf, ibcrsphist=ibcrsphist,
+    )
+
+    permnos, gvkeys, ibes_tickers = lib.load_resolved_filter_lists(resolved_out)
+
+    assert permnos == [100, 200], (
+        f"PERMNOs must survive the real resolve_universe() -> Parquet -> "
+        f"load_resolved_filter_lists() round trip as clean ints even when "
+        f"a SOURCE column was float64-typed -- got {permnos!r}"
+    )
+    assert gvkeys == ["001000", "002000"]
+    assert ibes_tickers == ["AAA", "BBB"]
+
+
+def test_load_resolved_filter_lists_malformed_cell_raises_clear_actionable_error_not_raw_traceback(tmp_path):
+    """Finding 6: a malformed cell (here, a non-numeric token in the permno
+    column -- something a real resolve_universe() run should never
+    produce, but a hand-edited or corrupted file could) must raise a clear,
+    actionable UniverseResolutionError naming this exact remediation step,
+    not a bare ValueError/traceback from deep inside int()."""
+    path = tmp_path / "resolved_universe_ids.parquet"
+    pd.DataFrame({
+        "secid": [1], "permno": ["not-a-number"], "gvkey": ["001000"],
+        "ibes_ticker": ["AAA"],
+    }).to_parquet(path, index=False)
+
+    with pytest.raises(lib.UniverseResolutionError) as exc_info:
+        lib.load_resolved_filter_lists(path)
+    message = str(exc_info.value)
+    assert "malformed" in message.lower()
+    assert "pull_wrds_reference.py" in message
+
+
+# ---------------------------------------------------------------------------
+# Finding 7: per-script manifest files (chosen fix over a cross-process
+# fcntl lock -- see manifest_path_for's docstring for the reasoning). Since
+# there is no shared file at all, the test burden is simple: confirm each
+# component gets its own distinct path, and that writes to two different
+# components' paths never land in the same file.
+# ---------------------------------------------------------------------------
+
+
+def test_manifest_path_for_returns_distinct_paths_for_each_component(tmp_path, monkeypatch):
+    monkeypatch.setattr(lib, "METADATA_DIR", tmp_path)
+    components = ["reference", "crsp", "compustat", "ibes"]
+    paths = {c: lib.manifest_path_for(c) for c in components}
+    assert len(set(paths.values())) == 4, "each component must get its own manifest file"
+    for component, path in paths.items():
+        assert path.name == f"wrds_pull_manifest_{component}.csv"
+        assert path.parent == tmp_path
+
+
+def test_separate_manifest_files_do_not_cross_contaminate(tmp_path, monkeypatch):
+    """Would fail if Finding 7's fix were removed/reverted to one shared
+    MANIFEST_PATH: two different "scripts" (simulated here by calling
+    record() against two different components' manifest paths, the same
+    way two real separate OS processes each running their own script would)
+    must never have their rows land in the same file."""
+    monkeypatch.setattr(lib, "METADATA_DIR", tmp_path)
+    crsp_path = lib.manifest_path_for("crsp")
+    compustat_path = lib.manifest_path_for("compustat")
+
+    base_row = {
+        "rows": 1, "path": "", "missing_columns": "", "error": "",
+        "start_date": "", "end_date": "",
+    }
+    lib.record([], {**base_row, "library": "crsp", "table": "dsf", "status": "ok"}, manifest_path=crsp_path)
+    lib.record([], {**base_row, "library": "comp", "table": "fundq", "status": "ok"}, manifest_path=compustat_path)
+
+    crsp_df = pd.read_csv(crsp_path)
+    compustat_df = pd.read_csv(compustat_path)
+    assert len(crsp_df) == 1
+    assert crsp_df.iloc[0]["library"] == "crsp"
+    assert len(compustat_df) == 1
+    assert compustat_df.iloc[0]["library"] == "comp"
+
+
+# ---------------------------------------------------------------------------
+# Finding 4: library-alias-resolution persistence (write_library_availability
+# / load_library_availability), so pull_wrds_compustat.py can read the
+# ACTUAL resolved Compustat library alias instead of assuming "comp".
+# ---------------------------------------------------------------------------
+
+
+def test_write_then_load_library_availability_round_trips(tmp_path, monkeypatch):
+    monkeypatch.setattr(lib, "METADATA_DIR", tmp_path)
+    lib.write_library_availability({
+        "have_ibes": True, "have_crsp": True, "have_comp": True, "comp_lib": "compa",
+    })
+    info = lib.load_library_availability()
+    assert info == {
+        "have_ibes": True, "have_crsp": True, "have_comp": True, "comp_lib": "compa",
+    }
+
+
+def test_load_library_availability_missing_file_raises_systemexit_with_clear_message(tmp_path, monkeypatch):
+    monkeypatch.setattr(lib, "METADATA_DIR", tmp_path)
+    with pytest.raises(SystemExit) as exc_info:
+        lib.load_library_availability()
+    assert "pull_wrds_reference.py" in str(exc_info.value)
+
+
+def test_load_library_availability_malformed_json_raises_systemexit(tmp_path, monkeypatch):
+    monkeypatch.setattr(lib, "METADATA_DIR", tmp_path)
+    lib.library_availability_path().parent.mkdir(parents=True, exist_ok=True)
+    lib.library_availability_path().write_text("not valid json {")
+    with pytest.raises(SystemExit):
+        lib.load_library_availability()
+
+
+# ---------------------------------------------------------------------------
+# Finding 8: documented, not silently discovered, real total peak concurrent
+# connection count across all 3 consumer scripts running simultaneously.
+# ---------------------------------------------------------------------------
+
+
+def test_documented_peak_total_connections_matches_the_three_scripts_real_peak_usage():
+    # crsp: min(MAX_CONCURRENT_CONNECTIONS, 22 tasks); compustat: min(.., 2);
+    # ibes: min(.., 3) -- guards against this documented number silently
+    # drifting out of sync with the per-script worker-count logic.
+    crsp_peak = min(lib.MAX_CONCURRENT_CONNECTIONS, 22)
+    compustat_peak = min(lib.MAX_CONCURRENT_CONNECTIONS, 2)
+    ibes_peak = min(lib.MAX_CONCURRENT_CONNECTIONS, 3)
+    assert lib.DOCUMENTED_PEAK_TOTAL_CONNECTIONS == crsp_peak + compustat_peak + ibes_peak

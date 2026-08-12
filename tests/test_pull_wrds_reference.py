@@ -76,19 +76,23 @@ class FakeReferenceDB:
 
 
 def _patch_reference_env(monkeypatch, tmp_path, enforce_universe_floor=False):
-    """Point RAW_DIR/METADATA_DIR/MANIFEST_PATH at a tmp_path sandbox, patch
-    load_env_file to a no-op, and write a minimal one-secid OptionMetrics
-    universe fixture whose cusip ("1") matches FakeReferenceDB's default
-    one-row-of-1s output for crsp.stocknames (permno 1) -> ccmxpf_lnkhist
-    (gvkey "1") -> ibcrsphist (ticker "1"), giving a clean end-to-end
-    resolution unless a test overrides something."""
+    """Point RAW_DIR/METADATA_DIR at a tmp_path sandbox, patch load_env_file
+    to a no-op, and write a minimal one-secid OptionMetrics universe
+    fixture whose cusip ("1") matches FakeReferenceDB's default one-row-of-1s
+    output for crsp.stocknames (permno 1) -> ccmxpf_lnkhist (gvkey "1") ->
+    ibcrsphist (ticker "1"), giving a clean end-to-end resolution unless a
+    test overrides something.
+
+    Finding 7: this script writes to its OWN manifest file
+    (wrds_pull_manifest_reference.csv, via lib.manifest_path_for("reference")
+    -- computed fresh from METADATA_DIR, so patching METADATA_DIR alone is
+    enough; no separate MANIFEST_PATH patch is needed anymore."""
     raw_dir = tmp_path / "raw"
     metadata_dir = tmp_path / "metadata"
-    manifest_path = metadata_dir / "wrds_pull_manifest.csv"
     monkeypatch.setattr(lib, "RAW_DIR", raw_dir)
     monkeypatch.setattr(lib, "METADATA_DIR", metadata_dir)
-    monkeypatch.setattr(lib, "MANIFEST_PATH", manifest_path)
     monkeypatch.setattr(lib, "load_env_file", lambda path: None)
+    manifest_path = lib.manifest_path_for("reference")
     if not enforce_universe_floor:
         monkeypatch.setattr(lib, "MIN_UNIVERSE_SECID_COUNT", 0)
 
@@ -407,3 +411,120 @@ def test_successful_run_prints_safe_to_proceed_message(tmp_path, monkeypatch, ca
     assert "pull_wrds_compustat.py" in out
     assert "pull_wrds_ibes.py" in out
     assert (metadata_dir / "resolved_universe_ids.parquet").exists()
+
+
+# ---------------------------------------------------------------------------
+# Finding 1: aborted runs must not leave a resolved-universe file that still
+# passes the "does it exist" check the 3 consumer scripts' guard uses.
+# ---------------------------------------------------------------------------
+
+
+def test_aborted_run_leaves_no_final_resolved_ids_file_and_downstream_guard_rejects_it(tmp_path, monkeypatch):
+    """Before the fix, resolve_universe() wrote directly to the final
+    resolved_universe_ids.parquet path, so an ABORTED run (the resolution-
+    rate floor check failing AFTER resolution had already run and written
+    that file) still left a fully-formed file at the exact path the 3
+    consumer scripts' guard (require_resolved_universe_file) checks with a
+    bare path.exists() -- i.e. a run this script itself judged unsafe could
+    still let those scripts proceed against it. This proves the DOWNSTREAM
+    GUARD itself rejects the post-abort state (not just that
+    pull_wrds_reference.py exits 1, which the pre-existing
+    test_resolution_rate_below_floor_aborts already covered)."""
+    _raw_dir, metadata_dir, _manifest_path = _patch_reference_env(monkeypatch, tmp_path)
+    secids = list(range(1, 11))
+    cusips = ["1"] + [f"NOMATCH{i}" for i in range(2, 11)]
+    pd.DataFrame({
+        "secid": secids, "cusip": cusips, "ticker": [f"T{i}" for i in secids],
+        "issuer": [f"ISSUER {i}" for i in secids], "sic": ["9999"] * 10,
+    }).to_parquet(metadata_dir / "optionmetrics_universe.parquet", index=False)
+
+    fake_db = FakeReferenceDB()
+    monkeypatch.setattr(lib, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_reference.py"])
+
+    with pytest.raises(SystemExit):
+        ref.main()
+
+    final_path = metadata_dir / "resolved_universe_ids.parquet"
+    assert not final_path.exists(), (
+        "an aborted run (resolution rate below floor) must NOT leave a "
+        "file at the path the 3 consumer scripts' guard checks for "
+        "existence"
+    )
+    # The actual proof this finding cares about: the DOWNSTREAM guard every
+    # consumer script calls first must also reject this state, not merely
+    # "pull_wrds_reference.py itself exited 1".
+    with pytest.raises(SystemExit):
+        lib.require_resolved_universe_file(final_path)
+
+
+def test_aborted_run_does_not_clobber_a_prior_successful_runs_final_file(tmp_path, monkeypatch):
+    """A --force re-run that fails must not destroy a PREVIOUSLY-good
+    resolved_universe_ids.parquet a human/downstream script might still be
+    relying on -- the atomic os.replace only happens after every check
+    passes, so an old good file already at the final path is left
+    completely untouched by a subsequent failing run."""
+    _raw_dir, metadata_dir, _manifest_path = _patch_reference_env(
+        monkeypatch, tmp_path, enforce_universe_floor=False,
+    )
+    final_path = metadata_dir / "resolved_universe_ids.parquet"
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    final_path.write_bytes(b"prior-good-run-marker")
+
+    secids = list(range(1, 11))
+    cusips = ["1"] + [f"NOMATCH{i}" for i in range(2, 11)]
+    pd.DataFrame({
+        "secid": secids, "cusip": cusips, "ticker": [f"T{i}" for i in secids],
+        "issuer": [f"ISSUER {i}" for i in secids], "sic": ["9999"] * 10,
+    }).to_parquet(metadata_dir / "optionmetrics_universe.parquet", index=False)
+
+    fake_db = FakeReferenceDB()
+    monkeypatch.setattr(lib, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_reference.py", "--force"])
+
+    with pytest.raises(SystemExit):
+        ref.main()
+
+    assert final_path.read_bytes() == b"prior-good-run-marker", (
+        "a failing run must leave a pre-existing final resolved-ids file "
+        "completely untouched"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Finding 4: library-alias-resolution persistence, so pull_wrds_compustat.py
+# can read the ACTUAL resolved Compustat library name.
+# ---------------------------------------------------------------------------
+
+
+def test_library_availability_persisted_with_correct_alias_when_compustat_exposed_as_compa(tmp_path, monkeypatch):
+    _raw_dir, metadata_dir, _manifest_path = _patch_reference_env(monkeypatch, tmp_path)
+    fake_db = FakeReferenceDB(libraries=("ibes", "crsp", "compa", "wrdsapps"))
+    monkeypatch.setattr(lib, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_reference.py"])
+
+    ref.main()
+
+    info = lib.load_library_availability()
+    assert info["comp_lib"] == "compa"
+    assert info["have_comp"] is True
+    assert info["have_crsp"] is True
+    assert info["have_ibes"] is True
+    # Phase A's own comp.company pull must ALSO have gone to compa.company,
+    # not a hardcoded comp.company -- proving the resolved alias is used
+    # consistently, not just recorded.
+    assert any(c["key"] == "compa.company" for c in fake_db.calls)
+    assert not any(c["key"] == "comp.company" for c in fake_db.calls)
+
+
+def test_library_availability_persisted_with_none_comp_lib_when_compustat_unavailable(tmp_path, monkeypatch):
+    _raw_dir, metadata_dir, _manifest_path = _patch_reference_env(monkeypatch, tmp_path)
+    fake_db = FakeReferenceDB(libraries=("ibes", "crsp"))
+    monkeypatch.setattr(lib, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_reference.py"])
+
+    ref.main()  # must not raise -- GVKEY resolution just degrades
+
+    info = lib.load_library_availability()
+    assert info["comp_lib"] is None
+    assert info["have_comp"] is False

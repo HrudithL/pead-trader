@@ -16,6 +16,14 @@ concurrently, in its own terminal, alongside pull_wrds_crsp.py and
 pull_wrds_ibes.py -- each opens its own WRDS connection(s) and touches only
 its own tables under data/raw_wrds/.
 
+Compustat is queried under the library alias pull_wrds_reference.py's
+one-time db.list_libraries() audit ACTUALLY found on this account (Finding
+4) -- comp, compa, or compustat, tried in that order and persisted to
+data/metadata/wrds_library_availability.json -- never a hardcoded "comp"
+literal, since which alias Compustat is exposed under varies by account/
+subscription. If Compustat isn't visible at all, this script skips both
+comp.fundq and comp.funda cleanly (logged to the manifest).
+
 If GVKEY resolution was skipped upstream (crsp.ccmxpf_lnkhist wasn't
 available when pull_wrds_reference.py ran) -- or the resolved GVKEY list
 fails _validate_gvkeys's shape safety net -- this script skips both
@@ -38,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import wrds_pull_lib as lib  # noqa: E402
 
 
-def _pull_fundq(gvkey_filter, force, manifest_path):
+def _pull_fundq(comp_lib, gvkey_filter, force, manifest_path):
     db = lib.connect()
     chunk_log = []
     try:
@@ -61,7 +69,7 @@ def _pull_fundq(gvkey_filter, force, manifest_path):
             f"AND {lib.COMPUSTAT_STD_FILTER} AND {gvkey_filter}"
         )
         lib.pull_table(
-            db, chunk_log, "comp", "fundq",
+            db, chunk_log, comp_lib, "fundq",
             lib.COMP_FUNDQ_REQUIRED_COLUMNS,
             optional_columns=lib.COMP_FUNDQ_OPTIONAL_COLUMNS,
             where_sql=fundq_where,
@@ -75,7 +83,7 @@ def _pull_fundq(gvkey_filter, force, manifest_path):
     return chunk_log
 
 
-def _pull_funda(gvkey_filter, force, manifest_path):
+def _pull_funda(comp_lib, gvkey_filter, force, manifest_path):
     db = lib.connect()
     chunk_log = []
     try:
@@ -89,7 +97,7 @@ def _pull_funda(gvkey_filter, force, manifest_path):
             f"AND {lib.COMPUSTAT_STD_FILTER} AND {gvkey_filter}"
         )
         lib.pull_table(
-            db, chunk_log, "comp", "funda",
+            db, chunk_log, comp_lib, "funda",
             lib.COMP_FUNDA_REQUIRED_COLUMNS,
             optional_columns=lib.COMP_FUNDA_OPTIONAL_COLUMNS,
             where_sql=funda_where,
@@ -108,12 +116,53 @@ def main():
     lib.RAW_DIR.mkdir(parents=True, exist_ok=True)
     lib.METADATA_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Finding 7: this script writes ONLY to its own manifest CSV (a separate
+    # OS process from the other 3 scripts, each with its own manifest
+    # file) -- see lib.manifest_path_for's docstring for why.
+    manifest_path = lib.manifest_path_for("compustat")
+
     args = lib.parse_common_args(sys.argv[1:], description=__doc__)
     force = args.force
 
     resolved_ids_path = lib.require_resolved_universe_file()
-    _permnos, gvkeys, _ibes_tickers = lib.load_resolved_filter_lists(resolved_ids_path)
+    try:
+        _permnos, gvkeys, _ibes_tickers = lib.load_resolved_filter_lists(resolved_ids_path)
+    except lib.UniverseResolutionError as e:
+        raise SystemExit(
+            f"FATAL: {resolved_ids_path} could not be read -- resolved "
+            f"universe file is malformed, re-run "
+            f"scripts/pull_wrds_reference.py. ({e})"
+        ) from e
     print(f"Loaded {len(gvkeys):,} resolved GVKEY(s) from {resolved_ids_path}.", flush=True)
+
+    # Finding 4: read the ACTUAL resolved Compustat library alias
+    # pull_wrds_reference.py's one-time db.list_libraries() audit found
+    # (comp/compa/compustat), rather than assuming a hardcoded "comp"
+    # literal -- restores the original monolithic script's alias-resolution
+    # behavior that the split had silently dropped.
+    library_info = lib.load_library_availability()
+    comp_lib = library_info.get("comp_lib")
+    if not comp_lib:
+        print(
+            "Compustat library not available on this account (per "
+            "data/metadata/wrds_library_availability.json) -- "
+            "comp.fundq/comp.funda will NOT be pulled.",
+            flush=True,
+        )
+        run_log = []
+        lib.record(
+            run_log,
+            {"library": "comp", "table": "fundq,funda",
+             "status": "comp_library_unavailable", "rows": 0, "path": "",
+             "missing_columns": "",
+             "error": "wrds_library_availability.json reports no Compustat "
+                      "library (comp/compa/compustat) visible on this "
+                      "account",
+             "start_date": "", "end_date": ""},
+            manifest_path=manifest_path,
+        )
+        print(f"\nManifest is at {manifest_path}")
+        return
 
     run_log = []
 
@@ -142,8 +191,9 @@ def main():
              "error": "resolved_universe_ids.parquet has no GVKEYs -- "
                       "resolution was skipped or unavailable upstream",
              "start_date": "", "end_date": ""},
+            manifest_path=manifest_path,
         )
-        print("\nManifest is at data/metadata/wrds_pull_manifest.csv")
+        print(f"\nManifest is at {manifest_path}")
         return
 
     try:
@@ -160,15 +210,16 @@ def main():
              "status": "gvkey_validation_failed", "rows": 0, "path": "",
              "missing_columns": "", "error": str(e),
              "start_date": "", "end_date": ""},
+            manifest_path=manifest_path,
         )
-        print("\nManifest is at data/metadata/wrds_pull_manifest.csv")
+        print(f"\nManifest is at {manifest_path}")
         return
 
     gvkey_filter = lib.build_string_in_clause("gvkey", gvkeys)
 
     tasks = [
-        ("comp.fundq", _pull_fundq, (gvkey_filter, force, lib.MANIFEST_PATH)),
-        ("comp.funda", _pull_funda, (gvkey_filter, force, lib.MANIFEST_PATH)),
+        ("comp.fundq", _pull_fundq, (comp_lib, gvkey_filter, force, manifest_path)),
+        ("comp.funda", _pull_funda, (comp_lib, gvkey_filter, force, manifest_path)),
     ]
     n_workers = min(lib.MAX_CONCURRENT_CONNECTIONS, len(tasks))
     print(
@@ -192,19 +243,32 @@ def main():
                 failures.append((label, e))
                 print(f"  FAILED: {label}: {e}", flush=True)
 
-    print("\nManifest is at data/metadata/wrds_pull_manifest.csv")
+    print(f"\nManifest is at {manifest_path}")
     if run_log:
         import pandas as pd
         print(pd.DataFrame(run_log).to_string(index=False))
 
-    if failures:
+    # Finding 3: also check the collected run_log for any non-success status
+    # (e.g. "query_failed", swallowed inside pull_table() and never raised)
+    # -- not just executor-level exceptions -- so a run where every query
+    # failed can't still print SUCCESS and exit 0.
+    run_log_failures = lib.find_run_log_failures(run_log)
+
+    if failures or run_log_failures:
         print(
-            f"\n{len(failures)} of {len(tasks)} task(s) FAILED (see above/the "
-            f"manifest for detail; every other task still completed):",
+            f"\n{len(failures) + len(run_log_failures)} of {len(tasks)} "
+            f"task(s) FAILED (see above/the manifest for detail; every "
+            f"other task still completed):",
             flush=True,
         )
         for label, e in failures:
             print(f"  - {label}: {e}", flush=True)
+        for row in run_log_failures:
+            print(
+                f"  - {row.get('library')}.{row.get('table')}: "
+                f"status={row.get('status')} error={row.get('error')}",
+                flush=True,
+            )
         raise SystemExit(1)
 
     print("\nSUCCESS: comp.fundq, comp.funda pulled.", flush=True)

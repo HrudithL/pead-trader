@@ -62,17 +62,36 @@ def _write_resolved_ids(metadata_dir, gvkeys=("001000",)):
     }).to_parquet(metadata_dir / "resolved_universe_ids.parquet", index=False)
 
 
-def _patch_compustat_env(monkeypatch, tmp_path, write_resolved_ids=True, gvkeys=("001000",)):
+def _write_library_availability(metadata_dir, comp_lib="comp", have_comp=True):
+    """Finding 4: pull_wrds_compustat.py now reads the resolved Compustat
+    library alias from this file (written by pull_wrds_reference.py in
+    production) instead of assuming a hardcoded "comp" literal."""
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    lib.write_library_availability(
+        {"have_ibes": True, "have_crsp": True, "have_comp": have_comp, "comp_lib": comp_lib},
+        path=metadata_dir / "wrds_library_availability.json",
+    )
+
+
+def _patch_compustat_env(
+    monkeypatch, tmp_path, write_resolved_ids=True, gvkeys=("001000",),
+    write_library_availability=True, comp_lib="comp", have_comp=True,
+):
+    """Finding 7: this script writes to its OWN manifest file
+    (wrds_pull_manifest_compustat.csv, via lib.manifest_path_for("compustat")
+    -- computed fresh from METADATA_DIR), so patching METADATA_DIR alone is
+    enough; no separate MANIFEST_PATH patch needed anymore."""
     raw_dir = tmp_path / "raw"
     metadata_dir = tmp_path / "metadata"
-    manifest_path = metadata_dir / "wrds_pull_manifest.csv"
     monkeypatch.setattr(lib, "RAW_DIR", raw_dir)
     monkeypatch.setattr(lib, "METADATA_DIR", metadata_dir)
-    monkeypatch.setattr(lib, "MANIFEST_PATH", manifest_path)
     monkeypatch.setattr(lib, "RESOLVED_IDS_PATH", metadata_dir / "resolved_universe_ids.parquet")
     monkeypatch.setattr(lib, "load_env_file", lambda path: None)
     if write_resolved_ids:
         _write_resolved_ids(metadata_dir, gvkeys=gvkeys)
+    if write_library_availability:
+        _write_library_availability(metadata_dir, comp_lib=comp_lib, have_comp=have_comp)
+    manifest_path = lib.manifest_path_for("compustat")
     return raw_dir, metadata_dir, manifest_path
 
 
@@ -169,7 +188,12 @@ def test_missing_required_column_blocks_that_tables_pull(tmp_path, monkeypatch, 
     )
     monkeypatch.setattr(sys, "argv", ["pull_wrds_compustat.py"])
 
-    compustat_script.main()  # graceful skip, not an exception
+    # Finding 3: "missing_required_columns" is a graceful, logged skip
+    # inside pull_table() (never an exception there) -- but it's NOT one of
+    # SUCCESS_STATUSES, so main() must still detect it via the run_log and
+    # exit non-zero rather than silently printing SUCCESS.
+    with pytest.raises(SystemExit):
+        compustat_script.main()
 
     manifest = pd.read_csv(manifest_path, keep_default_na=False)
     rows = manifest[(manifest["library"] == library) & (manifest["table"] == table)]
@@ -336,3 +360,91 @@ def test_one_task_connection_failure_does_not_prevent_the_other_and_is_reported(
     manifest = pd.read_csv(manifest_path, keep_default_na=False)
     assert len(manifest) == 1
     assert manifest.iloc[0]["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Finding 3: every query failing must exit non-zero and must NOT print
+# SUCCESS.
+# ---------------------------------------------------------------------------
+
+
+def test_every_query_failing_exits_nonzero_and_does_not_print_success(tmp_path, monkeypatch, capsys):
+    raw_dir, _metadata_dir, manifest_path = _patch_compustat_env(monkeypatch, tmp_path)
+
+    # An empty string is a substring of every SQL string built, so both
+    # fundq's and funda's raw_sql() calls fail.
+    monkeypatch.setattr(lib, "connect", _connect_factory(fail_marker=""))
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_compustat.py"])
+
+    with pytest.raises(SystemExit):
+        compustat_script.main()
+
+    out = capsys.readouterr().out
+    assert "SUCCESS" not in out
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    assert len(manifest) == 2
+    assert (manifest["status"] == "query_failed").all()
+    assert not (raw_dir / "comp" / "fundq.parquet").exists()
+    assert not (raw_dir / "comp" / "funda.parquet").exists()
+
+
+# ---------------------------------------------------------------------------
+# Finding 4: Compustat is queried under whichever library alias
+# pull_wrds_reference.py actually resolved (comp/compa/compustat), never a
+# hardcoded "comp" literal.
+# ---------------------------------------------------------------------------
+
+
+def test_queries_compa_not_comp_when_account_exposes_compustat_as_compa(tmp_path, monkeypatch):
+    """Finding 4: when the account exposes Compustat as "compa" instead of
+    "comp" -- persisted by pull_wrds_reference.py to
+    wrds_library_availability.json -- this script must query compa.fundq/
+    compa.funda, never a hardcoded comp.fundq/comp.funda."""
+    raw_dir, _metadata_dir, _manifest_path = _patch_compustat_env(
+        monkeypatch, tmp_path, comp_lib="compa",
+    )
+    dbs = []
+
+    def _connect():
+        db = FakeCompustatDB()
+        dbs.append(db)
+        return db
+
+    monkeypatch.setattr(lib, "connect", _connect)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_compustat.py"])
+
+    compustat_script.main()
+
+    all_sql = [sql for db in dbs for sql in db.calls]
+    assert any("FROM compa.fundq" in s for s in all_sql), (
+        "expected a query against compa.fundq (the resolved alias), got: "
+        f"{all_sql}"
+    )
+    assert any("FROM compa.funda" in s for s in all_sql)
+    assert not any("FROM comp.fundq" in s for s in all_sql), (
+        "must NOT have queried a hardcoded comp.fundq when the resolved "
+        "alias is compa"
+    )
+    assert not any("FROM comp.funda" in s for s in all_sql)
+    assert (raw_dir / "compa" / "fundq.parquet").exists()
+    assert (raw_dir / "compa" / "funda.parquet").exists()
+
+
+def test_compustat_unavailable_on_account_skips_both_tables_cleanly(tmp_path, monkeypatch):
+    _raw_dir, _metadata_dir, manifest_path = _patch_compustat_env(
+        monkeypatch, tmp_path, comp_lib=None, have_comp=False,
+    )
+
+    def _unexpected_connect():
+        raise AssertionError("connect() must not be called when Compustat is unavailable")
+
+    monkeypatch.setattr(lib, "connect", _unexpected_connect)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_compustat.py"])
+
+    compustat_script.main()  # must NOT raise
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    rows = manifest[manifest["table"] == "fundq,funda"]
+    assert len(rows) == 1
+    assert rows.iloc[0]["status"] == "comp_library_unavailable"

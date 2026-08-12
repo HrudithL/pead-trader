@@ -158,11 +158,23 @@ def main():
     lib.RAW_DIR.mkdir(parents=True, exist_ok=True)
     lib.METADATA_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Finding 7: this script writes ONLY to its own manifest CSV (a separate
+    # OS process from the other 3 scripts, each with its own manifest
+    # file) -- see lib.manifest_path_for's docstring for why.
+    manifest_path = lib.manifest_path_for("ibes")
+
     args = lib.parse_common_args(sys.argv[1:], description=__doc__)
     force = args.force
 
     resolved_ids_path = lib.require_resolved_universe_file()
-    _permnos, _gvkeys, ibes_tickers = lib.load_resolved_filter_lists(resolved_ids_path)
+    try:
+        _permnos, _gvkeys, ibes_tickers = lib.load_resolved_filter_lists(resolved_ids_path)
+    except lib.UniverseResolutionError as e:
+        raise SystemExit(
+            f"FATAL: {resolved_ids_path} could not be read -- resolved "
+            f"universe file is malformed, re-run "
+            f"scripts/pull_wrds_reference.py. ({e})"
+        ) from e
     print(f"Loaded {len(ibes_tickers):,} resolved I/B/E/S ticker(s) from {resolved_ids_path}.", flush=True)
 
     run_log = []
@@ -188,8 +200,9 @@ def main():
              "error": "resolved_universe_ids.parquet has no I/B/E/S tickers "
                       "-- resolution was skipped or unavailable upstream",
              "start_date": "", "end_date": ""},
+            manifest_path=manifest_path,
         )
-        print("\nManifest is at data/metadata/wrds_pull_manifest.csv")
+        print(f"\nManifest is at {manifest_path}")
         return
 
     try:
@@ -206,16 +219,17 @@ def main():
              "status": "ibes_ticker_validation_failed", "rows": 0, "path": "",
              "missing_columns": "", "error": str(e),
              "start_date": "", "end_date": ""},
+            manifest_path=manifest_path,
         )
-        print("\nManifest is at data/metadata/wrds_pull_manifest.csv")
+        print(f"\nManifest is at {manifest_path}")
         return
 
     ticker_filter = lib.build_string_in_clause("ticker", ibes_tickers)
 
     tasks = [
-        ("ibes.statsumu_epsus", _pull_statsumu_epsus, (ticker_filter, force, lib.MANIFEST_PATH)),
-        ("ibes.actu_epsus", _pull_actu_epsus, (ticker_filter, force, lib.MANIFEST_PATH)),
-        ("ibes.detu_epsus", _pull_detu_epsus, (ticker_filter, force, lib.MANIFEST_PATH)),
+        ("ibes.statsumu_epsus", _pull_statsumu_epsus, (ticker_filter, force, manifest_path)),
+        ("ibes.actu_epsus", _pull_actu_epsus, (ticker_filter, force, manifest_path)),
+        ("ibes.detu_epsus", _pull_detu_epsus, (ticker_filter, force, manifest_path)),
     ]
     n_workers = min(lib.MAX_CONCURRENT_CONNECTIONS, len(tasks))
     print(
@@ -239,19 +253,32 @@ def main():
                 failures.append((label, e))
                 print(f"  FAILED: {label}: {e}", flush=True)
 
-    print("\nManifest is at data/metadata/wrds_pull_manifest.csv")
+    print(f"\nManifest is at {manifest_path}")
     if run_log:
         import pandas as pd
         print(pd.DataFrame(run_log).to_string(index=False))
 
-    if failures:
+    # Finding 3: also check the collected run_log for any non-success status
+    # (e.g. "query_failed", swallowed inside pull_table() and never raised)
+    # -- not just executor-level exceptions -- so a run where every query
+    # failed can't still print SUCCESS and exit 0.
+    run_log_failures = lib.find_run_log_failures(run_log)
+
+    if failures or run_log_failures:
         print(
-            f"\n{len(failures)} of {len(tasks)} task(s) FAILED (see above/the "
-            f"manifest for detail; every other task still completed):",
+            f"\n{len(failures) + len(run_log_failures)} of {len(tasks)} "
+            f"task(s) FAILED (see above/the manifest for detail; every "
+            f"other task still completed):",
             flush=True,
         )
         for label, e in failures:
             print(f"  - {label}: {e}", flush=True)
+        for row in run_log_failures:
+            print(
+                f"  - {row.get('library')}.{row.get('table')}: "
+                f"status={row.get('status')} error={row.get('error')}",
+                flush=True,
+            )
         raise SystemExit(1)
 
     print("\nSUCCESS: ibes.statsumu_epsus, ibes.actu_epsus, ibes.detu_epsus pulled.", flush=True)

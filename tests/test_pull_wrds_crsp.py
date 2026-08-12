@@ -82,16 +82,19 @@ def _write_resolved_ids(metadata_dir, permnos=(1,)):
 
 
 def _patch_crsp_env(monkeypatch, tmp_path, write_resolved_ids=True, permnos=(1,)):
+    """Finding 7: this script writes to its OWN manifest file
+    (wrds_pull_manifest_crsp.csv, via lib.manifest_path_for("crsp") --
+    computed fresh from METADATA_DIR), so patching METADATA_DIR alone is
+    enough; no separate MANIFEST_PATH patch needed anymore."""
     raw_dir = tmp_path / "raw"
     metadata_dir = tmp_path / "metadata"
-    manifest_path = metadata_dir / "wrds_pull_manifest.csv"
     monkeypatch.setattr(lib, "RAW_DIR", raw_dir)
     monkeypatch.setattr(lib, "METADATA_DIR", metadata_dir)
-    monkeypatch.setattr(lib, "MANIFEST_PATH", manifest_path)
     monkeypatch.setattr(lib, "RESOLVED_IDS_PATH", metadata_dir / "resolved_universe_ids.parquet")
     monkeypatch.setattr(lib, "load_env_file", lambda path: None)
     if write_resolved_ids:
         _write_resolved_ids(metadata_dir, permnos=permnos)
+    manifest_path = lib.manifest_path_for("crsp")
     return raw_dir, metadata_dir, manifest_path
 
 
@@ -207,9 +210,14 @@ def test_missing_required_column_blocks_that_tables_pull(tmp_path, monkeypatch, 
     monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py"])
 
     # A missing required column is a graceful, logged skip inside
-    # pull_table() (status "missing_required_columns") -- not an exception
-    # -- so this must NOT raise SystemExit, unlike a genuine query failure.
-    crsp_script.main()
+    # pull_table() (status "missing_required_columns") -- pull_table itself
+    # never raises for this. But Finding 3: this status is NOT one of
+    # SUCCESS_STATUSES, so main() must still detect it via the run_log and
+    # exit non-zero rather than silently printing SUCCESS -- a whole
+    # table's data failed to get pulled, which is exactly the kind of
+    # thing that must not look like a clean success.
+    with pytest.raises(SystemExit):
+        crsp_script.main()
 
     manifest = pd.read_csv(manifest_path, keep_default_na=False)
     rows = manifest[manifest["table"] == table]
@@ -338,7 +346,10 @@ def test_one_year_chunk_query_failure_does_not_prevent_others_and_is_reported(tm
     status "query_failed", never re-raised) -- true for both the original
     sequential script and this concurrent one, so this alone doesn't
     exercise the executor's own failure-collection path. This test proves
-    that case still lets every other year/table complete normally."""
+    that case still lets every other year/table complete normally --
+    and (Finding 3) that main() still detects the one "query_failed" row via
+    the run_log and exits non-zero without printing SUCCESS, even though
+    pull_table() itself never raised for it."""
     raw_dir, _metadata_dir, manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
     lookback_start = dt.date.fromisoformat(lib.LOOKBACK_START_DATE)
     failing_year = lookback_start.year + 2  # an interior year, not the first/last
@@ -346,7 +357,9 @@ def test_one_year_chunk_query_failure_does_not_prevent_others_and_is_reported(tm
     monkeypatch.setattr(lib, "connect", _connect_factory(fail_marker=f"'{failing_year}-01-01'"))
     monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py"])
 
-    crsp_script.main()  # pull_table swallows the query error -- no SystemExit here
+    with pytest.raises(SystemExit):
+        crsp_script.main()
+    assert "SUCCESS" not in capsys.readouterr().out
 
     # Every OTHER year's chunk (and dsi/dsedelist) must still have completed.
     return_end = dt.date.fromisoformat(lib.RETURN_END_DATE)
@@ -427,7 +440,19 @@ def test_one_task_connection_failure_does_not_prevent_others_and_is_reported(tmp
     Real ThreadPoolExecutor, real (if fake) per-thread connections -- the
     failure is tied to a specific CALL INDEX (thread-safe counter) rather
     than a specific year, since which of the 22 tasks the thread pool
-    happens to schedule Nth is not something a test should assume."""
+    happens to schedule Nth is not something a test should assume.
+
+    Finding 9: with per-WORKER connection pooling, lib.connect() is called
+    at most MAX_CONCURRENT_CONNECTIONS times total (once per worker thread
+    that ever picks up a task), never once per task -- so the failure is
+    pinned to the very FIRST connect() call (index 0), the only index
+    guaranteed to be reached regardless of the worker count. Since a
+    worker's conn_pool.get() retries lib.connect() again on its NEXT task
+    after a failed attempt (nothing gets cached on failure), exactly one
+    task -- whichever task the pool happens to schedule first overall --
+    fails and every other task (including that same worker's later tasks)
+    still completes normally, the same as the pre-Finding-9 behavior this
+    test originally proved for a per-task-connection design."""
     raw_dir, _metadata_dir, manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
 
     import itertools
@@ -435,7 +460,7 @@ def test_one_task_connection_failure_does_not_prevent_others_and_is_reported(tmp
 
     counter = itertools.count()
     counter_lock = threading.Lock()
-    FAIL_ON_CALL = 10
+    FAIL_ON_CALL = 0
 
     def _connect():
         with counter_lock:
@@ -476,3 +501,236 @@ def test_one_task_connection_failure_does_not_prevent_others_and_is_reported(tmp
     # so it has NO manifest row (nothing to log against) -- confirmed
     # instead via the file-count assertion above and the printed failure.
     assert len(manifest) == N_DSF_YEARS + 2 - 1
+
+
+# ---------------------------------------------------------------------------
+# Finding 3: every query failing must exit non-zero and must NOT print
+# SUCCESS -- not just "one of 22 fails".
+# ---------------------------------------------------------------------------
+
+
+def test_every_query_failing_exits_nonzero_and_does_not_print_success(tmp_path, monkeypatch, capsys):
+    raw_dir, _metadata_dir, manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
+
+    # An empty string is a substring of every SQL string built, so every
+    # single raw_sql() call (all 22 tasks) fails.
+    monkeypatch.setattr(lib, "connect", _connect_factory(fail_marker=""))
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py"])
+
+    with pytest.raises(SystemExit):
+        crsp_script.main()
+
+    out = capsys.readouterr().out
+    assert "SUCCESS" not in out
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    assert len(manifest) == N_DSF_YEARS + 2
+    assert (manifest["status"] == "query_failed").all()
+    for f in raw_dir.glob("crsp/dsf_*.parquet"):
+        raise AssertionError(f"{f} must not exist -- every query failed")
+    assert not (raw_dir / "crsp" / "dsi.parquet").exists()
+    assert not (raw_dir / "crsp" / "dsedelist.parquet").exists()
+
+
+# ---------------------------------------------------------------------------
+# Finding 5: empty/invalid PERMNO list must be caught and reported clearly,
+# never silently produce a match-nothing "permno IN (NULL)" pull that then
+# reports success.
+# ---------------------------------------------------------------------------
+
+
+def test_empty_permno_list_is_caught_and_reported_clearly(tmp_path, monkeypatch):
+    _raw_dir, metadata_dir, _manifest_path = _patch_crsp_env(monkeypatch, tmp_path, write_resolved_ids=False)
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({
+        "secid": [1], "cusip": ["1"], "ticker": ["AAA"], "issuer": ["AAA CORP"],
+        "permno": [None], "gvkey": ["001000"], "ibes_ticker": ["AAA"],
+    }).to_parquet(metadata_dir / "resolved_universe_ids.parquet", index=False)
+
+    def _unexpected_connect():
+        raise AssertionError("connect() must not be called with an empty PERMNO list")
+
+    monkeypatch.setattr(lib, "connect", _unexpected_connect)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        crsp_script.main()
+    assert "PERMNO" in str(exc_info.value)
+    assert "empty" in str(exc_info.value).lower()
+
+
+def test_malformed_permno_value_is_caught_and_reported_clearly(tmp_path, monkeypatch):
+    _raw_dir, metadata_dir, _manifest_path = _patch_crsp_env(monkeypatch, tmp_path, write_resolved_ids=False)
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({
+        "secid": [1], "cusip": ["1"], "ticker": ["AAA"], "issuer": ["AAA CORP"],
+        "permno": ["not-a-number"], "gvkey": ["001000"], "ibes_ticker": ["AAA"],
+    }).to_parquet(metadata_dir / "resolved_universe_ids.parquet", index=False)
+
+    with pytest.raises(lib.UniverseResolutionError):
+        # This is caught by pull_wrds_crsp.py's own wrapping and converted
+        # to a clean SystemExit -- exercised end to end below via main().
+        lib.load_resolved_filter_lists(metadata_dir / "resolved_universe_ids.parquet")
+
+    def _unexpected_connect():
+        raise AssertionError("connect() must not be called with a malformed PERMNO list")
+
+    monkeypatch.setattr(lib, "connect", _unexpected_connect)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        crsp_script.main()
+    assert "malformed" in str(exc_info.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# Finding 2: --force must delete every existing dsf_<year>.parquet chunk
+# up front, so a partial re-run under a changed universe filter can never
+# leave a mixed-vintage set (some years old-filter, some new-filter) that a
+# later non-force run would silently treat as complete.
+# ---------------------------------------------------------------------------
+
+
+def test_force_flag_deletes_all_existing_year_chunks_upfront_preventing_mixed_vintage_splice(tmp_path, monkeypatch):
+    raw_dir, _metadata_dir, _manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
+    (raw_dir / "crsp").mkdir(parents=True)
+    lookback_start = dt.date.fromisoformat(lib.LOOKBACK_START_DATE)
+    return_end = dt.date.fromisoformat(lib.RETURN_END_DATE)
+    failing_year = lookback_start.year + 2  # an interior year, not the first/last
+
+    # Simulate stale chunks left by a PRIOR run under a DIFFERENT universe
+    # filter -- every year gets a distinct marker so we can tell a
+    # genuinely re-pulled file apart from one that was merely left alone.
+    for year in range(lookback_start.year, return_end.year + 1):
+        (raw_dir / "crsp" / f"dsf_{year}.parquet").write_bytes(f"stale-{year}".encode())
+
+    monkeypatch.setattr(lib, "connect", _connect_factory(fail_marker=f"'{failing_year}-01-01'"))
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py", "--force"])
+
+    with pytest.raises(SystemExit):
+        # Finding 3's fix means the one simulated query failure (for
+        # failing_year) now makes this exit non-zero -- expected here, and
+        # orthogonal to what THIS test is proving (the upfront deletion).
+        crsp_script.main()
+
+    for year in range(lookback_start.year, return_end.year + 1):
+        f = raw_dir / "crsp" / f"dsf_{year}.parquet"
+        if year == failing_year:
+            assert not f.exists(), (
+                "the failing year's STALE chunk must be gone too -- a "
+                "subsequent non-force run must re-pull it rather than "
+                "silently treating the old, different-vintage file as done"
+            )
+        else:
+            assert f.read_bytes() != f"stale-{year}".encode(), (
+                f"year {year} must have been genuinely re-pulled under "
+                f"--force, not left as the stale marker from a prior run "
+                f"under a different universe filter"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Finding 11: a legacy dsf.parquet (no year suffix, from a prior monolithic-
+# script run) must be rejected loudly, not silently coexist with the new
+# dsf_<year>.parquet files.
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_unsuffixed_dsf_parquet_is_rejected(tmp_path, monkeypatch):
+    raw_dir, _metadata_dir, _manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
+    (raw_dir / "crsp").mkdir(parents=True)
+    (raw_dir / "crsp" / "dsf.parquet").write_bytes(b"legacy-monolithic-script-output")
+
+    def _unexpected_connect():
+        raise AssertionError("connect() must not be called when a legacy dsf.parquet exists")
+
+    monkeypatch.setattr(lib, "connect", _unexpected_connect)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        crsp_script.main()
+    assert "dsf.parquet" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Finding 9: one wrds.Connection() per WORKER THREAD, reused across every
+# task that thread processes -- never one per task.
+# ---------------------------------------------------------------------------
+
+
+def test_connect_called_at_most_once_per_worker_not_once_per_task(tmp_path, monkeypatch):
+    import itertools
+    import threading
+
+    _raw_dir, _metadata_dir, _manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
+
+    counter = itertools.count()
+    counter_lock = threading.Lock()
+
+    def _connect():
+        with counter_lock:
+            next(counter)
+        return FakeCrspDB()
+
+    monkeypatch.setattr(lib, "connect", _connect)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py"])
+
+    crsp_script.main()
+
+    n_connect_calls = next(counter)
+    assert 1 <= n_connect_calls <= lib.MAX_CONCURRENT_CONNECTIONS, (
+        f"expected at most {lib.MAX_CONCURRENT_CONNECTIONS} connect() call(s) "
+        f"(one per worker thread, reused across every task that thread "
+        f"processes), but got {n_connect_calls} -- a per-task-connection "
+        f"design would have produced {N_DSF_YEARS + 2} instead"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Finding 10: Ctrl-C must cancel remaining queued tasks promptly, not let
+# every one of them drain to completion first.
+# ---------------------------------------------------------------------------
+
+
+def test_keyboard_interrupt_cancels_remaining_queued_tasks_promptly(tmp_path, monkeypatch):
+    import itertools
+    import threading
+    import time
+
+    raw_dir, _metadata_dir, _manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
+
+    call_counter = itertools.count()
+    counter_lock = threading.Lock()
+
+    class InterruptingFakeCrspDB(FakeCrspDB):
+        def raw_sql(self, sql, return_iter=False):
+            with counter_lock:
+                i = next(call_counter)
+            if i == 0:
+                raise KeyboardInterrupt("simulated Ctrl-C")
+            # Other workers' first tasks sleep briefly so the interrupt is
+            # detected (via as_completed) well before they finish, leaving
+            # the remaining ~18 not-yet-started tasks genuinely still
+            # queued (not started) for cancel_futures=True to cancel.
+            time.sleep(0.05)
+            return super().raw_sql(sql, return_iter=return_iter)
+
+    monkeypatch.setattr(lib, "connect", lambda: InterruptingFakeCrspDB())
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py"])
+
+    with pytest.raises(KeyboardInterrupt):
+        crsp_script.main()
+
+    lookback_start = dt.date.fromisoformat(lib.LOOKBACK_START_DATE)
+    return_end = dt.date.fromisoformat(lib.RETURN_END_DATE)
+    completed = sum(
+        1 for year in range(lookback_start.year, return_end.year + 1)
+        if (raw_dir / "crsp" / f"dsf_{year}.parquet").exists()
+    )
+    assert completed < N_DSF_YEARS, (
+        "expected most of the queued year-chunks to be CANCELLED rather "
+        f"than run to completion after the simulated Ctrl-C -- got "
+        f"{completed} of {N_DSF_YEARS} completed, which looks like the "
+        f"executor drained its whole queue instead of shutting down "
+        f"promptly"
+    )
