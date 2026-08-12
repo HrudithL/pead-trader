@@ -1262,13 +1262,16 @@ REQUIRED_TABLE_COLUMN_CASES = [
 
 
 # Phase B's resolve_universe reads crsp.stocknames/crsp.ccmxpf_lnkhist/
-# wrdsapps.ibcrsphist back off disk once Phase A pulls them -- if one of
-# THOSE three tables' pull is itself blocked by a missing required column,
-# its output file never gets written, resolve_universe can't find it, and
-# main() must abort the whole run (SystemExit) before Phase C, per this
-# round's design. Every other table's missing-required-column case leaves
-# Phase B's three inputs untouched, so main() still completes normally.
-PHASE_B_INPUT_TABLES = {("crsp", "stocknames"), ("crsp", "ccmxpf_lnkhist"), ("wrdsapps", "ibcrsphist")}
+# wrdsapps.ibcrsphist back off disk once Phase A pulls them. Per Fix 3, only
+# crsp.stocknames (the PERMNO resolution stage) is allowed to hard-abort the
+# whole run if its pull is itself blocked by a missing required column and
+# its output file never gets written -- crsp.ccmxpf_lnkhist (GVKEY
+# resolution) and wrdsapps.ibcrsphist (I/B/E/S ticker resolution) instead
+# degrade that ONE identifier family (see test_main_missing_ccmxpf_lnkhist_
+# degrades_gvkey_only_not_whole_run / test_main_missing_ibcrsphist_degrades_
+# ibes_ticker_only_not_whole_run below for the dedicated coverage of that
+# degrade behavior) -- main() still completes normally for those two.
+PHASE_B_INPUT_TABLES = {("crsp", "stocknames")}
 
 
 @pytest.mark.parametrize("library,table,column", REQUIRED_TABLE_COLUMN_CASES)
@@ -1344,6 +1347,89 @@ def test_main_missing_any_single_optional_column_does_not_block_that_tables_pull
         select_list = c["sql"].split("FROM")[0]
         selected_columns = {tok.strip() for tok in select_list.replace("SELECT", "").split(",")}
         assert column not in selected_columns
+
+
+# ---------------------------------------------------------------------------
+# Fix 3: crsp.ccmxpf_lnkhist / wrdsapps.ibcrsphist being missing/unpullable
+# must degrade ONLY their own identifier family (GVKEY / I/B/E/S ticker
+# resolution respectively), never abort the whole run -- unlike
+# crsp.stocknames (PERMNO resolution), which remains the one hard-fail case
+# (covered generically above via PHASE_B_INPUT_TABLES).
+# ---------------------------------------------------------------------------
+
+
+def test_main_missing_ccmxpf_lnkhist_degrades_gvkey_only_not_whole_run(tmp_path, monkeypatch):
+    """crsp.ccmxpf_lnkhist's pull blocked by a missing required column ->
+    its output file never gets written -> GVKEY resolution is skipped, NOT
+    the whole run. comp.fundq/comp.funda must not be queried (nothing to
+    filter them by), but every CRSP-permno-filtered and I/B/E/S-ticker-
+    filtered table must still succeed normally."""
+    _raw_dir, _metadata_dir, manifest_path = _patch_main_env(monkeypatch, tmp_path)
+
+    fake_db = FakeMainDB(
+        missing_columns_by_table={"crsp.ccmxpf_lnkhist": {"gvkey"}}
+    )
+    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
+
+    pwd.main()  # must NOT raise SystemExit
+
+    queried_keys = {c["key"] for c in fake_db.calls}
+    assert "comp.fundq" not in queried_keys, (
+        "GVKEY resolution was skipped -- comp.fundq must not be queried "
+        "unfiltered or at all"
+    )
+    assert "comp.funda" not in queried_keys
+    # Nothing else needs GVKEY/CCM linkage, so it must all still run.
+    assert "crsp.dsf" in queried_keys
+    assert "ibes.statsumu_epsus" in queried_keys
+    assert "ibes.actu_epsus" in queried_keys
+    assert "ibes.detu_epsus" in queried_keys
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    skip_rows = manifest[manifest["status"] == "gvkey_resolution_skipped"]
+    assert len(skip_rows) == 1, (
+        "expected exactly one manifest row recording the GVKEY-resolution "
+        "skip with a clear reason"
+    )
+    assert "ccmxpf_lnkhist" in skip_rows.iloc[0]["error"]
+
+
+def test_main_missing_ibcrsphist_degrades_ibes_ticker_only_not_whole_run(tmp_path, monkeypatch):
+    """wrdsapps.ibcrsphist's pull blocked by a missing required column ->
+    its output file never gets written -> I/B/E/S ticker resolution is
+    skipped, NOT the whole run. All three ibes.* Phase C pulls must not be
+    queried, but CRSP- and Compustat-filtered tables must still succeed
+    normally."""
+    _raw_dir, _metadata_dir, manifest_path = _patch_main_env(monkeypatch, tmp_path)
+
+    fake_db = FakeMainDB(
+        missing_columns_by_table={"wrdsapps.ibcrsphist": {"ticker"}}
+    )
+    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
+
+    pwd.main()  # must NOT raise SystemExit
+
+    queried_keys = {c["key"] for c in fake_db.calls}
+    assert "ibes.statsumu_epsus" not in queried_keys, (
+        "I/B/E/S ticker resolution was skipped -- none of the ibes.* Phase "
+        "C pulls should run"
+    )
+    assert "ibes.actu_epsus" not in queried_keys
+    assert "ibes.detu_epsus" not in queried_keys
+    # Nothing else needs I/B/E/S ticker linkage, so it must all still run.
+    assert "crsp.dsf" in queried_keys
+    assert "comp.fundq" in queried_keys
+    assert "comp.funda" in queried_keys
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    skip_rows = manifest[manifest["status"] == "ibes_ticker_resolution_skipped"]
+    assert len(skip_rows) == 1, (
+        "expected exactly one manifest row recording the I/B/E/S-ticker- "
+        "resolution skip with a clear reason"
+    )
+    assert "ibcrsphist" in skip_rows.iloc[0]["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -1670,6 +1756,8 @@ def _resolve_universe_fixture(tmp_path, om=None, om_hist=None, stocknames=None, 
     unresolved_out = tmp_path / "metadata" / "unresolved_secids.csv"
     ambiguous_out = tmp_path / "metadata" / "ambiguous_links.csv"
     resolved_out = tmp_path / "metadata" / "resolved_universe_ids.parquet"
+    without_gvkey_out = tmp_path / "metadata" / "permnos_without_gvkey.csv"
+    without_ibes_ticker_out = tmp_path / "metadata" / "permnos_without_ibes_ticker.csv"
 
     resolved = pwd.resolve_universe(
         om_universe_path=om_path,
@@ -1680,6 +1768,8 @@ def _resolve_universe_fixture(tmp_path, om=None, om_hist=None, stocknames=None, 
         unresolved_secids_out=unresolved_out,
         ambiguous_links_out=ambiguous_out,
         resolved_ids_out=resolved_out,
+        permnos_without_gvkey_out=without_gvkey_out,
+        permnos_without_ibes_ticker_out=without_ibes_ticker_out,
     )
     # Read the CUSIP-shaped columns back as strings explicitly: plain
     # pd.read_csv() would otherwise re-infer a numeric-looking value like
@@ -1687,11 +1777,21 @@ def _resolve_universe_fixture(tmp_path, om=None, om_hist=None, stocknames=None, 
     # the exact CUSIP pitfall this project's own task briefing calls out
     # for the Parquet inputs applies equally to reading these CSV outputs
     # back.
+    ambiguous_dtype = {
+        "secid": "Int64", "permno": "Int64", "gvkey": str, "ibes_ticker": str,
+        "om_cusip": str, "om_ticker": str, "issuer": str,
+    }
+    gap_dtype = {
+        "secid": "Int64", "permno": "Int64", "om_cusip": str, "om_ticker": str,
+        "issuer": str,
+    }
     return (
         resolved,
         pd.read_csv(unresolved_out, dtype={"secid": "int64", "cusip": str, "ticker": str, "issuer": str}),
-        pd.read_csv(ambiguous_out),
+        pd.read_csv(ambiguous_out, dtype=ambiguous_dtype),
         pd.read_parquet(resolved_out),
+        pd.read_csv(without_gvkey_out, dtype=gap_dtype),
+        pd.read_csv(without_ibes_ticker_out, dtype=gap_dtype),
     )
 
 
@@ -1708,7 +1808,7 @@ def test_resolve_universe_clean_one_to_one_resolution(tmp_path):
     ccmxpf = pd.DataFrame({"lpermno": [100], "gvkey": ["001000"]})
     ibcrsphist = pd.DataFrame({"permno": [100], "ticker": ["AAA"]})
 
-    resolved, unresolved_df, ambiguous_df, resolved_df = _resolve_universe_fixture(
+    resolved, unresolved_df, ambiguous_df, resolved_df, without_gvkey_df, without_ibes_ticker_df = _resolve_universe_fixture(
         tmp_path, om=om, om_hist=om_hist, stocknames=stocknames, ccmxpf=ccmxpf, ibcrsphist=ibcrsphist,
     )
 
@@ -1751,7 +1851,7 @@ def test_resolve_universe_resolves_via_historical_cusip_only(tmp_path):
     ccmxpf = pd.DataFrame({"lpermno": [200], "gvkey": ["002000"]})
     ibcrsphist = pd.DataFrame({"permno": [200], "ticker": ["BBB"]})
 
-    resolved, unresolved_df, ambiguous_df, resolved_df = _resolve_universe_fixture(
+    resolved, unresolved_df, ambiguous_df, resolved_df, without_gvkey_df, without_ibes_ticker_df = _resolve_universe_fixture(
         tmp_path, om=om, om_hist=om_hist, stocknames=stocknames, ccmxpf=ccmxpf, ibcrsphist=ibcrsphist,
     )
 
@@ -1779,7 +1879,7 @@ def test_resolve_universe_no_crsp_match_lands_in_unresolved_not_dropped(tmp_path
     ccmxpf = pd.DataFrame({"lpermno": [300], "gvkey": ["003000"]})
     ibcrsphist = pd.DataFrame({"permno": [300], "ticker": ["CCC"]})
 
-    resolved, unresolved_df, ambiguous_df, resolved_df = _resolve_universe_fixture(
+    resolved, unresolved_df, ambiguous_df, resolved_df, without_gvkey_df, without_ibes_ticker_df = _resolve_universe_fixture(
         tmp_path, om=om, om_hist=om_hist, stocknames=stocknames, ccmxpf=ccmxpf, ibcrsphist=ibcrsphist,
     )
 
@@ -1819,7 +1919,7 @@ def test_resolve_universe_ambiguous_secid_to_permno_is_flagged_not_dropped(tmp_p
     ccmxpf = pd.DataFrame({"lpermno": [400], "gvkey": ["004000"]})
     ibcrsphist = pd.DataFrame({"permno": [400], "ticker": ["DDD"]})
 
-    resolved, unresolved_df, ambiguous_df, resolved_df = _resolve_universe_fixture(
+    resolved, unresolved_df, ambiguous_df, resolved_df, without_gvkey_df, without_ibes_ticker_df = _resolve_universe_fixture(
         tmp_path, om=om, om_hist=om_hist, stocknames=stocknames, ccmxpf=ccmxpf, ibcrsphist=ibcrsphist,
     )
 
@@ -1904,6 +2004,486 @@ def test_resolve_universe_missing_required_column_raises(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Fix 4: mutation-proof tests for the CUSIP/NCUSIP join. Every fixture above
+# this point sets stocknames.cusip == stocknames.ncusip for every row, which
+# means matching via only one of the two columns is indistinguishable from
+# matching via both -- confirmed by mutation testing that all pre-existing
+# tests still passed after dropping either half of the join, dropping
+# normalization, or swapping the GVKEY clause builder to numeric. These
+# fixtures deliberately set cusip != ncusip so each half of the join (and
+# normalization) has an independent, catchable effect.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_universe_resolves_via_ncusip_only_not_cusip(tmp_path):
+    """secid 10's OM cusip matches crsp.stocknames' NCUSIP column but NOT
+    its CUSIP column (which holds an unrelated value) -- this must still
+    resolve. If the ncusip half of the stocknames join were removed, this
+    secid would come back unresolved instead."""
+    om = pd.DataFrame({
+        "secid": [10], "cusip": ["00000010"], "ticker": ["JJJ"], "issuer": ["JJJ CORP"],
+    })
+    om_hist = pd.DataFrame({"secid": [], "cusip": []})
+    stocknames = pd.DataFrame({
+        "permno": [1010],
+        "cusip": ["99999999"],     # does NOT match the OM cusip
+        "ncusip": ["00000010"],    # DOES match the OM cusip
+    })
+    ccmxpf = pd.DataFrame({"lpermno": [1010], "gvkey": ["010000"]})
+    ibcrsphist = pd.DataFrame({"permno": [1010], "ticker": ["JJJ"]})
+
+    resolved, *_ = _resolve_universe_fixture(
+        tmp_path, om=om, om_hist=om_hist, stocknames=stocknames, ccmxpf=ccmxpf, ibcrsphist=ibcrsphist,
+    )
+
+    assert resolved.permnos == [1010], (
+        "secid 10 should resolve via NCUSIP alone (its CUSIP column value "
+        "doesn't match at all) -- if the ncusip half of the join were "
+        "dropped, this would come back unresolved instead"
+    )
+
+
+def test_resolve_universe_resolves_via_cusip_only_not_ncusip(tmp_path):
+    """secid 20's OM cusip matches crsp.stocknames' CUSIP column but NOT its
+    NCUSIP column (which holds an unrelated value) -- this must still
+    resolve. If the cusip half of the stocknames join were removed, this
+    secid would come back unresolved instead."""
+    om = pd.DataFrame({
+        "secid": [20], "cusip": ["00000020"], "ticker": ["KKK"], "issuer": ["KKK CORP"],
+    })
+    om_hist = pd.DataFrame({"secid": [], "cusip": []})
+    stocknames = pd.DataFrame({
+        "permno": [2020],
+        "cusip": ["00000020"],    # DOES match the OM cusip
+        "ncusip": ["88888888"],   # does NOT match the OM cusip
+    })
+    ccmxpf = pd.DataFrame({"lpermno": [2020], "gvkey": ["020000"]})
+    ibcrsphist = pd.DataFrame({"permno": [2020], "ticker": ["KKK"]})
+
+    resolved, *_ = _resolve_universe_fixture(
+        tmp_path, om=om, om_hist=om_hist, stocknames=stocknames, ccmxpf=ccmxpf, ibcrsphist=ibcrsphist,
+    )
+
+    assert resolved.permnos == [2020], (
+        "secid 20 should resolve via CUSIP alone (its NCUSIP column value "
+        "doesn't match at all) -- if the cusip half of the join were "
+        "dropped, this would come back unresolved instead"
+    )
+
+
+def test_resolve_universe_cusip_normalization_strip_and_uppercase_matters(tmp_path):
+    """secid 30's crsp.stocknames CUSIP is lowercase and whitespace-padded
+    (" ab000030 ") -- it only matches the OM CUSIP ("AB000030") after
+    normalization (strip + uppercase) is applied. NCUSIP is deliberately a
+    non-matching value so this test isolates normalization's effect from
+    the ncusip-vs-cusip question covered by the two tests above."""
+    om = pd.DataFrame({
+        "secid": [30], "cusip": ["AB000030"], "ticker": ["LLL"], "issuer": ["LLL CORP"],
+    })
+    om_hist = pd.DataFrame({"secid": [], "cusip": []})
+    stocknames = pd.DataFrame({
+        "permno": [3030],
+        "cusip": [" ab000030 "],   # only matches AFTER strip+uppercase
+        "ncusip": ["zzzzzzzz"],    # does not match either way
+    })
+    ccmxpf = pd.DataFrame({"lpermno": [3030], "gvkey": ["030000"]})
+    ibcrsphist = pd.DataFrame({"permno": [3030], "ticker": ["LLL"]})
+
+    resolved, *_ = _resolve_universe_fixture(
+        tmp_path, om=om, om_hist=om_hist, stocknames=stocknames, ccmxpf=ccmxpf, ibcrsphist=ibcrsphist,
+    )
+
+    assert resolved.permnos == [3030], (
+        "secid 30 should resolve once CUSIP normalization (strip + "
+        "uppercase) is applied to crsp.stocknames' cusip column -- if "
+        "normalization were removed, ' ab000030 ' would never match "
+        "'AB000030' and this secid would come back unresolved instead"
+    )
+
+
+def test_resolve_universe_gvkey_survives_as_zero_padded_string_despite_numeric_source(tmp_path):
+    """crsp.ccmxpf_lnkhist's gvkey column supplied as a genuine int64 (1000,
+    not "001000") -- simulating the case where a Parquet round-trip ever
+    inferred GVKEY numerically. resolve_universe must recover the correct
+    zero-padded 6-digit GVKEY string ("001000"), and the clause main()
+    renders from it must be the quoted string form, never the bare numeric
+    form build_numeric_in_clause (Fix 1's actual bug) would produce."""
+    om = pd.DataFrame({
+        "secid": [40], "cusip": ["00000040"], "ticker": ["MMM"], "issuer": ["MMM CORP"],
+    })
+    om_hist = pd.DataFrame({"secid": [], "cusip": []})
+    stocknames = pd.DataFrame({
+        "permno": [4040], "cusip": ["00000040"], "ncusip": ["00000040"],
+    })
+    ccmxpf = pd.DataFrame({"lpermno": [4040], "gvkey": [1000]})  # int, not str
+    ibcrsphist = pd.DataFrame({"permno": [4040], "ticker": ["MMM"]})
+
+    resolved, *_ = _resolve_universe_fixture(
+        tmp_path, om=om, om_hist=om_hist, stocknames=stocknames, ccmxpf=ccmxpf, ibcrsphist=ibcrsphist,
+    )
+
+    assert resolved.gvkeys == ["001000"], (
+        "GVKEY must come back as its correct zero-padded 6-digit string "
+        "form even when the source column was a numeric dtype"
+    )
+    clause = pwd.build_string_in_clause("gvkey", resolved.gvkeys)
+    assert clause == "gvkey IN ('001000')", (
+        f"expected the quoted, zero-padded clause; got {clause!r} -- "
+        f"build_numeric_in_clause (Fix 1's bug) would instead produce an "
+        f"unquoted 'gvkey IN (1000)' (zeros stripped) or, at best, an "
+        f"unquoted 'gvkey IN (001000)' that a real varchar column has no "
+        f"operator for"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix 3: crsp.ccmxpf_lnkhist / wrdsapps.ibcrsphist missing/unpullable at the
+# resolve_universe() level (see the main()-level dedicated tests earlier in
+# this file for the end-to-end Phase C gating behavior) -- PERMNO resolution
+# must still succeed and the OTHER identifier family must be unaffected.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_universe_missing_ccmxpf_lnkhist_skips_gvkey_only(tmp_path):
+    om = pd.DataFrame({
+        "secid": [50], "cusip": ["00000050"], "ticker": ["NNN"], "issuer": ["NNN CORP"],
+    })
+    om_hist = pd.DataFrame({"secid": [], "cusip": []})
+    stocknames = pd.DataFrame({
+        "permno": [5050], "cusip": ["00000050"], "ncusip": ["00000050"],
+    })
+    ibcrsphist = pd.DataFrame({"permno": [5050], "ticker": ["NNN"]})
+
+    om_path = _write_parquet(tmp_path / "metadata" / "optionmetrics_universe.parquet", om)
+    om_hist_path = _write_parquet(
+        tmp_path / "metadata" / "optionmetrics_universe_history.parquet", om_hist
+    )
+    stocknames_path = _write_parquet(tmp_path / "raw" / "crsp" / "stocknames.parquet", stocknames)
+    ibcrsphist_path = _write_parquet(
+        tmp_path / "raw" / "wrdsapps" / "ibcrsphist.parquet", ibcrsphist
+    )
+    # crsp.ccmxpf_lnkhist.parquet is deliberately never written -- simulates
+    # the table being missing/unpullable on this account.
+
+    resolved = pwd.resolve_universe(
+        om_universe_path=om_path,
+        om_universe_history_path=om_hist_path,
+        stocknames_path=stocknames_path,
+        ccmxpf_lnkhist_path=tmp_path / "raw" / "crsp" / "ccmxpf_lnkhist.parquet",
+        ibcrsphist_path=ibcrsphist_path,
+        unresolved_secids_out=tmp_path / "metadata" / "unresolved_secids.csv",
+        ambiguous_links_out=tmp_path / "metadata" / "ambiguous_links.csv",
+        resolved_ids_out=tmp_path / "metadata" / "resolved_universe_ids.parquet",
+    )
+
+    assert resolved.permnos == [5050], "PERMNO resolution must succeed regardless"
+    assert resolved.ibes_tickers == ["NNN"], "I/B/E/S ticker resolution must be unaffected"
+    assert resolved.gvkeys == []
+    assert resolved.gvkey_resolution_skipped is True
+    assert "ccmxpf_lnkhist" in resolved.gvkey_skip_reason
+    assert resolved.ibes_ticker_resolution_skipped is False
+    assert resolved.ibes_ticker_skip_reason == ""
+
+
+def test_resolve_universe_missing_ibcrsphist_skips_ibes_ticker_only(tmp_path):
+    om = pd.DataFrame({
+        "secid": [60], "cusip": ["00000060"], "ticker": ["OOO"], "issuer": ["OOO CORP"],
+    })
+    om_hist = pd.DataFrame({"secid": [], "cusip": []})
+    stocknames = pd.DataFrame({
+        "permno": [6060], "cusip": ["00000060"], "ncusip": ["00000060"],
+    })
+    ccmxpf = pd.DataFrame({"lpermno": [6060], "gvkey": ["060000"]})
+
+    om_path = _write_parquet(tmp_path / "metadata" / "optionmetrics_universe.parquet", om)
+    om_hist_path = _write_parquet(
+        tmp_path / "metadata" / "optionmetrics_universe_history.parquet", om_hist
+    )
+    stocknames_path = _write_parquet(tmp_path / "raw" / "crsp" / "stocknames.parquet", stocknames)
+    ccmxpf_path = _write_parquet(tmp_path / "raw" / "crsp" / "ccmxpf_lnkhist.parquet", ccmxpf)
+    # wrdsapps.ibcrsphist.parquet is deliberately never written.
+
+    resolved = pwd.resolve_universe(
+        om_universe_path=om_path,
+        om_universe_history_path=om_hist_path,
+        stocknames_path=stocknames_path,
+        ccmxpf_lnkhist_path=ccmxpf_path,
+        ibcrsphist_path=tmp_path / "raw" / "wrdsapps" / "ibcrsphist.parquet",
+        unresolved_secids_out=tmp_path / "metadata" / "unresolved_secids.csv",
+        ambiguous_links_out=tmp_path / "metadata" / "ambiguous_links.csv",
+        resolved_ids_out=tmp_path / "metadata" / "resolved_universe_ids.parquet",
+    )
+
+    assert resolved.permnos == [6060]
+    assert resolved.gvkeys == ["060000"], "GVKEY resolution must be unaffected"
+    assert resolved.ibes_tickers == []
+    assert resolved.ibes_ticker_resolution_skipped is True
+    assert "ibcrsphist" in resolved.ibes_ticker_skip_reason
+    assert resolved.gvkey_resolution_skipped is False
+    assert resolved.gvkey_skip_reason == ""
+
+
+# ---------------------------------------------------------------------------
+# Fix 5: a PERMNO that resolves fine but has no GVKEY/ibes ticker link at
+# all must be counted and written to its own audit CSV -- distinct from
+# unresolved_secids.csv (which covers "never got a PERMNO").
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_universe_tracks_permnos_without_gvkey_and_ibes_ticker_link(tmp_path):
+    om = pd.DataFrame({
+        "secid": [70], "cusip": ["00000070"], "ticker": ["PPP"], "issuer": ["PPP CORP"],
+    })
+    om_hist = pd.DataFrame({"secid": [], "cusip": []})
+    stocknames = pd.DataFrame({
+        "permno": [7070], "cusip": ["00000070"], "ncusip": ["00000070"],
+    })
+    # PERMNO 7070 resolves fine but has NO row in either linking table.
+    ccmxpf = pd.DataFrame({"lpermno": [9999], "gvkey": ["099999"]})
+    ibcrsphist = pd.DataFrame({"permno": [9999], "ticker": ["ZZZ"]})
+
+    resolved, _unresolved_df, _ambiguous_df, _resolved_df, without_gvkey_df, without_ibes_ticker_df = (
+        _resolve_universe_fixture(
+            tmp_path, om=om, om_hist=om_hist, stocknames=stocknames, ccmxpf=ccmxpf, ibcrsphist=ibcrsphist,
+        )
+    )
+
+    assert resolved.permnos == [7070]
+    assert resolved.n_permnos_without_gvkey == 1
+    assert resolved.n_permnos_without_ibes_ticker == 1
+    assert list(without_gvkey_df["permno"]) == [7070]
+    assert list(without_gvkey_df["secid"]) == [70]
+    assert list(without_gvkey_df["om_cusip"]) == ["00000070"]
+    assert list(without_gvkey_df["issuer"]) == ["PPP CORP"]
+    assert list(without_ibes_ticker_df["permno"]) == [7070]
+    assert list(without_ibes_ticker_df["secid"]) == [70]
+
+
+def test_resolve_universe_permno_with_gvkey_and_ticker_link_not_in_gap_audit(tmp_path):
+    """The flip side: a PERMNO that DOES have both links must not appear in
+    either coverage-gap CSV."""
+    resolved, _unresolved_df, _ambiguous_df, _resolved_df, without_gvkey_df, without_ibes_ticker_df = (
+        _resolve_universe_fixture(
+            tmp_path,
+            om=pd.DataFrame({
+                "secid": [1], "cusip": ["00000001"], "ticker": ["AAA"], "issuer": ["AAA CORP"],
+            }),
+            om_hist=pd.DataFrame({"secid": [], "cusip": []}),
+            stocknames=pd.DataFrame({
+                "permno": [100], "cusip": ["00000001"], "ncusip": ["00000001"],
+            }),
+            ccmxpf=pd.DataFrame({"lpermno": [100], "gvkey": ["001000"]}),
+            ibcrsphist=pd.DataFrame({"permno": [100], "ticker": ["AAA"]}),
+        )
+    )
+    assert resolved.n_permnos_without_gvkey == 0
+    assert resolved.n_permnos_without_ibes_ticker == 0
+    assert len(without_gvkey_df) == 0
+    assert len(without_ibes_ticker_df) == 0
+
+
+# ---------------------------------------------------------------------------
+# Fix 7: the permno_to_gvkey / permno_to_ibes_ticker ambiguous-link stages
+# must carry secid/cusip/issuer detail (merged in via the PERMNO
+# resolution), matching the secid_to_permno stage -- not just a bare permno.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_universe_ambiguous_gvkey_and_ticker_stages_carry_om_detail(tmp_path):
+    om = pd.DataFrame({
+        "secid": [80], "cusip": ["00000080"], "ticker": ["QQQ"], "issuer": ["QQQ CORP"],
+    })
+    om_hist = pd.DataFrame({"secid": [], "cusip": []})
+    stocknames = pd.DataFrame({
+        "permno": [8080], "cusip": ["00000080"], "ncusip": ["00000080"],
+    })
+    # permno 8080 links to TWO distinct gvkeys and TWO distinct tickers.
+    ccmxpf = pd.DataFrame({"lpermno": [8080, 8080], "gvkey": ["080001", "080002"]})
+    ibcrsphist = pd.DataFrame({"permno": [8080, 8080], "ticker": ["QQQ", "QQQOLD"]})
+
+    _resolved, _unresolved_df, ambiguous_df, _resolved_df, _wg, _wt = _resolve_universe_fixture(
+        tmp_path, om=om, om_hist=om_hist, stocknames=stocknames, ccmxpf=ccmxpf, ibcrsphist=ibcrsphist,
+    )
+
+    gvkey_stage = ambiguous_df[ambiguous_df["stage"] == "permno_to_gvkey"]
+    ticker_stage = ambiguous_df[ambiguous_df["stage"] == "permno_to_ibes_ticker"]
+    assert len(gvkey_stage) >= 1
+    assert len(ticker_stage) >= 1
+    assert set(gvkey_stage["secid"].dropna().astype(int)) == {80}, (
+        "permno_to_gvkey rows must carry the secid this permno came from, "
+        "not just a bare permno"
+    )
+    assert set(gvkey_stage["om_cusip"].dropna()) == {"00000080"}
+    assert set(gvkey_stage["issuer"].dropna()) == {"QQQ CORP"}
+    assert set(ticker_stage["secid"].dropna().astype(int)) == {80}
+    assert set(ticker_stage["om_cusip"].dropna()) == {"00000080"}
+    assert set(ticker_stage["issuer"].dropna()) == {"QQQ CORP"}
+
+
+# ---------------------------------------------------------------------------
+# Fix 6: I/B/E/S ticker format allowlist -- applied before building the
+# ticker IN (...) clause, since build_string_in_clause's quote-doubling
+# escape is correct under Postgres defaults but not guaranteed safe if
+# standard_conforming_strings is off.
+# ---------------------------------------------------------------------------
+
+
+def test_validate_ibes_tickers_accepts_typical_tickers():
+    pwd._validate_ibes_tickers(["AAPL", "BRK.A", "BF-B", "A", "1234567890"])
+
+
+def test_validate_ibes_tickers_rejects_disallowed_characters():
+    with pytest.raises(ValueError):
+        pwd._validate_ibes_tickers(["AAPL; DROP TABLE x; --"])
+
+
+def test_validate_ibes_tickers_rejects_too_long_ticker():
+    with pytest.raises(ValueError):
+        pwd._validate_ibes_tickers(["A" * 11])
+
+
+def test_validate_ibes_tickers_rejects_lowercase():
+    with pytest.raises(ValueError):
+        pwd._validate_ibes_tickers(["aapl"])
+
+
+# ---------------------------------------------------------------------------
+# Fix 8: CUSIP length sanity check -- logs a warning (never hard-fails) when
+# normalized CUSIPs on either side of the join aren't all length 8.
+# ---------------------------------------------------------------------------
+
+
+def test_check_cusip_lengths_warns_on_mismatched_length(capsys):
+    pwd._check_cusip_lengths(pd.Series(["12345678", "1234", "ABCDEFGH"]), "test context")
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.out
+    assert "test context" in captured.out
+
+
+def test_check_cusip_lengths_silent_when_all_length_8(capsys):
+    pwd._check_cusip_lengths(pd.Series(["12345678", "ABCDEFGH"]), "test context")
+    captured = capsys.readouterr()
+    assert "WARNING" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: a zero-resolution (or below-floor, or attempted-but-empty GVKEY/
+# ticker) outcome must hard-abort BEFORE any Phase C query, rather than
+# silently producing an IN (NULL) filter and exiting looking successful.
+# ---------------------------------------------------------------------------
+
+
+def test_main_zero_resolved_secids_aborts_before_phase_c(tmp_path, monkeypatch):
+    """The OM universe's only secid has a CUSIP that can never match
+    FakeMainDB's default stocknames row (cusip/ncusip always "1") -- zero
+    secids resolve, and main() must abort before any Phase C query."""
+    _raw_dir, metadata_dir, _manifest_path = _patch_main_env(monkeypatch, tmp_path)
+    pd.DataFrame({
+        "secid": [999], "cusip": ["NEVERMATCHES"], "ticker": ["OMX"],
+        "issuer": ["OM FIXTURE ISSUER"], "sic": ["9999"],
+    }).to_parquet(metadata_dir / "optionmetrics_universe.parquet", index=False)
+
+    fake_db = FakeMainDB()
+    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
+
+    with pytest.raises(SystemExit):
+        pwd.main()
+
+    # No Phase C (big-table) query may have been attempted.
+    phase_c_keys = {
+        "crsp.dsf", "comp.fundq", "comp.funda",
+        "ibes.statsumu_epsus", "ibes.actu_epsus", "ibes.detu_epsus",
+    }
+    queried_keys = {c["key"] for c in fake_db.calls}
+    assert not (phase_c_keys & queried_keys), (
+        f"Phase C tables were queried despite zero resolved secids: "
+        f"{phase_c_keys & queried_keys}"
+    )
+
+
+def test_main_resolution_rate_below_floor_aborts_before_phase_c(tmp_path, monkeypatch):
+    """9 of 10 OM secids can never match FakeMainDB's single stocknames row
+    -- a 10% resolution rate, far below MIN_PERMNO_RESOLUTION_RATE (90%) but
+    NOT zero -- must still abort before Phase C."""
+    _raw_dir, metadata_dir, _manifest_path = _patch_main_env(monkeypatch, tmp_path)
+    secids = list(range(1, 11))
+    cusips = ["1"] + [f"NOMATCH{i}" for i in range(2, 11)]  # only secid 1 matches
+    pd.DataFrame({
+        "secid": secids, "cusip": cusips, "ticker": [f"T{i}" for i in secids],
+        "issuer": [f"ISSUER {i}" for i in secids], "sic": ["9999"] * 10,
+    }).to_parquet(metadata_dir / "optionmetrics_universe.parquet", index=False)
+
+    fake_db = FakeMainDB()
+    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
+
+    with pytest.raises(SystemExit):
+        pwd.main()
+
+    phase_c_keys = {
+        "crsp.dsf", "comp.fundq", "comp.funda",
+        "ibes.statsumu_epsus", "ibes.actu_epsus", "ibes.detu_epsus",
+    }
+    queried_keys = {c["key"] for c in fake_db.calls}
+    assert not (phase_c_keys & queried_keys)
+
+
+class _FakeMainDBUnlinkedGvkey(FakeMainDB):
+    """Like FakeMainDB, but crsp.ccmxpf_lnkhist links a PERMNO (999) that
+    never resolves from the OM universe -- a real, present, non-empty
+    ccmxpf_lnkhist pull that simply has no row for any resolved PERMNO.
+    GVKEY resolution is attempted (the table IS available), but comes back
+    with zero GVKEYs -- the "broken join, not genuinely empty" case Fix 2's
+    floor check must catch (as opposed to Fix 3's "table missing entirely"
+    degrade case, already covered above)."""
+
+    def raw_sql(self, sql, return_iter=False):
+        match = re.search(r"FROM (\S+)", sql)
+        key = match.group(1) if match else "?"
+        if key == "crsp.ccmxpf_lnkhist" and not return_iter:
+            self.calls.append({"key": key, "sql": sql, "return_iter": return_iter})
+            select_list = sql.split("FROM")[0].replace("SELECT", "")
+            cols = [c.strip() for c in select_list.split(",") if c.strip()]
+            return pd.DataFrame({c: ([999] if c == "lpermno" else [1]) for c in cols})
+        return super().raw_sql(sql, return_iter=return_iter)
+
+
+class _FakeMainDBUnlinkedIbesTicker(FakeMainDB):
+    """Same idea as _FakeMainDBUnlinkedGvkey, for wrdsapps.ibcrsphist."""
+
+    def raw_sql(self, sql, return_iter=False):
+        match = re.search(r"FROM (\S+)", sql)
+        key = match.group(1) if match else "?"
+        if key == "wrdsapps.ibcrsphist" and not return_iter:
+            self.calls.append({"key": key, "sql": sql, "return_iter": return_iter})
+            select_list = sql.split("FROM")[0].replace("SELECT", "")
+            cols = [c.strip() for c in select_list.split(",") if c.strip()]
+            return pd.DataFrame({c: ([999] if c == "permno" else [1]) for c in cols})
+        return super().raw_sql(sql, return_iter=return_iter)
+
+
+def test_main_gvkey_attempted_but_empty_aborts_before_phase_c(tmp_path, monkeypatch):
+    _patch_main_env(monkeypatch, tmp_path)
+    fake_db = _FakeMainDBUnlinkedGvkey()
+    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
+
+    with pytest.raises(SystemExit):
+        pwd.main()
+
+
+def test_main_ibes_ticker_attempted_but_empty_aborts_before_phase_c(tmp_path, monkeypatch):
+    _patch_main_env(monkeypatch, tmp_path)
+    fake_db = _FakeMainDBUnlinkedIbesTicker()
+    monkeypatch.setattr(pwd, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_data.py"])
+
+    with pytest.raises(SystemExit):
+        pwd.main()
+
+
+# ---------------------------------------------------------------------------
 # IN (...) clause builders -- numeric (permno/gvkey) and string (ibes
 # ticker), and that they combine correctly with each table's existing date/
 # format filters in main() (nothing lost or overwritten).
@@ -1970,20 +2550,30 @@ def test_main_filtered_where_sql_combines_with_existing_filters_for_every_big_ta
 
     # crsp.dsf/dsedelist: date filter AND permno IN (...).
     assert pwd.LOOKBACK_START_DATE in sql_by_key["crsp.dsf"]
-    assert "permno IN (" in sql_by_key["crsp.dsf"]
+    assert "permno IN (1)" in sql_by_key["crsp.dsf"]
     assert pwd.LOOKBACK_START_DATE in sql_by_key["crsp.dsedelist"]
-    assert "permno IN (" in sql_by_key["crsp.dsedelist"]
+    assert "permno IN (1)" in sql_by_key["crsp.dsedelist"]
 
     # crsp.dsi: unfiltered by ID, as required -- no IN (...) clause at all.
     assert "IN (" not in sql_by_key["crsp.dsi"]
 
     # comp.fundq/funda: date + COMPUSTAT_STD_FILTER AND gvkey IN (...).
+    # Fix 1/Fix 4(d): GVKEY must render as a QUOTED string with its
+    # zero-padding preserved -- "gvkey IN ('000001')" -- never the bare
+    # numeric "gvkey IN (1)" or "gvkey IN (000001)" a build_numeric_in_
+    # clause call (Fix 1's actual bug) would produce. FakeMainDB's default
+    # one-row-of-1s fixture makes crsp.ccmxpf_lnkhist's gvkey column come
+    # back as the integer 1 -- exactly the "read back as a numeric dtype"
+    # case _norm/zfill(6) must recover from, giving "000001" here.
     assert pwd.COMPUSTAT_STD_FILTER in sql_by_key["comp.fundq"]
-    assert "gvkey IN (" in sql_by_key["comp.fundq"]
+    assert "gvkey IN ('000001')" in sql_by_key["comp.fundq"], (
+        f"expected a quoted, zero-padded GVKEY clause; got: "
+        f"{sql_by_key['comp.fundq']!r}"
+    )
     assert pwd.COMPUSTAT_STD_FILTER in sql_by_key["comp.funda"]
-    assert "gvkey IN (" in sql_by_key["comp.funda"]
+    assert "gvkey IN ('000001')" in sql_by_key["comp.funda"]
 
     # ibes.statsumu_epsus/actu_epsus/detu_epsus: date filter AND ticker IN (...).
     for table in ("statsumu_epsus", "actu_epsus", "detu_epsus"):
         key = f"ibes.{table}"
-        assert "ticker IN (" in sql_by_key[key], f"{key} missing ticker IN (...) filter"
+        assert "ticker IN ('1')" in sql_by_key[key], f"{key} missing quoted ticker IN (...) filter"
