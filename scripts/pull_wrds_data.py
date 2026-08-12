@@ -449,157 +449,207 @@ def _validate_sql_identifier(kind: str, name: str) -> None:
         )
 
 
-def _widen_integers_to_float64(schema: "pa.Schema") -> "pa.Schema":
-    """Return `schema` with every integer-typed field replaced by
-    pa.float64(). Non-integer fields (including pa.null()) pass through
-    unchanged.
 
-    This is the core defense against the Int64-vs-Float64 chunk-drift bug:
-    wrds's chunked reader runs pandas dtype inference independently per
-    chunk, so the SAME numeric column can come back as pandas `Int64` in a
-    chunk where every value happens to be whole and `Float64` in another
-    chunk with a fractional value. Under a true single-pass incremental
-    writer (ParquetWriter's schema is fixed the moment it's constructed), a
-    LATER chunk revealing a fraction can never retroactively widen an
-    already-pinned int64 column -- so the only way to guarantee we never
-    need an unsafe (truncating) downcast later is to never pin an integer
-    type in the first place. The accepted cost: a genuinely integer-only
-    column (e.g. permno, gvkey -- true database integers that will never
-    have a fractional value in any chunk) also ends up as float64 in the
-    output. That's a real, deliberate trade-off: those id values are well
-    within float64's exact-integer range, so no precision is actually lost,
-    and a uniform rule (rather than a per-column allowlist of which columns
-    are "safe" to leave as int) is far less bug-prone than trying to guess
-    upfront which columns could ever drift.
+# Round 5's approach (removed) tried to *infer* the pinned schema from real
+# chunk data (widening integers to float64, buffering a few chunks to
+# resolve any column that showed pa.null() in an early chunk). That was
+# verified NOT to work against the real wrds/pandas driver contract
+# (dtype_backend="numpy_nullable", read directly from the installed
+# pandas==2.2.3 source, pandas.io.sql._convert_arrays_to_dataframe): a
+# column that's entirely NULL in a chunk does NOT come back as pa.null() --
+# it comes back as pandas `string[python]` (StringDtype), which pyarrow then
+# reports as a concrete `string` field, not `null`. Confirmed directly:
+#
+#   >>> df = pandas.io.sql._convert_arrays_to_dataframe(
+#   ...     [(1, None), (2, None)], ["permno", "numtrd"],
+#   ...     dtype_backend="numpy_nullable")
+#   >>> df.dtypes
+#   permno             Int64
+#   numtrd    string[python]
+#   >>> pyarrow.Table.from_pandas(df, preserve_index=False).schema
+#   permno: int64
+#   numtrd: string
+#
+# Round 5's "still unresolved" check (`any(pa.types.is_null(f.type) ...)`)
+# never fires in this case -- the buffer stops on the very first chunk,
+# pins `numtrd` as `string`, and every subsequent chunk's real integer
+# values (e.g. 100, 200) get cast DOWN into strings ("100", "200") for the
+# whole table, silently and with no error. This was verified directly by
+# running round 5's buffering/merge logic against the real-driver chunk
+# above (see the round's PR notes / verification records), not merely
+# assumed from reading the diff.
+#
+# The fix: don't infer the schema from data at all. db.describe_table()
+# already returns the database's own declared SQL type for every column
+# (the `type` column, e.g. INTEGER, DOUBLE PRECISION, DATE, VARCHAR) --
+# deterministic and known before a single row is fetched. Build the pinned
+# pyarrow schema from THAT, once, before opening the ParquetWriter. See
+# _sql_type_to_pyarrow_type / _build_pinned_schema below.
+
+# Base SQL type name (after stripping any parenthesized length/precision,
+# e.g. "VARCHAR(32)" -> "VARCHAR", "NUMERIC(10, 2)" -> "NUMERIC") -> pyarrow
+# type. Vocabulary is standard PostgreSQL/SQLAlchemy type-name conventions
+# (WRDS is Postgres-backed) -- verified directly against sqlalchemy's own
+# type objects (str(sqlalchemy.dialects.postgresql.INTEGER()) == "INTEGER",
+# etc.), not guessed blind.
+_SQL_INTEGER_TYPES = {"INTEGER", "BIGINT", "SMALLINT", "INT", "INT2", "INT4", "INT8"}
+_SQL_FLOAT_TYPES = {
+    "DOUBLE PRECISION", "REAL", "NUMERIC", "DECIMAL", "FLOAT",
+    "FLOAT4", "FLOAT8",
+}
+# Date/time types are deliberately left as pa.string() -- matching this
+# script's existing behavior of writing dates as ISO strings. Changing that
+# is explicitly out of scope for this round (see PR description); this set
+# exists so a date/time column is routed to the SAME pa.string() outcome as
+# everything else, deliberately, rather than falling through to the
+# unmapped-type warning path.
+_SQL_DATE_TIME_TYPES = {
+    "DATE", "TIME", "TIMESTAMP",
+    "TIME WITHOUT TIME ZONE", "TIME WITH TIME ZONE",
+    "TIMESTAMP WITHOUT TIME ZONE", "TIMESTAMP WITH TIME ZONE",
+}
+_SQL_TEXT_TYPES = {
+    "VARCHAR", "CHARACTER VARYING", "TEXT", "CHARACTER", "CHAR", "BPCHAR",
+    "NAME",
+}
+_SQL_BOOLEAN_TYPES = {"BOOLEAN", "BOOL"}
+
+
+def _sql_type_to_pyarrow_type(sql_type, column=None):
+    """Map one declared SQL type (as found in db.describe_table()'s `type`
+    column, stringified) to the pyarrow type used to pin the streaming
+    Parquet schema.
+
+    `sql_type` may be None (e.g. a test double that doesn't know a given
+    column's real type) or any string -- normalized by uppercasing and
+    stripping a parenthesized length/precision suffix before matching.
+    Anything not recognized falls back to pa.string() and is logged as a
+    warning (not silently mishandled) so an unmapped type is visible.
     """
-    fields = []
-    for field in schema:
-        if pa.types.is_integer(field.type):
-            fields.append(pa.field(field.name, pa.float64(), nullable=True))
-        else:
-            fields.append(field)
+    if sql_type is None:
+        print(
+            f"  WARNING: no declared SQL type known for column "
+            f"{column!r}; defaulting to pa.string().",
+            flush=True,
+        )
+        return pa.string()
+
+    base = str(sql_type).strip().upper().split("(", 1)[0].strip()
+
+    if base in _SQL_INTEGER_TYPES:
+        return pa.int64()
+    if base in _SQL_FLOAT_TYPES:
+        return pa.float64()
+    if base in _SQL_DATE_TIME_TYPES:
+        return pa.string()
+    if base in _SQL_TEXT_TYPES:
+        return pa.string()
+    if base in _SQL_BOOLEAN_TYPES:
+        return pa.bool_()
+
+    print(
+        f"  WARNING: unmapped SQL type {sql_type!r} for column {column!r} "
+        f"-- defaulting to pa.string() rather than guessing.",
+        flush=True,
+    )
+    return pa.string()
+
+
+def _column_sql_types(schema_df) -> dict:
+    """Extract a {lowercased column name: declared SQL type string} mapping
+    from the DataFrame returned by db.describe_table(library, table) --
+    specifically its `name` and `type` columns. This is the authoritative,
+    data-independent source _build_pinned_schema uses; it reflects the
+    database's OWN declared type for every column, known before any row is
+    ever fetched.
+    """
+    return {
+        str(name).lower(): sql_type
+        for name, sql_type in zip(schema_df["name"], schema_df["type"])
+    }
+
+
+def _build_pinned_schema(columns, column_sql_types) -> "pa.Schema":
+    """Build the pyarrow.Schema the streaming Parquet writer is pinned to,
+    for exactly `columns` (the required + present-optional columns actually
+    being selected), from `column_sql_types` (see _column_sql_types) --
+    BEFORE any data is fetched. Deterministic: depends only on the
+    database's declared types, never on which values happen to land in
+    which chunk, so it is identical run to run regardless of chunk order or
+    composition.
+    """
+    fields = [
+        pa.field(
+            col,
+            _sql_type_to_pyarrow_type(column_sql_types.get(col.lower()), column=col),
+            nullable=True,
+        )
+        for col in columns
+    ]
     return pa.schema(fields)
 
 
-def _merge_schema_resolving_nulls(resolved: "pa.Schema", new_schema: "pa.Schema") -> "pa.Schema":
-    """Merge `new_schema` into `resolved` (or just widen+return `new_schema`
-    if `resolved` is None): for each field, keep `resolved`'s type unless
-    it's still pa.null() and `new_schema` has a concrete type for that
-    field, in which case adopt `new_schema`'s type (widened per
-    _widen_integers_to_float64). Used to resolve a column that happened to
-    be entirely NULL in earlier buffered chunks (e.g. crsp.dsf's numtrd,
-    NASDAQ-only and NULL for every NYSE/AMEX row) once a chunk with a real
-    value for it is seen.
-    """
-    if resolved is None:
-        return _widen_integers_to_float64(new_schema)
-    fields = []
-    for rf in resolved:
-        if pa.types.is_null(rf.type):
-            nf_type = new_schema.field(rf.name).type
-            if pa.types.is_integer(nf_type):
-                nf_type = pa.float64()
-            fields.append(pa.field(rf.name, nf_type, nullable=True))
-        else:
-            fields.append(rf)
-    return pa.schema(fields)
-
-
-# Bounded lookahead buffer for schema resolution (see
-# _stream_query_to_parquet's docstring for the full reasoning): rather than
-# holding the WHOLE table's chunks in memory (the previous round's approach)
-# or blindly trusting only the very first chunk (which could show a
-# pa.null() type for a column that's coincidentally all-NULL in that one
-# chunk), we buffer at most this many chunks while any column's resolved
-# type is still ambiguous, then pin the schema and flush. A small fixed
-# constant, NOT proportional to table size -- still a bounded-memory
-# improvement over accumulating every chunk, while giving a realistic chance
-# of resolving a null-in-first-chunk column from real data before pinning.
-_SCHEMA_RESOLUTION_CHUNK_CAP = 3
-
-
-def _stream_query_to_parquet(db, library, table, columns, where_sql, out_path):
+def _stream_query_to_parquet(db, library, table, columns, where_sql, out_path, pinned_schema):
     """Run the real `columns` query against `library`.`table` (filtered by
     `where_sql`, if given) using chunked streaming (`return_iter=True`), and
     write the result to `out_path` incrementally via a real
-    `pyarrow.parquet.ParquetWriter` -- bounded memory (see below), never the
-    whole table held at once.
+    `pyarrow.parquet.ParquetWriter` -- bounded memory (a small constant
+    multiple of one chunk, never the whole table held at once).
 
-    SCHEMA PINNING (Fix 3, replacing the previous round's accumulate-then-
-    pa.concat_tables-then-strip-metadata approach):
+    SCHEMA PINNING (Fix 3 round 2, replacing round 5's data-inference
+    approach entirely):
 
-    The problem that approach was patching: wrds's chunked reader runs
-    pandas' dtype inference independently per chunk, so the SAME numeric
-    column can come back as pandas `Int64` in a chunk where every value
-    happens to be whole and `Float64` in another chunk with a fractional
-    value -- for the same query, same column, just depending on which rows
-    landed in which 500k-row chunk. Reconciling that after the fact (concat
-    with permissive promotion, then strip stale per-chunk pandas metadata so
-    a later read doesn't try to cast back to the wrong original dtype) works,
-    but it requires holding every chunk in memory at once (roughly doubling
-    peak memory: the accumulated chunks plus the final concatenated table),
-    and the schema is only decided after ALL data is already in hand.
+    `pinned_schema` is built by the caller (pull_table, via
+    _build_pinned_schema) from the database's OWN declared column types
+    (db.describe_table()'s `type` column) -- BEFORE this function is ever
+    called, and therefore before a single row has been fetched. Every chunk
+    is cast to `pinned_schema` (`.cast(pinned_schema, safe=False)`) and
+    written via ParquetWriter, which is opened against `pinned_schema`
+    immediately, before the first chunk is even requested.
+
+    WHY NOT INFER THE SCHEMA FROM DATA (round 5's approach, removed): round
+    5 widened integer fields to float64 and buffered a few chunks to
+    "resolve" any column that showed pa.null() in an early chunk. That
+    logic never actually fires against the real driver: verified directly
+    against the installed pandas==2.2.3 source
+    (pandas.io.sql._convert_arrays_to_dataframe, used internally by
+    wrds.Connection.raw_sql's dtype_backend="numpy_nullable" path) that a
+    column which is entirely NULL in a chunk comes back as pandas
+    `string[python]` (StringDtype), NOT pa.null() --
+
+        >>> df = pandas.io.sql._convert_arrays_to_dataframe(
+        ...     [(1, None), (2, None)], ["permno", "numtrd"],
+        ...     dtype_backend="numpy_nullable")
+        >>> pyarrow.Table.from_pandas(df, preserve_index=False).schema
+        permno: int64
+        numtrd: string
+
+    so round 5's "still unresolved" check (looking for pa.null()) never
+    triggers, the buffer accepts `numtrd: string` from the very first
+    all-NULL chunk as final, and every later chunk's real integer values
+    silently get cast DOWN to strings for the whole table -- no error, no
+    warning. This was confirmed by running round 5's actual buffering/merge
+    functions against this real-driver chunk output, not just inferred from
+    the diff.
+
+    Building the pinned schema from declared SQL types up front sidesteps
+    this class of bug entirely: the schema no longer depends on which
+    values happen to land in which chunk, so there is nothing to buffer,
+    infer, or get wrong-by-coincidence. It is also identical run to run
+    regardless of chunk order/composition.
 
     DEVIATION FROM THE ORIGINALLY SUGGESTED "zero-row probe query" APPROACH
-    (documented here because round 5's verification discipline explicitly
-    asks for this): the natural design is "issue `SELECT <cols> FROM
-    <table> WHERE 1=0`, convert the resulting empty DataFrame to a pyarrow
-    Schema, and trust that as the pinned schema, since a zero-row result
-    should reflect the DB's real per-column type rather than a
-    value-dependent guess." I implemented this and then verified it against
-    the ACTUAL pandas/wrds code path (pandas.io.sql._convert_arrays_to_dataframe
-    and _query_iterator, read directly from the installed pandas==2.2.3
-    source, not assumed): for a genuinely zero-row result, pandas takes the
-    `DataFrame(columns=columns)` fallback branch -- EVERY column comes back
-    plain `object` dtype, with no per-column type information from the DB
-    driver at all. Converting that to a pyarrow Schema gives pa.null() for
-    literally every field, regardless of the column's real type. I confirmed
-    this empirically (see the round's test suite / PR notes) -- the probe
-    query is not a shortcut, it's a wasted round trip that provides no type
-    information. Given that finding, and given this project's standing
-    "minimize WRDS query volume" constraint, I dropped the probe query
-    entirely rather than ship a mechanism that looks like protection but
-    isn't (exactly the failure mode this round is meant to eliminate).
-
-    What this function does instead: build the schema from REAL chunks,
-    widening every integer field to float64 up front
-    (_widen_integers_to_float64) so a later chunk's fractional value can
-    never require an unsafe downcast. Because a column can still be
-    genuinely all-NULL (pa.null()) in an early chunk (e.g. numtrd, NASDAQ-
-    only), we buffer up to _SCHEMA_RESOLUTION_CHUNK_CAP chunks -- a small,
-    FIXED constant, not proportional to the table's size -- merging each
-    into a running "resolved schema" (_merge_schema_resolving_nulls) until
-    every column has a concrete type or the cap is reached, THEN create the
-    ParquetWriter and flush the buffered chunks, and stream+cast+write every
-    subsequent chunk one at a time with no further buffering. This is a
-    materially bounded memory profile (a small constant multiple of one
-    chunk, not the whole table), though not literally "exactly one chunk"
-    in every case -- an honest, documented trade-off, not the literal
-    single-chunk design originally sketched, because a true single-chunk
-    design cannot correctly resolve a column that's all-NULL in chunk one
-    without either guessing its type or accepting a hard failure later.
-
-    KNOWN LIMITATION: if an optional/nullable column is NULL in every one
-    of the first _SCHEMA_RESOLUTION_CHUNK_CAP chunks and only gets a real
-    value in a LATER chunk, the pinned schema still has pa.null() for that
-    field, and casting that later chunk raises (pyarrow does not support
-    casting real data onto a pa.null() target -- verified directly:
-    `pa.table(...).cast(schema_with_null_field, safe=False)` raises
-    ArrowNotImplementedError, it does not silently drop or corrupt data).
-    That exception is caught by pull_table's outer handler and logged as
-    "query_failed" -- a real, visible failure, not silent data loss -- so
-    this limitation degrades safely if it's ever hit; it is not expected to
-    be hit in practice for this project's tables (whichever optional
-    columns can be sparse, e.g. crsp.dsf.numtrd, are NULL for a whole
-    EXCHANGE, not the whole table, so any chunk spanning more than a
-    handful of distinct permnos should see a real value well within the
-    3-chunk cap).
-
-    We no longer call `.replace_schema_metadata(None)` anywhere: that call
-    existed to strip stale pandas-dtype metadata left over from the
-    concat-then-promote approach, which doesn't apply here -- the schema is
-    pinned before most/all chunks are written and every chunk is explicitly
-    cast to it, so there is no stale metadata to strip.
+    (documented here because this project's verification discipline asks
+    for this, and it's still relevant context even though it no longer
+    matters for schema pinning specifically): a zero-row `SELECT ... WHERE
+    1=0` query does NOT give per-column type info either -- pandas takes the
+    `DataFrame(columns=columns)` fallback branch for a genuinely zero-row
+    result, and every column comes back plain `object` dtype (pa.null() for
+    every field), regardless of the column's real type. db.describe_table()
+    (already called by pull_table for the required/optional column check)
+    is the actual source of real per-column type info, with no extra query
+    needed -- consistent with this project's "minimize WRDS query volume"
+    constraint.
 
     The final write goes to a temporary path and is moved into place with
     os.replace() only after it fully succeeds, so a failure partway through
@@ -623,39 +673,15 @@ def _stream_query_to_parquet(db, library, table, columns, where_sql, out_path):
     total_rows = 0
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
     writer = None
-    resolved_schema = None
-    pending = []  # bounded by _SCHEMA_RESOLUTION_CHUNK_CAP -- see docstring
     try:
+        # The schema is fully known before any data is fetched, so the
+        # writer is opened immediately -- no buffering, no "resolve as we
+        # go" state at all.
+        writer = pq.ParquetWriter(str(tmp_path), pinned_schema)
         for chunk in db.raw_sql(sql, return_iter=True):
             total_rows += len(chunk)
             chunk_table = pa.Table.from_pandas(chunk, preserve_index=False)
-
-            if writer is not None:
-                writer.write_table(chunk_table.cast(resolved_schema, safe=False))
-                continue
-
-            resolved_schema = _merge_schema_resolving_nulls(
-                resolved_schema, chunk_table.schema
-            )
-            pending.append(chunk_table)
-
-            still_unresolved = any(pa.types.is_null(f.type) for f in resolved_schema)
-            if not still_unresolved or len(pending) >= _SCHEMA_RESOLUTION_CHUNK_CAP:
-                writer = pq.ParquetWriter(str(tmp_path), resolved_schema)
-                for pending_table in pending:
-                    writer.write_table(pending_table.cast(resolved_schema, safe=False))
-                pending = []
-
-        if writer is None:
-            # Fewer chunks existed in total than the resolution cap (this
-            # includes the zero-total-rows case: exactly one empty chunk).
-            # Flush whatever's pending now with the best schema resolved so
-            # far -- there's nothing more to look at.
-            if resolved_schema is None:
-                resolved_schema = pa.schema([])
-            writer = pq.ParquetWriter(str(tmp_path), resolved_schema)
-            for pending_table in pending:
-                writer.write_table(pending_table.cast(resolved_schema, safe=False))
+            writer.write_table(chunk_table.cast(pinned_schema, safe=False))
     except (Exception, KeyboardInterrupt):
         if writer is not None:
             try:
@@ -716,11 +742,11 @@ def pull_table(
     the manifest's "optional_columns_missing" field so the gap is visible
     without being fatal.
 
-    `stream=True` uses `_stream_query_to_parquet` (schema pinned from a
-    zero-row probe query, then written incrementally via a real
-    ParquetWriter -- see that function's docstring) instead of loading the
-    full result into a DataFrame first; use it for any table that could
-    plausibly be large.
+    `stream=True` uses `_stream_query_to_parquet` (schema pinned from
+    db.describe_table()'s declared column types, via _build_pinned_schema,
+    then written incrementally via a real ParquetWriter -- see that
+    function's docstring) instead of loading the full result into a
+    DataFrame first; use it for any table that could plausibly be large.
     """
     # Validate every identifier that's about to be interpolated into the SQL
     # string -- see _validate_sql_identifier's docstring -- before `library`
@@ -774,6 +800,11 @@ def pull_table(
     try:
         schema = db.describe_table(library, table)
         actual_columns = {c.lower() for c in schema["name"]}
+        # Keep the declared SQL type per column too (not just the name) --
+        # this is what the streaming path's pinned pyarrow schema is built
+        # from (see _build_pinned_schema), instead of anything inferred
+        # from data.
+        column_sql_types = _column_sql_types(schema)
     except sa_exc.NoSuchTableError as e:
         # Genuinely "this table doesn't exist on this account" -- safe to log
         # as such.
@@ -825,8 +856,9 @@ def pull_table(
     try:
         print(f"Pulling {library}.{table} -> {_rel(out_path)} ...", flush=True)
         if stream:
+            pinned_schema = _build_pinned_schema(query_columns, column_sql_types)
             rows, _wrote_file = _stream_query_to_parquet(
-                db, library, table, query_columns, where_sql, out_path
+                db, library, table, query_columns, where_sql, out_path, pinned_schema
             )
         else:
             df = db.raw_sql(sql)

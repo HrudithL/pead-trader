@@ -92,7 +92,18 @@ class StubDB:
     def describe_table(self, library, table):
         if self._describe_error is not None:
             raise self._describe_error
-        return pd.DataFrame({"name": self._columns})
+        # Real db.describe_table() always returns a "type" column too (the
+        # database's declared SQL type per column) -- pull_table now reads
+        # it (see _column_sql_types) to build the streaming path's pinned
+        # pyarrow schema. Defaulting every column here to "VARCHAR" is fine
+        # for tests that don't care about the pinned schema's exact dtypes
+        # (status/rows/SQL-text assertions only); tests that DO care about
+        # schema pinning call _stream_query_to_parquet directly with an
+        # explicit pinned_schema instead of going through this stub.
+        return pd.DataFrame({
+            "name": self._columns,
+            "type": ["VARCHAR"] * len(self._columns),
+        })
 
     def raw_sql(self, sql, return_iter=False):
         self.raw_sql_calls += 1
@@ -521,15 +532,263 @@ def test_pull_table_non_streaming_zero_rows_without_existing_file_logs_plain_ok(
 
 
 # ---------------------------------------------------------------------------
-# Fix 3 (this round): schema pinning for the streaming writer.
+# Fix 3, round 2 (this round): schema pinning for the streaming writer, built
+# from db.describe_table()'s DECLARED SQL types rather than inferred from
+# chunk data. Replaces round 5's lookahead-buffer approach, which was found
+# not to work against the real wrds/pandas driver contract (see below).
 # ---------------------------------------------------------------------------
 
 
-def test_stream_query_to_parquet_signature_takes_query_pieces_not_prebuilt_sql(tmp_path):
-    """_stream_query_to_parquet now builds its own SQL from
-    (library, table, columns, where_sql) rather than taking a pre-built SQL
-    string -- this is what lets it separately buffer/resolve the schema
-    before opening the ParquetWriter. This test just pins that contract."""
+def test_sql_type_to_pyarrow_type_maps_common_postgres_types():
+    """Base mapping sanity check, covering the vocabulary WRDS's Postgres-
+    backed schema actually uses (verified directly against sqlalchemy's own
+    type objects -- e.g. str(sqlalchemy.dialects.postgresql.INTEGER()) ==
+    "INTEGER", str(sqlalchemy.dialects.postgresql.DOUBLE_PRECISION()) ==
+    "DOUBLE PRECISION" -- not guessed blind)."""
+    # Integers.
+    assert pwd._sql_type_to_pyarrow_type("INTEGER") == pa.int64()
+    assert pwd._sql_type_to_pyarrow_type("BIGINT") == pa.int64()
+    assert pwd._sql_type_to_pyarrow_type("SMALLINT") == pa.int64()
+    assert pwd._sql_type_to_pyarrow_type("integer") == pa.int64()  # case-insensitive
+
+    # Floating/numeric.
+    assert pwd._sql_type_to_pyarrow_type("DOUBLE PRECISION") == pa.float64()
+    assert pwd._sql_type_to_pyarrow_type("REAL") == pa.float64()
+    assert pwd._sql_type_to_pyarrow_type("NUMERIC") == pa.float64()
+    assert pwd._sql_type_to_pyarrow_type("NUMERIC(10, 2)") == pa.float64()  # precision stripped
+    assert pwd._sql_type_to_pyarrow_type("DECIMAL") == pa.float64()
+
+    # Date/time -- deliberately still pa.string(), matching this script's
+    # existing (out-of-scope-to-change) behavior of writing dates as ISO
+    # strings.
+    assert pwd._sql_type_to_pyarrow_type("DATE") == pa.string()
+    assert pwd._sql_type_to_pyarrow_type("TIMESTAMP") == pa.string()
+    assert pwd._sql_type_to_pyarrow_type("TIMESTAMP WITHOUT TIME ZONE") == pa.string()
+
+    # Text.
+    assert pwd._sql_type_to_pyarrow_type("VARCHAR") == pa.string()
+    assert pwd._sql_type_to_pyarrow_type("VARCHAR(32)") == pa.string()
+    assert pwd._sql_type_to_pyarrow_type("CHARACTER VARYING") == pa.string()
+    assert pwd._sql_type_to_pyarrow_type("TEXT") == pa.string()
+    assert pwd._sql_type_to_pyarrow_type("CHAR(3)") == pa.string()
+
+    # Boolean.
+    assert pwd._sql_type_to_pyarrow_type("BOOLEAN") == pa.bool_()
+
+    # Unmapped -> sane fallback, logged (not silently mishandled).
+    assert pwd._sql_type_to_pyarrow_type("SOME_EXOTIC_TYPE") == pa.string()
+    assert pwd._sql_type_to_pyarrow_type(None) == pa.string()
+
+
+def test_sql_type_to_pyarrow_type_warns_on_unmapped_type(capsys):
+    pwd._sql_type_to_pyarrow_type("SOME_EXOTIC_TYPE", column="widget")
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.out
+    assert "SOME_EXOTIC_TYPE" in captured.out
+    assert "widget" in captured.out
+
+
+def test_build_pinned_schema_uses_declared_types_for_exactly_the_given_columns():
+    column_sql_types = {
+        "permno": "INTEGER", "numtrd": "INTEGER", "date": "DATE", "ret": "DOUBLE PRECISION",
+    }
+    schema = pwd._build_pinned_schema(["permno", "date", "ret"], column_sql_types)
+    assert schema.names == ["permno", "date", "ret"]
+    assert schema.field("permno").type == pa.int64()
+    assert schema.field("date").type == pa.string()
+    assert schema.field("ret").type == pa.float64()
+    # numtrd wasn't requested -- must not appear even though it's a known type.
+    assert "numtrd" not in schema.names
+
+
+def test_build_pinned_schema_is_independent_of_any_data():
+    """The whole point of this round's fix: the pinned schema is a pure
+    function of (columns, declared SQL types) -- it does not take chunks,
+    data, or row values as input at all, unlike round 5's
+    _merge_schema_resolving_nulls, which took a running schema AND a new
+    chunk's inferred schema. Calling it twice with the same declared types
+    must produce identical schemas regardless of anything about data."""
+    column_sql_types = {"permno": "INTEGER", "ret": "DOUBLE PRECISION"}
+    schema_1 = pwd._build_pinned_schema(["permno", "ret"], column_sql_types)
+    schema_2 = pwd._build_pinned_schema(["permno", "ret"], column_sql_types)
+    assert schema_1.equals(schema_2)
+
+
+def _real_driver_chunk(rows, columns):
+    """Build a chunk exactly the way wrds.Connection.raw_sql's real
+    dtype_backend="numpy_nullable" path does -- by calling pandas' OWN
+    internal conversion function directly
+    (pandas.io.sql._convert_arrays_to_dataframe, the function
+    wrds.raw_sql's pd.read_sql_query(...) call uses under the hood for every
+    chunk) -- rather than a plain pd.DataFrame(...) construction (numpy-
+    backend), which behaves differently and is what let round 5's bug slip
+    through untested.
+
+    `rows` is a list of row tuples (DB-API style), `columns` the column
+    names, matching _convert_arrays_to_dataframe's own signature.
+    """
+    from pandas.io import sql as pdsql
+
+    return pdsql._convert_arrays_to_dataframe(
+        rows, columns, coerce_float=True, dtype_backend="numpy_nullable"
+    )
+
+
+def test_real_driver_all_null_numeric_chunk_resolves_to_string_not_null():
+    """Reproduces, directly against the real driver conversion path (not a
+    stub), the exact fact that defeated round 5's schema-resolution logic:
+    a chunk that's entirely NULL for a numeric column does NOT come back as
+    pa.null() -- it comes back as pandas StringDtype, and pyarrow reports a
+    concrete `string` field for it, not `null`. Round 5's "still unresolved"
+    check (`any(pa.types.is_null(f.type) for f in resolved_schema)`) would
+    never fire here, so its buffer would accept `numtrd: string` as final
+    after this one chunk -- exactly the bug this round's fix eliminates by
+    not inferring the schema from data at all.
+    """
+    chunk = _real_driver_chunk([(1, None), (2, None)], ["permno", "numtrd"])
+    assert str(chunk["numtrd"].dtype) == "string"  # NOT pa.null()-shaped
+    arrow_schema = pa.Table.from_pandas(chunk, preserve_index=False).schema
+    assert arrow_schema.field("numtrd").type == pa.string()
+    assert not pa.types.is_null(arrow_schema.field("numtrd").type)
+
+
+def test_round5_inference_approach_would_have_coerced_real_ints_to_strings():
+    """Literal reproduction of round 5's bug: round 5's merge/buffer logic,
+    run against REAL driver chunks (via _real_driver_chunk, not a numpy-
+    backend stub), pins `numtrd` as `string` from an all-NULL first chunk
+    and then silently downcasts a later chunk's real integer values (100,
+    200) into the strings "100"/"200". Round 5's own functions were removed
+    from the module this round, so its buffering/merge behavior is
+    reproduced inline here (a faithful copy of the logic that shipped in
+    round 5) purely to prove -- against real driver output, not assumption
+    -- that this is what it actually did.
+    """
+
+    def widen_integers_to_float64(schema):
+        fields = []
+        for f in schema:
+            if pa.types.is_integer(f.type):
+                fields.append(pa.field(f.name, pa.float64(), nullable=True))
+            else:
+                fields.append(f)
+        return pa.schema(fields)
+
+    def merge_schema_resolving_nulls(resolved, new_schema):
+        if resolved is None:
+            return widen_integers_to_float64(new_schema)
+        fields = []
+        for rf in resolved:
+            if pa.types.is_null(rf.type):
+                nf_type = new_schema.field(rf.name).type
+                if pa.types.is_integer(nf_type):
+                    nf_type = pa.float64()
+                fields.append(pa.field(rf.name, nf_type, nullable=True))
+            else:
+                fields.append(rf)
+        return pa.schema(fields)
+
+    chunk1 = _real_driver_chunk([(1, None), (2, None)], ["permno", "numtrd"])
+    chunk2 = _real_driver_chunk([(3, 100), (4, 200)], ["permno", "numtrd"])
+    table1 = pa.Table.from_pandas(chunk1, preserve_index=False)
+    table2 = pa.Table.from_pandas(chunk2, preserve_index=False)
+
+    resolved = merge_schema_resolving_nulls(None, table1.schema)
+    still_unresolved = any(pa.types.is_null(f.type) for f in resolved)
+    # Round 5's buffer-continue condition never fires -- it thinks the
+    # schema is already fully resolved after just the all-NULL chunk.
+    assert not still_unresolved
+    assert resolved.field("numtrd").type == pa.string()
+
+    # Round 5 would now cast chunk2's REAL integer values down into that
+    # pinned string field -- silently, with no error.
+    casted = table2.cast(resolved, safe=False)
+    assert casted.column("numtrd").to_pylist() == ["100", "200"]  # the bug
+
+
+def test_stream_query_to_parquet_pinned_schema_produces_numeric_output_despite_leading_all_null_chunk(tmp_path):
+    """Fix, proven end to end: with the schema pinned from DECLARED types
+    (not inferred from data), the exact scenario that broke round 5 --an
+    all-NULL numeric chunk followed by a chunk with real integer values --
+    now produces a genuinely numeric output column, using REAL driver chunks
+    (via _real_driver_chunk), not a numpy-backend stub.
+    """
+    chunk1 = _real_driver_chunk([(1, None), (2, None)], ["permno", "numtrd"])
+    chunk2 = _real_driver_chunk([(3, 100), (4, 200)], ["permno", "numtrd"])
+
+    class FakeDB:
+        def raw_sql(self, sql, return_iter=False):
+            assert return_iter
+            return iter([chunk1, chunk2])
+
+    out_path = tmp_path / "dsf.parquet"
+    pinned_schema = pwd._build_pinned_schema(
+        ["permno", "numtrd"], {"permno": "INTEGER", "numtrd": "INTEGER"}
+    )
+
+    total_rows, wrote_any = pwd._stream_query_to_parquet(
+        FakeDB(), "crsp", "dsf", ["permno", "numtrd"], "", out_path, pinned_schema
+    )
+
+    assert wrote_any
+    assert total_rows == 4
+
+    result = pd.read_parquet(out_path)
+    assert len(result) == 4
+    assert pa.types.is_integer(pq.read_schema(out_path).field("numtrd").type)
+    assert result["numtrd"].isna().sum() == 2
+    typed = result.loc[~result["numtrd"].isna(), "numtrd"].astype(int).tolist()
+    assert typed == [100, 200]  # real ints, NOT "100"/"200" strings
+
+
+def test_stream_query_to_parquet_pinned_schema_identical_regardless_of_chunk_order_or_composition(tmp_path):
+    """The pinned schema no longer depends on data AT ALL -- unlike round
+    5's approach (schema built by merging each chunk's own inferred
+    schema), it comes entirely from declared SQL types. Prove two runs with
+    completely different chunk order/composition (one all-NULL-then-real,
+    one real-then-all-NULL) produce byte-identical pinned schemas, using
+    real driver chunks.
+    """
+    chunk_null = _real_driver_chunk([(1, None), (2, None)], ["permno", "numtrd"])
+    chunk_real = _real_driver_chunk([(3, 100), (4, 200)], ["permno", "numtrd"])
+
+    class FakeDBOrderA:
+        def raw_sql(self, sql, return_iter=False):
+            return iter([chunk_null, chunk_real])
+
+    class FakeDBOrderB:
+        def raw_sql(self, sql, return_iter=False):
+            return iter([chunk_real, chunk_null])
+
+    column_sql_types = {"permno": "INTEGER", "numtrd": "INTEGER"}
+    pinned_schema_a = pwd._build_pinned_schema(["permno", "numtrd"], column_sql_types)
+    pinned_schema_b = pwd._build_pinned_schema(["permno", "numtrd"], column_sql_types)
+    assert pinned_schema_a.equals(pinned_schema_b), (
+        "pinned schema must be identical regardless of data -- it's built "
+        "purely from declared types before any chunk is seen"
+    )
+
+    out_a = tmp_path / "order_a.parquet"
+    out_b = tmp_path / "order_b.parquet"
+    rows_a, wrote_a = pwd._stream_query_to_parquet(
+        FakeDBOrderA(), "crsp", "dsf", ["permno", "numtrd"], "", out_a, pinned_schema_a
+    )
+    rows_b, wrote_b = pwd._stream_query_to_parquet(
+        FakeDBOrderB(), "crsp", "dsf", ["permno", "numtrd"], "", out_b, pinned_schema_b
+    )
+
+    assert wrote_a and wrote_b
+    assert rows_a == rows_b == 4
+    schema_a = pq.read_schema(out_a)
+    schema_b = pq.read_schema(out_b)
+    assert schema_a.equals(schema_b)
+    assert pa.types.is_integer(schema_a.field("numtrd").type)
+
+
+def test_stream_query_to_parquet_signature_takes_query_pieces_and_pinned_schema(tmp_path):
+    """_stream_query_to_parquet builds its own SQL from
+    (library, table, columns, where_sql), and takes the pinned schema as an
+    explicit parameter built by the CALLER before any data is fetched --
+    not something it infers or buffers internally."""
     chunk = pd.DataFrame({"permno": [1], "date": ["2000-01-01"]})
 
     class FakeDB:
@@ -540,148 +799,22 @@ def test_stream_query_to_parquet_signature_takes_query_pieces_not_prebuilt_sql(t
             return iter([chunk])
 
     out_path = tmp_path / "dsf.parquet"
+    pinned_schema = pwd._build_pinned_schema(
+        ["permno", "date"], {"permno": "INTEGER", "date": "DATE"}
+    )
     total_rows, wrote_any = pwd._stream_query_to_parquet(
-        FakeDB(), "crsp", "dsf", ["permno", "date"], "", out_path
+        FakeDB(), "crsp", "dsf", ["permno", "date"], "", out_path, pinned_schema
     )
     assert wrote_any
     assert total_rows == 1
-
-
-def test_stream_query_to_parquet_resolves_null_column_within_cap_across_chunks(tmp_path):
-    """crsp.dsf-style data where a column (e.g. numtrd, NASDAQ-only) is
-    all-NULL in the first chunk and has real int values in a later chunk,
-    within the schema-resolution buffer cap. Must still produce one unified,
-    valid Parquet file (widened to float64, per _widen_integers_to_float64).
-    """
-    chunk1 = pd.DataFrame({"permno": [1, 2], "numtrd": [None, None]})
-    chunk2 = pd.DataFrame({"permno": [3, 4], "numtrd": [100, 200]})
-
-    class FakeDB:
-        def raw_sql(self, sql, return_iter=False):
-            assert return_iter
-            return iter([chunk1, chunk2])
-
-    out_path = tmp_path / "dsf.parquet"
-
-    total_rows, wrote_any = pwd._stream_query_to_parquet(
-        FakeDB(), "crsp", "dsf", ["permno", "numtrd"], "", out_path
-    )
-
-    assert wrote_any
-    assert total_rows == 4
-    assert out_path.exists()
-
-    result = pd.read_parquet(out_path)
-    assert len(result) == 4
-    assert result["numtrd"].isna().sum() == 2
-    typed = result.loc[~result["numtrd"].isna(), "numtrd"].astype(int).tolist()
-    assert typed == [100, 200]
-
-
-def test_stream_query_to_parquet_null_column_beyond_resolution_cap_fails_loudly(tmp_path):
-    """KNOWN LIMITATION (documented in _stream_query_to_parquet's
-    docstring): if a column is NULL in every one of the first
-    _SCHEMA_RESOLUTION_CHUNK_CAP chunks and only gets a real value in a
-    LATER chunk, the pinned schema still has pa.null() for that field, and
-    casting the later chunk raises -- a real, visible failure (caught and
-    logged as "query_failed" by pull_table), not silent data loss. This
-    test proves that's actually what happens, not just assumed.
-    """
-    all_null_chunks = [
-        pd.DataFrame({"permno": [i], "numtrd": [None]})
-        for i in range(pwd._SCHEMA_RESOLUTION_CHUNK_CAP)
-    ]
-    late_real_chunk = pd.DataFrame({"permno": [999], "numtrd": [500]})
-
-    class FakeDB:
-        def raw_sql(self, sql, return_iter=False):
-            assert return_iter
-            return iter(all_null_chunks + [late_real_chunk])
-
-    out_path = tmp_path / "dsf.parquet"
-
-    with pytest.raises(pa.ArrowNotImplementedError):
-        pwd._stream_query_to_parquet(
-            FakeDB(), "crsp", "dsf", ["permno", "numtrd"], "", out_path
-        )
-
-    # No partial/corrupted file left behind.
-    assert not out_path.exists()
-    assert not out_path.with_suffix(out_path.suffix + ".tmp").exists()
-
-
-def test_stream_query_to_parquet_int64_float64_drift_produces_identical_schema_regardless_of_chunk_order(tmp_path):
-    """Reproduces the ACTUAL observed drift pattern Fix 3 addresses: wrds's
-    chunked reader runs pandas' convert_dtypes() independently per chunk, so
-    the very same numeric column can infer as pandas `Int64` in a chunk
-    where every value happens to be whole, and `Float64` in a chunk with a
-    fractional value -- depending purely on chunk-boundary luck, not on the
-    query or data itself.
-
-    Proves the pinned-schema approach is immune to that luck: two runs of
-    functionally the same data, differing ONLY in which chunk got the
-    integer-shaped values and which got the fractional-shaped values,
-    produce an IDENTICAL output schema (and identical values) either way --
-    unlike a per-chunk-inferred approach, where the winning dtype could
-    depend on which chunk happened to be processed/promoted first.
-    """
-    int_chunk = pd.DataFrame({"permno": [1, 2, 3], "ret": [1, 1, 2]}).astype({"ret": "Int64"})
-    float_chunk = pd.DataFrame({"permno": [4, 5], "ret": [1.0, 1.5]}).astype({"ret": "Float64"})
-
-    class FakeDBOrderA:
-        def raw_sql(self, sql, return_iter=False):
-            return iter([int_chunk, float_chunk])
-
-    class FakeDBOrderB:
-        def raw_sql(self, sql, return_iter=False):
-            return iter([float_chunk, int_chunk])
-
-    out_a = tmp_path / "order_a.parquet"
-    out_b = tmp_path / "order_b.parquet"
-
-    rows_a, wrote_a = pwd._stream_query_to_parquet(
-        FakeDBOrderA(), "crsp", "dsf", ["permno", "ret"], "", out_a
-    )
-    rows_b, wrote_b = pwd._stream_query_to_parquet(
-        FakeDBOrderB(), "crsp", "dsf", ["permno", "ret"], "", out_b
-    )
-
-    assert wrote_a and wrote_b
-    assert rows_a == rows_b == 5
-
-    schema_a = pq.read_schema(out_a)
-    schema_b = pq.read_schema(out_b)
-    assert schema_a.equals(schema_b), (
-        "the pinned schema must be identical regardless of which chunk "
-        "arrived first"
-    )
-    assert pa.types.is_floating(schema_a.field("ret").type)
-
-    result_a = pd.read_parquet(out_a).sort_values("permno").reset_index(drop=True)
-    result_b = pd.read_parquet(out_b).sort_values("permno").reset_index(drop=True)
-    assert result_a["ret"].tolist() == result_b["ret"].tolist() == [1.0, 1.0, 2.0, 1.0, 1.5]
-
-
-def test_stream_query_to_parquet_default_promote_options_genuinely_cannot_merge_these_chunks():
-    """Sanity check that this is a real drift case, not a simplified stand-in
-    pyarrow's "default" promotion mode was already able to handle -- proven
-    directly against pyarrow, independent of this script's own code."""
-    chunk1 = pd.DataFrame({"permno": [1, 2, 3], "ret": [1, 1, 2]}).astype({"ret": "Int64"})
-    chunk2 = pd.DataFrame({"permno": [4, 5], "ret": [1.0, 1.5]}).astype({"ret": "Float64"})
-    table1 = pa.Table.from_pandas(chunk1, preserve_index=False)
-    table2 = pa.Table.from_pandas(chunk2, preserve_index=False)
-    with pytest.raises(pa.ArrowTypeError):
-        pa.concat_tables([table1, table2], promote_options="default")
+    assert pq.read_schema(out_path).equals(pinned_schema)
 
 
 def test_stream_query_to_parquet_writer_is_used_incrementally_not_accumulated(tmp_path, monkeypatch):
-    """Fix 3's memory-bound claim: peak memory during the write must be
-    bounded by a small, fixed number of chunks (_SCHEMA_RESOLUTION_CHUNK_CAP),
-    not the whole table. Asserted structurally (per the round's own guidance
-    that RSS isn't practical to measure in a unit test): confirm
-    ParquetWriter.write_table is called incrementally, once per chunk (after
-    the small resolution buffer flushes), rather than the previous round's
-    approach of collecting every chunk into a Python list and writing once
+    """Peak memory during the write must be bounded by one chunk at a time,
+    not the whole table. Asserted structurally: confirm
+    ParquetWriter.write_table is called incrementally, once per chunk,
+    rather than collecting every chunk into a Python list and writing once
     at the very end via a single pq.write_table(combined) call.
     """
     write_table_call_row_counts = []
@@ -705,34 +838,34 @@ def test_stream_query_to_parquet_writer_is_used_incrementally_not_accumulated(tm
             return iter(chunks)
 
     out_path = tmp_path / "dsf.parquet"
+    pinned_schema = pwd._build_pinned_schema(
+        ["permno", "date"], {"permno": "INTEGER", "date": "DATE"}
+    )
     total_rows, wrote_any = pwd._stream_query_to_parquet(
-        FakeDB(), "crsp", "dsf", ["permno", "date"], "", out_path
+        FakeDB(), "crsp", "dsf", ["permno", "date"], "", out_path, pinned_schema
     )
 
     assert wrote_any
     assert total_rows == 8
-    # More than one write_table call proves chunks were written
+    # One write_table call per chunk proves chunks were written
     # incrementally rather than concatenated into one giant table and
     # written in a single call at the end.
-    assert len(write_table_call_row_counts) > 1
+    assert len(write_table_call_row_counts) == len(chunks)
     # No single write_table call ever saw the whole table's worth of rows.
     assert all(c < total_rows for c in write_table_call_row_counts)
 
-    # Also confirm the previous round's whole-table-accumulation primitive
-    # (pa.concat_tables) is no longer used anywhere in this function's
-    # source -- the schema is pinned/resolved incrementally, not by
-    # accumulating and reconciling every chunk's inferred schema after the
-    # fact.
+    # Confirm none of round 5's whole-table-accumulation/lookahead-buffer
+    # primitives are used anywhere in this function's source anymore.
     import inspect
     source = inspect.getsource(pwd._stream_query_to_parquet)
-    # Strip the docstring (which explicitly *discusses*, in prose, the old
-    # concat_tables/replace_schema_metadata approach this function replaced)
-    # before checking -- we want to confirm the CODE doesn't call these, not
-    # that the words never appear anywhere in the function's text.
     _docstring_parts = source.split('"""')
     code_only = _docstring_parts[0] + "".join(_docstring_parts[2:])
     assert "concat_tables(" not in code_only
     assert "replace_schema_metadata(" not in code_only
+    assert "pending" not in code_only
+    assert not hasattr(pwd, "_widen_integers_to_float64")
+    assert not hasattr(pwd, "_merge_schema_resolving_nulls")
+    assert not hasattr(pwd, "_SCHEMA_RESOLUTION_CHUNK_CAP")
 
 
 def test_stream_query_to_parquet_cleans_up_tmp_file_on_keyboard_interrupt(tmp_path, monkeypatch):
@@ -751,8 +884,13 @@ def test_stream_query_to_parquet_cleans_up_tmp_file_on_keyboard_interrupt(tmp_pa
 
     monkeypatch.setattr(pq, "ParquetWriter", _raise_on_init)
 
+    pinned_schema = pwd._build_pinned_schema(
+        ["permno", "date"], {"permno": "INTEGER", "date": "DATE"}
+    )
     with pytest.raises(KeyboardInterrupt):
-        pwd._stream_query_to_parquet(FakeDB(), "crsp", "dsf", ["permno", "date"], "", out_path)
+        pwd._stream_query_to_parquet(
+            FakeDB(), "crsp", "dsf", ["permno", "date"], "", out_path, pinned_schema
+        )
 
     assert not tmp_marker_path.exists()
     assert not out_path.exists()
@@ -814,7 +952,7 @@ def test_pull_table_query_failed_error_is_sanitized_in_manifest(tmp_path, monkey
 
     class FakeDB:
         def describe_table(self, library, table):
-            return pd.DataFrame({"name": ["permno"]})
+            return pd.DataFrame({"name": ["permno"], "type": ["INTEGER"]})
 
         def raw_sql(self, sql, return_iter=False):
             raise RuntimeError('auth failed for user "myuser42" host=db.example.com')
@@ -909,7 +1047,10 @@ class FakeMainDB:
     def describe_table(self, library, table):
         missing = self.missing_columns_by_table.get(f"{library}.{table}", set())
         cols = sorted(FULL_COLUMN_SET - set(missing))
-        return pd.DataFrame({"name": cols})
+        # See StubDB.describe_table's comment -- real describe_table() always
+        # has a "type" column too; "VARCHAR" for everything is fine here
+        # since these tests assert status/SQL text, not pinned-schema dtypes.
+        return pd.DataFrame({"name": cols, "type": ["VARCHAR"] * len(cols)})
 
     def raw_sql(self, sql, return_iter=False):
         match = re.search(r"FROM (\S+)", sql)
@@ -918,7 +1059,16 @@ class FakeMainDB:
         if return_iter:
             chunks = self.chunks_by_table.get(key)
             if chunks is None:
-                chunks = [pd.DataFrame({"permno": [1], "date": ["2000-01-01"]})]
+                # Build a default one-row chunk containing exactly the
+                # columns THIS query actually selected, not a fixed
+                # ["permno", "date"] -- the pinned-schema streaming path
+                # (unlike round 5's data-inferred approach) requires a
+                # chunk's columns to match query_columns exactly, since the
+                # schema now comes from declared types for those specific
+                # columns, built independently of any chunk's content.
+                select_list = sql.split("FROM")[0].replace("SELECT", "")
+                cols = [c.strip() for c in select_list.split(",") if c.strip()]
+                chunks = [pd.DataFrame({c: [1] for c in cols})]
             raise_after = self.raise_after_n_chunks_by_table.get(key)
 
             def _gen(chunks=chunks, raise_after=raise_after):
