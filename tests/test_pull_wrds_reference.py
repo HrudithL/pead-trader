@@ -185,32 +185,36 @@ def test_full_column_set_succeeds_for_every_phase_a_table(tmp_path, monkeypatch)
         assert matches.iloc[0]["status"] == "ok"
 
 
-REQUIRED_CASES = [
+STOCKNAMES_REQUIRED_CASES = [
+    ("crsp", "stocknames", column) for column in lib.CRSP_STOCKNAMES_REQUIRED_COLUMNS
+]
+NON_STOCKNAMES_REQUIRED_CASES = [
     (library, table, column)
     for library, table, required, _optional in TABLE_SPECS
+    if (library, table) != ("crsp", "stocknames")
     for column in required
 ]
 
-# Fix 3 (round 3 review): a missing required column for ANY Phase A table --
-# not just crsp.stocknames -- now blocks the whole run. Before this round,
-# crsp.stocknames failing was the ONLY one that took down the whole run (its
-# failure independently hard-aborts via resolve_universe()'s own
-# UniverseResolutionError, since PERMNO resolution structurally can't
-# proceed without it); comp.company/ibes.idsum/crsp.ccmxpf_lnkhist/
-# wrdsapps.ibcrsphist failing would silently let the run proceed to a
-# "SUCCESS -- safe to run in parallel" message. Fix 3 closes that gap by
-# checking the run log for ANY non-success status (see
-# wrds_pull_lib.find_run_log_failures) before promoting/declaring success --
-# with no special exemption for ccmxpf_lnkhist/ibcrsphist, since those two
-# already had a SEPARATE, narrower exemption (a library genuinely being
-# UNAVAILABLE on this account, which never even attempts the pull -- see
-# test_library_availability_persisted_with_none_comp_lib_when_compustat_
-# unavailable) that Fix 3 does not touch; what Fix 3 newly catches is the
-# table being AVAILABLE but the pull itself genuinely failing.
+# Round 3 review's Fix 3 originally made this a BLANKET check: any missing
+# required column on ANY Phase A table blocked the whole run, with no
+# special exemption for crsp.ccmxpf_lnkhist/wrdsapps.ibcrsphist (the two
+# tables the per-family degrade design -- see resolve_universe()'s
+# gvkey_resolution_skipped/ibes_ticker_resolution_skipped -- was built
+# specifically to let degrade instead of abort) or for comp.company/
+# ibes.idsum (which resolve_universe() never even reads). That was flagged
+# by the round that introduced it as a real, confirmed overcorrection, and
+# is fixed in THIS round: only crsp.stocknames failing in any way is a
+# genuine hard-fail (no PERMNO resolution is possible without it, and there
+# is no degradation path for it); crsp.ccmxpf_lnkhist/wrdsapps.ibcrsphist
+# failing degrades gracefully (the pre-existing per-family mechanism, which
+# already treats "pull failed, no file written" identically to "library
+# unavailable, never attempted"); comp.company/ibes.idsum failing is merely
+# logged, since neither is structurally required for anything
+# resolve_universe() computes.
 
 
-@pytest.mark.parametrize("library,table,column", REQUIRED_CASES)
-def test_missing_required_column_blocks_that_tables_pull(tmp_path, monkeypatch, library, table, column):
+@pytest.mark.parametrize("library,table,column", STOCKNAMES_REQUIRED_CASES)
+def test_missing_required_column_on_stocknames_blocks_whole_run(tmp_path, monkeypatch, library, table, column):
     _raw_dir, metadata_dir, manifest_path = _patch_reference_env(monkeypatch, tmp_path)
 
     fake_db = FakeReferenceDB(missing_columns_by_table={f"{library}.{table}": {column}})
@@ -226,9 +230,38 @@ def test_missing_required_column_blocks_that_tables_pull(tmp_path, monkeypatch, 
     assert matches.iloc[0]["status"] == "missing_required_columns"
     assert not any(c["key"] == f"{library}.{table}" for c in fake_db.calls)
     assert not (metadata_dir / "resolved_universe_ids.parquet").exists(), (
-        "Fix 3: a Phase A pull failure must prevent the resolved-ids file "
-        "from ever being promoted"
+        "crsp.stocknames has no degradation path -- a required-column "
+        "failure here must prevent the resolved-ids file from ever being "
+        "promoted"
     )
+
+
+@pytest.mark.parametrize("library,table,column", NON_STOCKNAMES_REQUIRED_CASES)
+def test_missing_required_column_on_other_tables_does_not_block_whole_run(
+    tmp_path, monkeypatch, capsys, library, table, column,
+):
+    """comp.company/wrdsapps.ibcrsphist/crsp.ccmxpf_lnkhist/ibes.idsum each
+    either degrade gracefully (the two linking tables, via the pre-existing
+    gvkey_resolution_skipped/ibes_ticker_resolution_skipped mechanism) or
+    are simply not read by resolve_universe() at all (comp.company,
+    ibes.idsum) -- none of them should block promotion of the resolved-ids
+    file or the SUCCESS message."""
+    _raw_dir, metadata_dir, manifest_path = _patch_reference_env(monkeypatch, tmp_path)
+
+    fake_db = FakeReferenceDB(missing_columns_by_table={f"{library}.{table}": {column}})
+    monkeypatch.setattr(lib, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_reference.py"])
+
+    ref.main()  # must NOT raise
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    matches = manifest[(manifest["library"] == library) & (manifest["table"] == table)]
+    assert len(matches) == 1
+    assert matches.iloc[0]["status"] == "missing_required_columns"
+    assert not any(c["key"] == f"{library}.{table}" for c in fake_db.calls)
+    assert (metadata_dir / "resolved_universe_ids.parquet").exists()
+    out = capsys.readouterr().out
+    assert "SUCCESS" in out
 
 
 OPTIONAL_CASES = [
@@ -257,7 +290,7 @@ def test_missing_optional_column_does_not_block_that_tables_pull(tmp_path, monke
 
 # ---------------------------------------------------------------------------
 # Per-identifier-family degrade at the resolve_universe() LAYER (original
-# Fix 3, unchanged this round): a missing/unpullable GVKEY/I-B-E-S-ticker
+# Fix 3 design, unchanged): a missing/unpullable GVKEY/I-B-E-S-ticker
 # linking table degrades ONLY that family inside resolve_universe() itself
 # -- it does not raise UniverseResolutionError, and the resolved-ids rows
 # come back with a null gvkey/ibes_ticker column instead. This is tested
@@ -265,105 +298,185 @@ def test_missing_optional_column_does_not_block_that_tables_pull(tmp_path, monke
 # (test_resolve_universe_missing_ccmxpf_lnkhist_skips_gvkey_only /
 # test_resolve_universe_missing_ibcrsphist_skips_ibes_ticker_only).
 #
-# What changes THIS round (Fix 3, round 3 review): whether main() still
-# treats the OVERALL run as safe to promote/declare success when the
-# underlying Phase A pull for that linking table genuinely FAILED (as
-# opposed to the table simply being unavailable on this account at all,
-# which is a separate, narrower case -- see
-# test_library_availability_persisted_with_none_comp_lib_when_compustat_
-# unavailable below, where the pull is never even attempted and the run
-# still succeeds). A real pull failure for ANY Phase A table -- including
-# these two linking tables -- now blocks promotion, matching the same
-# blanket "any non-success status fails the run" check the three consumer
-# scripts already apply to themselves.
+# Round 3 review's Fix 3 ORIGINALLY made main() additionally hard-abort the
+# whole run whenever ANY Phase A pull failed for ANY reason -- including a
+# genuine pull failure on these two linking tables. That was a confirmed
+# overcorrection (the round that shipped it flagged its own uncertainty):
+# resolve_universe()'s per-family degrade already treats "pull failed, no
+# file written" identically to "library unavailable, never attempted" (see
+# _load_optional_linking_table, which is a pure file-existence/readability
+# check, not a manifest-status check) -- so there was never a real gap to
+# close for these two tables specifically. THIS round narrows main()'s gate
+# back down: a genuine pull failure on crsp.ccmxpf_lnkhist/
+# wrdsapps.ibcrsphist now degrades gracefully (matching "library
+# unavailable") instead of hard-aborting the whole run.
 # ---------------------------------------------------------------------------
 
 
-def test_ccmxpf_lnkhist_pull_failure_now_blocks_whole_run(tmp_path, monkeypatch, capsys):
-    """Before Fix 3 (round 3 review), a genuine crsp.ccmxpf_lnkhist pull
-    failure (the table IS available on this account, but this particular
-    pull attempt failed -- as opposed to the library being unavailable at
-    all) still let the whole run proceed to SUCCESS, since GVKEY resolution
-    degrading gracefully at the resolve_universe() layer masked the
-    underlying Phase A failure from main()'s success check entirely (there
-    wasn't one). Fix 3 closes that gap."""
+def test_ccmxpf_lnkhist_missing_required_column_degrades_gracefully_not_a_hard_abort(
+    tmp_path, monkeypatch, capsys,
+):
+    """A missing required column on crsp.ccmxpf_lnkhist means pull_table()
+    never writes ccmxpf_lnkhist.parquet -- resolve_universe()'s
+    _load_optional_linking_table then sees "file not found", exactly as it
+    would if the library were simply unavailable, and sets
+    gvkey_resolution_skipped=True. This must NOT hard-abort the run."""
     _raw_dir, metadata_dir, manifest_path = _patch_reference_env(monkeypatch, tmp_path)
 
     fake_db = FakeReferenceDB(missing_columns_by_table={"crsp.ccmxpf_lnkhist": {"gvkey"}})
     monkeypatch.setattr(lib, "connect", lambda: fake_db)
     monkeypatch.setattr(sys, "argv", ["pull_wrds_reference.py"])
 
-    with pytest.raises(SystemExit):
-        ref.main()
+    ref.main()  # must NOT raise
 
     manifest = pd.read_csv(manifest_path, keep_default_na=False)
     assert (manifest["status"] == "missing_required_columns").any()
-    assert not (metadata_dir / "resolved_universe_ids.parquet").exists(), (
-        "a Phase A pull failure must prevent the resolved-ids file from "
-        "ever being promoted, even though GVKEY resolution itself degraded "
-        "gracefully rather than raising"
+    assert (metadata_dir / "resolved_universe_ids.parquet").exists(), (
+        "a crsp.ccmxpf_lnkhist pull failure must degrade GVKEY resolution "
+        "gracefully, not block promotion of the resolved-ids file"
     )
     out = capsys.readouterr().out
-    assert "SUCCESS" not in out
-    assert "safe to run" not in out.lower()
+    assert "SUCCESS" in out
+    assert "GVKEY resolution SKIPPED" in out
 
 
-def test_ibcrsphist_pull_failure_now_blocks_whole_run(tmp_path, monkeypatch, capsys):
-    """Same as test_ccmxpf_lnkhist_pull_failure_now_blocks_whole_run above,
-    for the wrdsapps.ibcrsphist / I-B-E-S-ticker family."""
+def test_ibcrsphist_missing_required_column_degrades_gracefully_not_a_hard_abort(
+    tmp_path, monkeypatch, capsys,
+):
+    """Same as the ccmxpf_lnkhist test above, for the wrdsapps.ibcrsphist /
+    I-B-E-S-ticker family."""
     _raw_dir, metadata_dir, manifest_path = _patch_reference_env(monkeypatch, tmp_path)
 
     fake_db = FakeReferenceDB(missing_columns_by_table={"wrdsapps.ibcrsphist": {"ticker"}})
     monkeypatch.setattr(lib, "connect", lambda: fake_db)
     monkeypatch.setattr(sys, "argv", ["pull_wrds_reference.py"])
 
-    with pytest.raises(SystemExit):
-        ref.main()
+    ref.main()  # must NOT raise
 
     manifest = pd.read_csv(manifest_path, keep_default_na=False)
     assert (manifest["status"] == "missing_required_columns").any()
-    assert not (metadata_dir / "resolved_universe_ids.parquet").exists(), (
-        "a Phase A pull failure must prevent the resolved-ids file from "
-        "ever being promoted, even though I/B/E/S ticker resolution itself "
-        "degraded gracefully rather than raising"
+    assert (metadata_dir / "resolved_universe_ids.parquet").exists(), (
+        "a wrdsapps.ibcrsphist pull failure must degrade I/B/E/S ticker "
+        "resolution gracefully, not block promotion of the resolved-ids "
+        "file"
     )
     out = capsys.readouterr().out
-    assert "SUCCESS" not in out
-    assert "safe to run" not in out.lower()
+    assert "SUCCESS" in out
+    assert "I/B/E/S ticker resolution SKIPPED" in out
 
 
-class _FakeReferenceDBCompCompanyQueryFails(FakeReferenceDB):
-    """comp.company's real query raises outright (e.g. a genuine WRDS query
-    error) -- every OTHER Phase A table pulls fine. comp.company is not
-    itself read by resolve_universe() at all (see resolve_universe()'s
-    parameter list: it only reads the OM universe files, crsp.stocknames,
-    crsp.ccmxpf_lnkhist, and wrdsapps.ibcrsphist), so PERMNO/GVKEY/I-B-E-S
-    ticker resolution all complete perfectly normally despite this failure
-    -- this is the starkest version of the exact scenario Fix 3 exists to
-    catch."""
+class _FakeReferenceDBTableQueryFails(FakeReferenceDB):
+    """Generic: `FAILING_KEY` (e.g. "crsp.ccmxpf_lnkhist") raises a genuine
+    WRDS query failure at the raw_sql stage -- the table IS reachable
+    (describe_table succeeds, every required column is present), but the
+    actual data-fetch query itself fails (manifest status "query_failed").
+    This is deliberately a DIFFERENT failure mode from
+    missing_required_columns (used above): that one never even reaches
+    raw_sql, so it's important to also prove the fix holds for a failure
+    that occurs after schema validation passes. Every other Phase A table
+    pulls fine unless a subclass overrides further."""
+
+    FAILING_KEY = None
 
     def raw_sql(self, sql, return_iter=False):
         match = re.search(r"FROM (\S+)", sql)
         key = match.group(1) if match else "?"
-        if key == "comp.company":
+        if key == self.FAILING_KEY:
             self.calls.append({"key": key, "sql": sql})
-            raise RuntimeError("simulated WRDS query failure for comp.company")
+            raise RuntimeError(f"simulated WRDS query failure for {self.FAILING_KEY}")
         return super().raw_sql(sql, return_iter=return_iter)
 
 
-def test_comp_company_query_failure_blocks_promotion_even_though_resolution_itself_succeeds(
+class _FakeReferenceDBCcmxpfLnkhistQueryFails(_FakeReferenceDBTableQueryFails):
+    FAILING_KEY = "crsp.ccmxpf_lnkhist"
+
+
+class _FakeReferenceDBIbcrsphistQueryFails(_FakeReferenceDBTableQueryFails):
+    FAILING_KEY = "wrdsapps.ibcrsphist"
+
+
+class _FakeReferenceDBCompCompanyQueryFails(_FakeReferenceDBTableQueryFails):
+    FAILING_KEY = "comp.company"
+
+
+class _FakeReferenceDBIdsumQueryFails(_FakeReferenceDBTableQueryFails):
+    FAILING_KEY = "ibes.idsum"
+
+
+class _FakeReferenceDBStocknamesQueryFails(_FakeReferenceDBTableQueryFails):
+    FAILING_KEY = "crsp.stocknames"
+
+
+def test_ccmxpf_lnkhist_query_failure_degrades_gracefully_and_still_promotes(
     tmp_path, monkeypatch, capsys,
 ):
-    """The literal scenario Fix 3's own task description names: comp.company
-    (a table resolve_universe() doesn't even read) has a genuine pull
-    failure while every table PERMNO/GVKEY/I-B-E-S-ticker resolution
-    actually needs pulls and resolves cleanly. Before Fix 3, this let
-    pull_wrds_reference.py print SUCCESS and promote the resolved-ids file
-    anyway, silently hiding the comp.company failure from anyone reading
-    just the final console message."""
+    """THE specific regression this round fixes: a genuine query_failed on
+    crsp.ccmxpf_lnkhist (as opposed to a missing_required_columns failure,
+    covered above) must also degrade gracefully rather than hard-abort.
+    Same reasoning: pull_table() never writes ccmxpf_lnkhist.parquet on
+    this failure path, so resolve_universe() sees "file not found" and
+    skips GVKEY resolution exactly as it would for an unavailable
+    library."""
     _raw_dir, metadata_dir, manifest_path = _patch_reference_env(monkeypatch, tmp_path)
 
-    fake_db = _FakeReferenceDBCompCompanyQueryFails()
+    fake_db = _FakeReferenceDBCcmxpfLnkhistQueryFails()
+    monkeypatch.setattr(lib, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_reference.py"])
+
+    ref.main()  # must NOT raise
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    ccmxpf_rows = manifest[(manifest["library"] == "crsp") & (manifest["table"] == "ccmxpf_lnkhist")]
+    assert len(ccmxpf_rows) == 1
+    assert ccmxpf_rows.iloc[0]["status"] == "query_failed"
+    stocknames_rows = manifest[(manifest["library"] == "crsp") & (manifest["table"] == "stocknames")]
+    assert stocknames_rows.iloc[0]["status"] == "ok"
+    assert (metadata_dir / "resolved_universe_ids.parquet").exists(), (
+        "a genuine crsp.ccmxpf_lnkhist query failure must degrade GVKEY "
+        "resolution gracefully, not block promotion"
+    )
+    out = capsys.readouterr().out
+    assert "SUCCESS" in out
+    assert "GVKEY resolution SKIPPED" in out
+
+
+def test_ibcrsphist_query_failure_degrades_gracefully_and_still_promotes(
+    tmp_path, monkeypatch, capsys,
+):
+    """Same as the ccmxpf_lnkhist query_failed test above, for
+    wrdsapps.ibcrsphist / I-B-E-S ticker resolution."""
+    _raw_dir, metadata_dir, manifest_path = _patch_reference_env(monkeypatch, tmp_path)
+
+    fake_db = _FakeReferenceDBIbcrsphistQueryFails()
+    monkeypatch.setattr(lib, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_reference.py"])
+
+    ref.main()  # must NOT raise
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    ibcrsphist_rows = manifest[(manifest["library"] == "wrdsapps") & (manifest["table"] == "ibcrsphist")]
+    assert len(ibcrsphist_rows) == 1
+    assert ibcrsphist_rows.iloc[0]["status"] == "query_failed"
+    stocknames_rows = manifest[(manifest["library"] == "crsp") & (manifest["table"] == "stocknames")]
+    assert stocknames_rows.iloc[0]["status"] == "ok"
+    assert (metadata_dir / "resolved_universe_ids.parquet").exists(), (
+        "a genuine wrdsapps.ibcrsphist query failure must degrade I/B/E/S "
+        "ticker resolution gracefully, not block promotion"
+    )
+    out = capsys.readouterr().out
+    assert "SUCCESS" in out
+    assert "I/B/E/S ticker resolution SKIPPED" in out
+
+
+def test_stocknames_query_failure_still_hard_aborts(tmp_path, monkeypatch, capsys):
+    """crsp.stocknames is the one table with NO degradation path: a genuine
+    query_failed here (table reachable, pull itself fails) must still
+    hard-abort the whole run and refuse to promote the resolved-ids file --
+    proving the narrowing of the blanket check down to a stocknames-specific
+    one didn't weaken this protection."""
+    _raw_dir, metadata_dir, manifest_path = _patch_reference_env(monkeypatch, tmp_path)
+
+    fake_db = _FakeReferenceDBStocknamesQueryFails()
     monkeypatch.setattr(lib, "connect", lambda: fake_db)
     monkeypatch.setattr(sys, "argv", ["pull_wrds_reference.py"])
 
@@ -371,22 +484,101 @@ def test_comp_company_query_failure_blocks_promotion_even_though_resolution_itse
         ref.main()
 
     manifest = pd.read_csv(manifest_path, keep_default_na=False)
-    company_rows = manifest[(manifest["library"] == "comp") & (manifest["table"] == "company")]
-    assert len(company_rows) == 1
-    assert company_rows.iloc[0]["status"] == "query_failed"
-    # PERMNO/GVKEY/I-B-E-S ticker resolution itself must have gone through
-    # cleanly -- proving this abort is NOT a resolution-rate/canary failure,
-    # only Fix 3's new run-log check.
     stocknames_rows = manifest[(manifest["library"] == "crsp") & (manifest["table"] == "stocknames")]
-    assert stocknames_rows.iloc[0]["status"] == "ok"
-    assert not (metadata_dir / "resolved_universe_ids.parquet").exists(), (
-        "Fix 3: a Phase A failure elsewhere (comp.company) must prevent "
-        "promotion even though universe resolution itself would have "
-        "succeeded using only the tables that DID pull correctly"
-    )
+    assert stocknames_rows.iloc[0]["status"] == "query_failed"
+    assert not (metadata_dir / "resolved_universe_ids.parquet").exists()
     out = capsys.readouterr().out
     assert "SUCCESS" not in out
     assert "safe to run" not in out.lower()
+
+
+def test_stocknames_query_failure_hard_aborts_even_with_stale_prior_file(
+    tmp_path, monkeypatch, capsys,
+):
+    """Stronger version of the test above: a valid stocknames.parquet from a
+    PRIOR successful run already exists on disk, so if main() relied only
+    on resolve_universe()'s file-existence check, a genuine query_failed on
+    THIS run's --force re-pull attempt would go unnoticed (the old file is
+    left untouched by design, and resolution would proceed against it,
+    succeeding). This proves main()'s explicit stocknames-status check
+    (independent of what's on disk) is what actually catches this case."""
+    raw_dir, metadata_dir, manifest_path = _patch_reference_env(monkeypatch, tmp_path)
+    (raw_dir / "crsp").mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({
+        "permno": [1], "namedt": ["1996-01-01"], "nameenddt": ["2013-12-31"],
+        "ticker": ["OMX"], "cusip": ["1"], "ncusip": ["1"],
+    }).to_parquet(raw_dir / "crsp" / "stocknames.parquet", index=False)
+
+    fake_db = _FakeReferenceDBStocknamesQueryFails()
+    monkeypatch.setattr(lib, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_reference.py", "--force"])
+
+    with pytest.raises(SystemExit):
+        ref.main()
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    stocknames_rows = manifest[(manifest["library"] == "crsp") & (manifest["table"] == "stocknames")]
+    assert stocknames_rows.iloc[0]["status"] == "query_failed"
+    assert not (metadata_dir / "resolved_universe_ids.parquet").exists(), (
+        "a genuine crsp.stocknames query failure must hard-abort even "
+        "though a stale prior-run file on disk would otherwise let "
+        "resolve_universe() itself succeed"
+    )
+    out = capsys.readouterr().out
+    assert "SUCCESS" not in out
+
+
+def test_comp_company_query_failure_does_not_block_promotion(tmp_path, monkeypatch, capsys):
+    """comp.company is not read by resolve_universe() at all (see its
+    parameter list: it only reads the OM universe files, crsp.stocknames,
+    crsp.ccmxpf_lnkhist, and wrdsapps.ibcrsphist) -- it exists purely for
+    supplementary lookup use downstream (sector labels), not for PERMNO/
+    GVKEY/I-B-E-S-ticker resolution itself. A genuine pull failure here
+    must not block promotion of the resolved-ids file: PERMNO/GVKEY/I-B-E-S
+    ticker resolution all complete perfectly normally despite it."""
+    _raw_dir, metadata_dir, manifest_path = _patch_reference_env(monkeypatch, tmp_path)
+
+    fake_db = _FakeReferenceDBCompCompanyQueryFails()
+    monkeypatch.setattr(lib, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_reference.py"])
+
+    ref.main()  # must NOT raise
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    company_rows = manifest[(manifest["library"] == "comp") & (manifest["table"] == "company")]
+    assert len(company_rows) == 1
+    assert company_rows.iloc[0]["status"] == "query_failed"
+    stocknames_rows = manifest[(manifest["library"] == "crsp") & (manifest["table"] == "stocknames")]
+    assert stocknames_rows.iloc[0]["status"] == "ok"
+    assert (metadata_dir / "resolved_universe_ids.parquet").exists(), (
+        "comp.company is a supplementary lookup table resolve_universe() "
+        "never reads -- its failure must not block promotion"
+    )
+    out = capsys.readouterr().out
+    assert "SUCCESS" in out
+
+
+def test_ibes_idsum_query_failure_does_not_block_promotion(tmp_path, monkeypatch, capsys):
+    """Same reasoning and decision as comp.company above, for ibes.idsum
+    (also never read by resolve_universe())."""
+    _raw_dir, metadata_dir, manifest_path = _patch_reference_env(monkeypatch, tmp_path)
+
+    fake_db = _FakeReferenceDBIdsumQueryFails()
+    monkeypatch.setattr(lib, "connect", lambda: fake_db)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_reference.py"])
+
+    ref.main()  # must NOT raise
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    idsum_rows = manifest[(manifest["library"] == "ibes") & (manifest["table"] == "idsum")]
+    assert len(idsum_rows) == 1
+    assert idsum_rows.iloc[0]["status"] == "query_failed"
+    assert (metadata_dir / "resolved_universe_ids.parquet").exists(), (
+        "ibes.idsum is a supplementary lookup table resolve_universe() "
+        "never reads -- its failure must not block promotion"
+    )
+    out = capsys.readouterr().out
+    assert "SUCCESS" in out
 
 
 # ---------------------------------------------------------------------------

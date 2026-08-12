@@ -332,37 +332,99 @@ def main():
             )
             raise SystemExit(1)
 
-        # Fix 3 (round 3 review): pull_wrds_reference.py was previously
-        # exempt from the "did any pull actually fail" check the three
-        # consumer scripts already apply to themselves -- resolve_universe()
-        # can complete and every floor/canary check above can pass using
-        # ONLY the Phase A tables that pulled correctly, silently masking a
-        # real Phase A failure (query_failed, missing_required_columns,
-        # describe_table_error, or the new ok_suspicious_zero_rows from Fix
-        # 2). Checked here, inside this same try block, so a failure gets
-        # identical treatment to the floor/canary checks above: cleanup via
-        # the except clause below, and neither the resolved-ids file nor the
-        # audit CSVs are ever promoted. "library_unavailable" (a library
-        # simply not being on this account) is correctly NOT a failure here
-        # -- see SUCCESS_STATUSES's docstring in wrds_pull_lib.py.
+        # Fix 3 (round 3 review) ORIGINALLY made this a blanket check: ANY
+        # non-success status on ANY Phase A table blocked promotion. That
+        # was itself an overcorrection, fixed in this round. The real
+        # per-table distinction (see resolve_universe()'s docstring, and
+        # UniverseResolutionError's docstring) is:
+        #
+        #   - crsp.stocknames: the ONE table with no degradation path at
+        #     all -- PERMNO resolution structurally cannot proceed without
+        #     it, so ANY failure here (unavailable, query_failed, missing
+        #     required columns, describe_table_error, or -- see
+        #     resolve_universe()'s _load_parquet_or_raise -- simply ending
+        #     up unreadable/empty) must remain a hard, whole-run abort.
+        #     Checked explicitly below, independent of whatever happens to
+        #     be sitting at stocknames.parquet on disk (a stale file from a
+        #     PRIOR good run could otherwise let a genuine failure on THIS
+        #     run's pull attempt slip past resolve_universe()'s own
+        #     file-existence check).
+        #
+        #   - crsp.ccmxpf_lnkhist / wrdsapps.ibcrsphist: NOT required for
+        #     PERMNO resolution. A genuine pull failure here (table
+        #     available, pull itself failed) leaves no file at
+        #     out_path (pull_table() never writes on a failure path), which
+        #     is exactly what resolve_universe()'s
+        #     _load_optional_linking_table already treats identically to
+        #     the library being unavailable in the first place: it sets
+        #     gvkey_skip_reason / ibes_ticker_skip_reason, which flows into
+        #     ResolvedUniverse.gvkey_resolution_skipped /
+        #     ibes_ticker_resolution_skipped -- the pre-existing, correct
+        #     per-family degrade. So a failure here must NOT additionally
+        #     hard-abort the whole run; the "unpullable" language in the
+        #     original per-family design always meant BOTH "table doesn't
+        #     exist" and "the pull attempt itself failed", not just the
+        #     former.
+        #
+        #   - comp.company / ibes.idsum: neither is read by
+        #     resolve_universe() at all (see its parameter list -- it never
+        #     even accepts a path for either). They exist purely for
+        #     supplementary lookup use downstream (sector labels from
+        #     comp.company, ticker/CUSIP mapping detail from ibes.idsum),
+        #     not for PERMNO/GVKEY/I-B-E-S-ticker resolution itself, so a
+        #     failure here has zero effect on anything the floor/canary
+        #     checks above verify. Logged loudly (visible, not silently
+        #     swallowed) but does not block promotion.
+        #
+        # "library_unavailable" (a library simply not being on this
+        # account) was already, correctly, not a failure at all -- see
+        # SUCCESS_STATUSES's docstring in wrds_pull_lib.py -- and remains
+        # so here.
         run_log_failures = lib.find_run_log_failures(log)
-        if run_log_failures:
+        stocknames_failures = [
+            row for row in run_log_failures
+            if (row.get("library"), row.get("table")) == ("crsp", "stocknames")
+        ]
+        non_stocknames_failures = [
+            row for row in run_log_failures if row not in stocknames_failures
+        ]
+
+        if stocknames_failures:
             print(
-                f"FATAL: {len(run_log_failures)} Phase A table pull(s) did "
-                f"not succeed -- refusing to promote "
-                f"{final_resolved_ids_path} or declare success, even though "
-                f"universe resolution itself may have completed using only "
-                f"the tables that DID pull correctly. The three consumer "
-                f"scripts must NOT be run:",
+                f"FATAL: crsp.stocknames did not pull successfully -- no "
+                f"PERMNO resolution is possible without it, and (unlike "
+                f"crsp.ccmxpf_lnkhist/wrdsapps.ibcrsphist) there is no "
+                f"per-family degradation path for this table. Refusing to "
+                f"promote {final_resolved_ids_path} or declare success. The "
+                f"three consumer scripts must NOT be run:",
                 flush=True,
             )
-            for row in run_log_failures:
+            for row in stocknames_failures:
                 print(
                     f"  - {row.get('library')}.{row.get('table')}: "
                     f"status={row.get('status')} error={row.get('error')}",
                     flush=True,
                 )
             raise SystemExit(1)
+
+        if non_stocknames_failures:
+            print(
+                f"WARNING: {len(non_stocknames_failures)} Phase A pull(s) "
+                f"did not succeed, but do NOT block promotion of "
+                f"{final_resolved_ids_path}: crsp.ccmxpf_lnkhist/"
+                f"wrdsapps.ibcrsphist failures already degrade gracefully "
+                f"(see gvkey_resolution_skipped/ibes_ticker_resolution_"
+                f"skipped in the summary above), and comp.company/ibes.idsum "
+                f"are supplementary lookups that resolve_universe() never "
+                f"reads in the first place:",
+                flush=True,
+            )
+            for row in non_stocknames_failures:
+                print(
+                    f"  - {row.get('library')}.{row.get('table')}: "
+                    f"status={row.get('status')} error={row.get('error')}",
+                    flush=True,
+                )
     except BaseException:
         # Finding 1: best-effort cleanup of the temp resolved-ids file (and,
         # lower-priority fix, the temp audit CSVs) on ANY abort path
