@@ -1,0 +1,5 @@
+library,table,status,rows,path,missing_columns,optional_columns_missing,error,pulled_at,start_date,end_date,universe_fingerprint
+ibes,"statsumu_epsus,actu_epsus,detu_epsus",ibes_ticker_validation_failed,0,,,,"14 I/B/E/S ticker(s) failed the format allowlist '^[A-Z0-9._-]{1,10}\\Z' and were not safely interpolated into a SQL IN (...) clause: ['BKHT/1', 'CEN2/1', 'CMCS/2', 'DCHA/2', 'GCOM/1', 'HRE/1', 'LEN/1', 'LMII/2', 'NWS/1', 'RAME/1', 'RD/1', 'TUES/1', 'VIA/2', 'VIAB/1']",2026-08-12T16:09:49+00:00,,,
+ibes,actu_epsus,ok,393503,data/raw_wrds/ibes/actu_epsus.parquet,,,,2026-08-12T16:15:15+00:00,1995-01-01,2014-06-30,
+ibes,statsumu_epsus,ok,5595520,data/raw_wrds/ibes/statsumu_epsus.parquet,,,,2026-08-12T16:26:00+00:00,1995-01-01,2013-12-31,
+ibes,detu_epsus,ok,14646712,data/raw_wrds/ibes/detu_epsus.parquet,,,,2026-08-12T16:28:24+00:00,1995-01-01,2014-06-30,

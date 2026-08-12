@@ -1,0 +1,6 @@
+library,table,status,rows,path,missing_columns,optional_columns_missing,error,pulled_at,start_date,end_date,universe_fingerprint
+crsp,stocknames,ok,83280,data/raw_wrds/crsp/stocknames.parquet,,,,2026-08-12T16:09:09+00:00,,,
+comp,company,ok,58232,data/raw_wrds/comp/company.parquet,,,,2026-08-12T16:09:10+00:00,,,
+wrdsapps,ibcrsphist,ok,37662,data/raw_wrds/wrdsapps/ibcrsphist.parquet,,,,2026-08-12T16:09:10+00:00,,,
+crsp,ccmxpf_lnkhist,ok,123388,data/raw_wrds/crsp/ccmxpf_lnkhist.parquet,,,,2026-08-12T16:09:12+00:00,,,
+ibes,idsum,ok,288809,data/raw_wrds/ibes/idsum.parquet,,,,2026-08-12T16:09:15+00:00,,,
