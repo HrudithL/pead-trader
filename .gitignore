@@ -45,7 +45,7 @@ credentials.json
 # worktree from all of data/metadata/. A `merge=union` driver doesn't help
 # either -- both failure modes are one-sided adds over an ignored/symlinked
 # path, so no merge driver ever runs.
-data/
+/data/
 mlruns/
 experiments/
 outputs/

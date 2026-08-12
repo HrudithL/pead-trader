@@ -355,8 +355,8 @@ def _sanitize_error_text(text: str) -> str:
     username is embedded in a different case). psycopg2/sqlalchemy error
     text does not normally echo the password itself, only host/user, so
     password leakage specifically is not the primary risk this addresses.
-    This is "don't casually commit the account name to git history", not a
-    substitute for reviewing manifest diffs before a push.
+    This is "don't casually paste the account name into a PR comment or
+    report", not a substitute for reading the manifest before you share it.
     """
     if not text:
         return text
@@ -476,9 +476,9 @@ def append_manifest_row(row: dict, manifest_path: Path) -> None:
 
 def record(log: list, row: dict, manifest_path: Path) -> None:
     """Add one entry to both the in-memory run log (used only for the final
-    printed summary -- kept un-sanitized since it's console-only, never
-    committed) and the on-disk manifest (the durable on-disk record, local
-    and gitignored, sanitized by append_manifest_row).
+    printed summary -- kept un-sanitized since it's ephemeral and
+    console-only) and the on-disk manifest (the durable record, local and
+    gitignored, sanitized by append_manifest_row).
 
     `log` is a plain list. Callers that share a `log` across THREADS (none
     of this library's own code does -- each of pull_wrds_crsp.py's per-year
