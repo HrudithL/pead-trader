@@ -57,3 +57,7 @@ outputs/
 .idea/
 .vscode/
 *.swp
+
+# Claude Code agent tooling: isolated git worktrees created for background
+# subagents -- local scratch checkouts, not project content.
+.claude/
