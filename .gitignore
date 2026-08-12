@@ -37,9 +37,14 @@ credentials.json
 data/*
 !data/metadata/
 data/metadata/*
-# ...except these two small text/CSV provenance files -- not data, just an
-# audit record of what was pulled from WRDS and when.
-!data/metadata/wrds_pull_manifest.csv
+# ...except these small text/CSV provenance files -- not data, just an
+# audit record of what was pulled from WRDS and when. The pull was later
+# split into per-library scripts (see scripts/pull_wrds_*.py), so the one
+# combined manifest became four per-library ones.
+!data/metadata/wrds_pull_manifest_reference.csv
+!data/metadata/wrds_pull_manifest_crsp.csv
+!data/metadata/wrds_pull_manifest_compustat.csv
+!data/metadata/wrds_pull_manifest_ibes.csv
 !data/metadata/wrds_available_libraries.txt
 mlruns/
 experiments/
