@@ -397,6 +397,36 @@ def test_whitespace_only_caption_behaves_like_empty():
     assert '<div class="caption"></div>' in doc
 
 
+def test_whitespace_only_summary_behaves_like_empty():
+    """Same gap as the caption case above, found in round-2 review: gating
+    summary_html on truthiness rather than .strip() let a whitespace-only
+    summary through, emitting an empty <div class="summary"> that still
+    paints its CSS border/padding as a visible stray artifact with no
+    content -- exactly the kind of "one call site fixed, a twin site
+    missed" bug this module has already had twice."""
+    doc_whitespace = rb._build_html(
+        title="T", summary="   \n\t  ", sections=[], charts=[], dpi=100
+    )
+    doc_empty = rb._build_html(title="T", summary="", sections=[], charts=[], dpi=100)
+    doc_none = rb._build_html(title="T", summary=None, sections=[], charts=[], dpi=100)
+
+    assert '<div class="summary">' not in doc_whitespace
+    assert doc_whitespace == doc_empty == doc_none
+
+
+def test_chart_css_preserves_aspect_ratio_declaration():
+    """Regression guard for the exact mutation round-2 review demonstrated:
+    deleting `object-fit: contain` from the chart-image CSS rule leaves
+    every existing test green (nothing exercises a portrait/tall figure,
+    the one case where max-height's clamp actually engages and width:100%
+    alone would stretch it), yet silently reintroduces the stretching bug
+    width:100% was added to fix. This can't be caught by rendering a
+    landscape figure -- box-tree geometry isn't part of weasyprint's public
+    render() API -- so it's pinned at the CSS-declaration level instead."""
+    assert "object-fit: contain;" in rb._CSS
+    assert "width: 100%;" in rb._CSS
+
+
 # --- Rendering-level checks: real weasyprint render, page geometry ---------
 
 

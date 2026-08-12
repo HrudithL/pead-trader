@@ -265,7 +265,9 @@ def _build_html(
     paying for a full PDF render on every assertion."""
     generated_on = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    summary_html = f'<div class="summary">{_escape_multiline(summary)}</div>' if summary else ""
+    summary_html = (
+        f'<div class="summary">{_escape_multiline(summary)}</div>' if summary and summary.strip() else ""
+    )
 
     sections_html = "".join(
         '<div class="section">'
