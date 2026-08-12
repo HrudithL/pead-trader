@@ -2593,6 +2593,73 @@ def test_determine_chunk_force_false_when_fingerprint_matches(tmp_path):
     ) is False
 
 
+def test_pull_table_kept_existing_carries_forward_prior_fingerprint_not_current(tmp_path):
+    """Regression test for the "stale fingerprint stamped on kept-existing
+    file" bug: a chunk is pulled under universe A (fingerprint A recorded
+    for out_path). The universe then changes to B; a fingerprint-mismatch-
+    triggered re-pull attempt under B legitimately returns zero rows, so
+    pull_table correctly leaves the existing (universe-A) file untouched
+    and logs "ok_empty_query_kept_existing". That manifest row must NOT be
+    stamped with B's fingerprint -- if it were, a THIRD run still under
+    universe B would see a (false) fingerprint match against B and skip
+    re-pulling forever, permanently freezing universe-A data under a
+    fingerprint that no longer describes it.
+    """
+    raw_dir = tmp_path / "raw"
+    out_dir = raw_dir / "crsp"
+    out_dir.mkdir(parents=True)
+    out_path = out_dir / "dsf_2005.parquet"
+    original_bytes = b"UNIVERSE-A-DATA"
+    out_path.write_bytes(original_bytes)
+    manifest_path = tmp_path / "manifest.csv"
+
+    fingerprint_a = "fingerprint-universe-a"
+    fingerprint_b = "fingerprint-universe-b"
+
+    # Run 1 (already happened): universe A's pull recorded fingerprint A for
+    # this exact out_path.
+    lib.append_manifest_row(
+        {"library": "crsp", "table": "dsf", "status": "ok", "rows": 100,
+         "path": lib._rel(out_path), "missing_columns": "",
+         "optional_columns_missing": "", "error": "", "start_date": "",
+         "end_date": "", "universe_fingerprint": fingerprint_a},
+        manifest_path=manifest_path,
+    )
+
+    # Sanity check: before run 2, universe B's fingerprint correctly
+    # mismatches fingerprint A -- a re-pull is (correctly) requested.
+    assert lib.determine_chunk_force(
+        out_path, manifest_path, universe_fingerprint=fingerprint_b, requested_force=False,
+    ) is True
+
+    # Run 2: the fingerprint-mismatch-triggered re-pull attempt under
+    # universe B legitimately returns zero rows.
+    empty_chunk = pd.DataFrame({"permno": pd.Series([], dtype="int64"),
+                                 "date": pd.Series([], dtype="object")})
+    db = StubDB(columns=["permno", "date"], chunks=[empty_chunk])
+    log = []
+    lib.pull_table(
+        db, log, "crsp", "dsf", ["permno", "date"], out_name="dsf_2005",
+        raw_dir=raw_dir, manifest_path=manifest_path,
+        stream=True, force=True, universe_fingerprint=fingerprint_b,
+    )
+
+    assert log[0]["status"] == "ok_empty_query_kept_existing"
+    assert out_path.read_bytes() == original_bytes
+
+    # The critical assertion: the manifest row for this untouched file must
+    # NOT carry universe B's fingerprint (that would misrepresent universe-A
+    # data as confirmed-current-under-B).
+    assert log[0]["universe_fingerprint"] != fingerprint_b
+
+    # Run 3: a subsequent run still under universe B must NOT see a
+    # fingerprint match -- it must attempt to re-pull this chunk again,
+    # not silently skip it forever.
+    assert lib.determine_chunk_force(
+        out_path, manifest_path, universe_fingerprint=fingerprint_b, requested_force=False,
+    ) is True
+
+
 # ---------------------------------------------------------------------------
 # Fix 2 (round 3 review): a substantive, universe-filtered table returning
 # zero rows with NO exception and NO pre-existing file is essentially

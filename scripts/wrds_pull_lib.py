@@ -875,7 +875,15 @@ def pull_table(
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{out_name}.parquet"
 
-    def _log(status, rows=0, path="", missing_columns="", optional_columns_missing="", error=""):
+    def _log(status, rows=0, path="", missing_columns="", optional_columns_missing="", error="",
+             fingerprint=None):
+        # `fingerprint` lets a call site override what's recorded for THIS
+        # row instead of always stamping the current run's
+        # `universe_fingerprint` -- needed by the "ok_empty_query_kept_existing"
+        # branch below, which must carry forward out_path's PRIOR recorded
+        # fingerprint rather than the current (mismatched) one.
+        if fingerprint is None:
+            fingerprint = universe_fingerprint
         record(
             log,
             {
@@ -889,7 +897,7 @@ def pull_table(
                 "error": error,
                 "start_date": start_date or "",
                 "end_date": end_date or "",
-                "universe_fingerprint": universe_fingerprint or "",
+                "universe_fingerprint": fingerprint or "",
             },
             manifest_path=manifest_path,
         )
@@ -991,11 +999,24 @@ def pull_table(
                     "untouched (not overwritten with an empty result).",
                     flush=True,
                 )
+                # The file at out_path is untouched, so its data still only
+                # reflects whatever universe fingerprint was last recorded
+                # for it -- NOT this run's (possibly different) universe_
+                # fingerprint. Carry that prior value forward rather than
+                # stamping the current one, so a later run whose universe
+                # still doesn't match sees a fingerprint MISMATCH (or, if no
+                # prior value exists, an absence) and attempts to re-pull
+                # again instead of treating this stale file as confirmed-
+                # current under a universe it was never actually pulled
+                # under.
                 _log(
                     "ok_empty_query_kept_existing",
                     rows=0,
                     path=_rel(out_path),
                     optional_columns_missing=optional_missing_str,
+                    fingerprint=last_manifest_fingerprint_for_path(
+                        manifest_path, _rel(out_path)
+                    ),
                 )
             elif zero_rows_is_suspicious:
                 # Fix 2 (round 3 review): for a substantive, universe-
