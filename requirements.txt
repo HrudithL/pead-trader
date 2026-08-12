@@ -1,9 +1,12 @@
-# Dependencies for scripts/pull_wrds_data.py (and its tests).
+# Dependencies for the WRDS bulk-pull scripts (scripts/wrds_pull_lib.py,
+# scripts/pull_wrds_reference.py, scripts/pull_wrds_crsp.py,
+# scripts/pull_wrds_compustat.py, scripts/pull_wrds_ibes.py, and their
+# tests).
 # Pinned to reasonable minimums roughly matching what's installed in .venv
 # (checked via `.venv/bin/pip freeze`: wrds==3.5.0, pandas==2.2.3,
 # pyarrow==25.0.1, psycopg2-binary==2.9.12, SQLAlchemy==2.0.51). SQLAlchemy
 # is declared explicitly (not left as an implicit transitive dependency of
-# wrds) because pull_wrds_data.py imports sqlalchemy.exc directly and
+# wrds) because wrds_pull_lib.py imports sqlalchemy.exc directly and
 # depends on it for error classification (NoSuchTableError vs. everything
 # else).
 wrds>=3.5
