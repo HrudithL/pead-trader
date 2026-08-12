@@ -414,6 +414,30 @@ def test_whitespace_only_summary_behaves_like_empty():
     assert doc_whitespace == doc_empty == doc_none
 
 
+def test_empty_section_heading_omits_heading_element():
+    """Third instance of the same gap (round-3 review finding), on
+    h2.section-heading this time: it carries padding-bottom/border-bottom,
+    so an empty or whitespace-only heading must be omitted entirely rather
+    than rendered empty, or it paints a stray full-width rule with no text
+    above it. The section body must still render regardless."""
+    doc_empty = rb._build_html(
+        title="T", summary=None, sections=[("", "A body.")], charts=[], dpi=100
+    )
+    doc_whitespace = rb._build_html(
+        title="T", summary=None, sections=[("   \n\t ", "A body.")], charts=[], dpi=100
+    )
+    doc_real = rb._build_html(
+        title="T", summary=None, sections=[("Heading", "A body.")], charts=[], dpi=100
+    )
+
+    for doc in (doc_empty, doc_whitespace):
+        assert "<h2" not in doc
+        assert '<div class="section-body">' in doc  # body still renders
+
+    assert doc_empty == doc_whitespace
+    assert "<h2" in doc_real
+
+
 def test_chart_css_preserves_aspect_ratio_declaration():
     """Regression guard for the exact mutation round-2 review demonstrated:
     deleting `object-fit: contain` from the chart-image CSS rule leaves
@@ -422,9 +446,34 @@ def test_chart_css_preserves_aspect_ratio_declaration():
     alone would stretch it), yet silently reintroduces the stretching bug
     width:100% was added to fix. This can't be caught by rendering a
     landscape figure -- box-tree geometry isn't part of weasyprint's public
-    render() API -- so it's pinned at the CSS-declaration level instead."""
+    render() API -- so it's pinned at the CSS-declaration level instead.
+
+    max-height is included too (round-3 review finding): it's the reason
+    object-fit is needed at all (without a height clamp, nothing to
+    letterbox), and deleting it alone was equally undetected by the rest
+    of the suite -- a portrait figure would lay out full-height instead of
+    being clamped, defeating page-break-inside: avoid."""
     assert "object-fit: contain;" in rb._CSS
     assert "width: 100%;" in rb._CSS
+    assert "max-height: 180mm;" in rb._CSS
+
+
+def test_dpi_actually_changes_embedded_image_data():
+    """test_chart_layout_is_dpi_independent only proves *page layout* is
+    dpi-invariant -- it would pass just as well if dpi were silently
+    ignored by _figure_to_png_data_uri entirely (round-3 review finding:
+    confirmed by deleting `dpi=dpi` from the savefig() call, which left
+    the full suite green). This test pins that dpi is actually threaded
+    through to the raster: a higher dpi must produce a larger encoded PNG
+    for the same figure."""
+    fig = _make_figure(figsize=(4, 3))
+    try:
+        low = rb._figure_to_png_data_uri(fig, dpi=60)
+        high = rb._figure_to_png_data_uri(fig, dpi=300)
+    finally:
+        plt.close(fig)
+
+    assert len(high) > len(low) * 2
 
 
 # --- Rendering-level checks: real weasyprint render, page geometry ---------

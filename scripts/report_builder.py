@@ -269,13 +269,7 @@ def _build_html(
         f'<div class="summary">{_escape_multiline(summary)}</div>' if summary and summary.strip() else ""
     )
 
-    sections_html = "".join(
-        '<div class="section">'
-        f'<h2 class="section-heading">{html.escape(heading)}</h2>'
-        f'<div class="section-body">{_escape_multiline(body)}</div>'
-        "</div>"
-        for heading, body in sections
-    )
+    sections_html = "".join(_section_html(heading, body) for heading, body in sections)
 
     charts_html = "".join(_chart_block_html(figure, caption, dpi) for figure, caption in charts)
 
@@ -294,6 +288,21 @@ def _build_html(
 {charts_html}
 </body>
 </html>"""
+
+
+def _section_html(heading: str, body: str) -> str:
+    # h2.section-heading carries padding-bottom/border-bottom, so an empty
+    # or whitespace-only heading must be omitted entirely rather than
+    # rendered empty -- otherwise it paints a stray full-width rule with no
+    # text above it. Same gating gap as summary_html/_chart_block_html's
+    # caption handling, just on a third call site (round-3 review finding).
+    heading_html = f'<h2 class="section-heading">{html.escape(heading)}</h2>' if heading.strip() else ""
+    return (
+        '<div class="section">'
+        f"{heading_html}"
+        f'<div class="section-body">{_escape_multiline(body)}</div>'
+        "</div>"
+    )
 
 
 def _chart_block_html(figure: matplotlib.figure.Figure, caption: str, dpi: int) -> str:
