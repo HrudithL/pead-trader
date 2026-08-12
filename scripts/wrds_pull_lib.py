@@ -2008,8 +2008,11 @@ def build_string_in_clause(column: str, values) -> str:
 # allowlist is intentionally generous (letters, digits, and the handful of
 # punctuation marks real I/B/E/S tickers use for share classes/warrants,
 # e.g. "BRK.A", "BF-B") rather than tightly matched to any one exchange's
-# ticker convention.
-_IBES_TICKER_RE = re.compile(r"^[A-Z0-9._-]{1,10}\Z")
+# ticker convention. Includes "/" too: I/B/E/S's own share-class suffix
+# convention (e.g. "NWS/1", "VIA/2") uses it, and a live pull found this
+# missing -- 14 of 7,355 resolved tickers failed the allowlist for exactly
+# this reason and blocked the entire ibes.* pull.
+_IBES_TICKER_RE = re.compile(r"^[A-Z0-9./-]{1,10}\Z")
 
 
 def _validate_ibes_tickers(tickers) -> None:

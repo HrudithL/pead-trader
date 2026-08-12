@@ -1959,6 +1959,10 @@ def test_validate_ibes_tickers_accepts_typical_tickers():
     lib._validate_ibes_tickers(["AAPL", "BRK.A", "BF-B", "A", "1234567890"])
 
 
+def test_validate_ibes_tickers_accepts_share_class_suffix():
+    lib._validate_ibes_tickers(["NWS/1", "VIA/2", "CMCS/2"])
+
+
 def test_validate_ibes_tickers_rejects_disallowed_characters():
     with pytest.raises(ValueError):
         lib._validate_ibes_tickers(["AAPL; DROP TABLE x; --"])
