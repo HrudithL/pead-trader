@@ -264,11 +264,14 @@ MANIFEST_FIELDNAMES = [
     "universe_fingerprint",
 ]
 
-# Manifest error-text sanitization (Fix 4): data/metadata/wrds_pull_manifest.csv
-# is git-tracked (a deliberate choice from a prior round), and exception text
-# from psycopg2/sqlalchemy connection failures can embed hostnames, usernames,
-# or other connection details. _MAX_ERROR_LEN caps how much raw exception text
-# ever reaches that file.
+# Manifest error-text sanitization (Fix 4): the manifest is a local, gitignored
+# run log (tracking it in git was tried and reverted -- see .gitignore), but a
+# human may still paste its contents into a PR comment or report, and
+# exception text from psycopg2/sqlalchemy connection failures can embed
+# hostnames, usernames, or other connection details. _MAX_ERROR_LEN caps how
+# much raw exception text ever reaches the manifest FILE specifically -- it
+# does not cover the separate in-memory run_log printed to console, which
+# record()'s own docstring documents as deliberately left un-sanitized.
 _MAX_ERROR_LEN = 300
 
 # NEW this round: bounded concurrency cap shared by every script's internal
@@ -331,7 +334,8 @@ _MANIFEST_LOCK = threading.Lock()
 
 def _sanitize_error_text(text: str) -> str:
     """Best-effort scrub of an exception message before it's written to the
-    git-tracked manifest CSV.
+    manifest CSV (local, gitignored, but still pasted into PR comments and
+    reports).
 
     Two simple steps, deliberately not a general-purpose credential
     scrubber:
@@ -351,8 +355,8 @@ def _sanitize_error_text(text: str) -> str:
     username is embedded in a different case). psycopg2/sqlalchemy error
     text does not normally echo the password itself, only host/user, so
     password leakage specifically is not the primary risk this addresses.
-    This is "don't casually commit the account name to git history", not a
-    substitute for reviewing manifest diffs before a push.
+    This is "don't casually paste the account name into a PR comment or
+    report", not a substitute for reading the manifest before you share it.
     """
     if not text:
         return text
@@ -429,7 +433,7 @@ def append_manifest_row(row: dict, manifest_path: Path) -> None:
     for everything it got through before it died.
 
     Any "error" field is sanitized (see _sanitize_error_text) right here,
-    at the single choke point where a row actually reaches the git-tracked
+    at the single choke point where a row actually reaches the manifest
     CSV -- rather than at each call site that sets "error" -- so a future
     call site can't forget to sanitize its own error text.
 
@@ -472,9 +476,9 @@ def append_manifest_row(row: dict, manifest_path: Path) -> None:
 
 def record(log: list, row: dict, manifest_path: Path) -> None:
     """Add one entry to both the in-memory run log (used only for the final
-    printed summary -- kept un-sanitized since it's console-only, never
-    committed) and the on-disk manifest (the durable, git-tracked record,
-    sanitized by append_manifest_row).
+    printed summary -- kept un-sanitized since it's ephemeral and
+    console-only) and the on-disk manifest (the durable record, local and
+    gitignored, sanitized by append_manifest_row).
 
     `log` is a plain list. Callers that share a `log` across THREADS (none
     of this library's own code does -- each of pull_wrds_crsp.py's per-year
@@ -2005,11 +2009,18 @@ def build_string_in_clause(column: str, values) -> str:
 # table, not external/user input -- but this file's established pattern
 # elsewhere (_validate_sql_identifier, _validate_numeric_id) is "validate the
 # shape and fail loudly" rather than lean on a database setting. This
-# allowlist is intentionally generous (letters, digits, and the handful of
-# punctuation marks real I/B/E/S tickers use for share classes/warrants,
-# e.g. "BRK.A", "BF-B") rather than tightly matched to any one exchange's
-# ticker convention.
-_IBES_TICKER_RE = re.compile(r"^[A-Z0-9._-]{1,10}\Z")
+# allowlist is intentionally generous: letters, digits, and exactly four
+# punctuation marks real I/B/E/S tickers use for share classes/warrants --
+# ".", "_", "/", "-" -- e.g. "BRK.A", "BF-B" -- rather than tightly matched
+# to any one exchange's ticker convention. "/" covers I/B/E/S's own
+# share-class suffix convention (e.g. "NWS/1", "VIA/2"): a live pull found
+# this missing -- 14 of 7,355 resolved tickers failed the allowlist for
+# exactly this reason and blocked the entire ibes.* pull. "/" was added
+# alongside the existing "_", not swapped in for it: an accidental
+# "/"-for-"_" swap slipped into this character class once already, so keep
+# all four characters -- ".", "_", "/", "-" -- present if you touch this
+# regex again.
+_IBES_TICKER_RE = re.compile(r"^[A-Z0-9._/-]{1,10}\Z")
 
 
 def _validate_ibes_tickers(tickers) -> None:
