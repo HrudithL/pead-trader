@@ -100,6 +100,25 @@ _FILTER_EXPECTATIONS = {
     "ibes.detu_epsus": (True, True, False),
 }
 
+# Finding 1: the specific identifier column each universe-filtered table's
+# `IN (...)` clause must be built on -- NOT just any `IN (...)` clause
+# anywhere in the WHERE clause. A query that dropped its real
+# `permno IN (...)` filter but happened to retain some unrelated
+# `dlstcd IN (100, 200)` clause must FAIL this check, not pass it just
+# because *an* IN clause is present somewhere. Derived from this project's
+# actual identifier convention (see wrds_pull_lib.build_numeric_in_clause /
+# build_string_in_clause call sites in the pull_wrds_*.py scripts): PERMNO
+# for CRSP tables, GVKEY for Compustat tables, ticker for I/B/E/S tables.
+_UNIVERSE_COLUMN_BY_KEY = {
+    "crsp.dsf": "permno",
+    "crsp.dsedelist": "permno",
+    "comp.fundq": "gvkey",
+    "comp.funda": "gvkey",
+    "ibes.statsumu_epsus": "ticker",
+    "ibes.actu_epsus": "ticker",
+    "ibes.detu_epsus": "ticker",
+}
+
 N_DSF_YEARS = (
     dt.date.fromisoformat(lib.RETURN_END_DATE).year
     - dt.date.fromisoformat(lib.LOOKBACK_START_DATE).year
@@ -158,18 +177,33 @@ class RecordingDB:
 
 @contextlib.contextmanager
 def _patched(module, **attrs):
-    missing = object()
-    originals = {name: getattr(module, name, missing) for name in attrs}
+    """Finding 5: patching an attribute that doesn't actually exist on
+    `module` must FAIL LOUDLY, never silently create a new attribute and
+    quietly no-op the intended substitution. Without this guard, a renamed
+    constant (e.g. RAW_DIR -> RAW_DATA_DIR) would silently disable this
+    audit's sandboxing -- the real module attribute would be left
+    untouched, and a subsequent run could write into the REAL
+    data/raw_wrds directory or load REAL WRDS credentials via
+    load_env_file instead of the fakes this audit relies on."""
+    for name in attrs:
+        if not hasattr(module, name):
+            raise AttributeError(
+                f"refusing to patch {module!r}.{name}: no such attribute "
+                f"exists on the real module. Patching it anyway would "
+                f"silently CREATE a new attribute rather than substituting "
+                f"the real one -- exactly the kind of silent sandboxing "
+                f"failure that could let this audit touch real data/WRDS "
+                f"credentials. If this attribute was renamed in the "
+                f"production module, update this patch's keyword to match."
+            )
+    originals = {name: getattr(module, name) for name in attrs}
     try:
         for name, value in attrs.items():
             setattr(module, name, value)
         yield
     finally:
         for name, original in originals.items():
-            if original is missing:
-                delattr(module, name)
-            else:
-                setattr(module, name, original)
+            setattr(module, name, original)
 
 
 def _write_universe_fixture(metadata_dir: Path):
@@ -228,7 +262,7 @@ def run_all_scripts_and_capture(tmp_root: Path) -> dict:
 # SQL structural analysis helpers.
 # ---------------------------------------------------------------------------
 
-_YEAR_RANGE_RE = re.compile(r"BETWEEN '(\d{4})-\d\d-\d\d' AND '(\d{4})-\d\d-\d\d'")
+_YEAR_RANGE_RE = re.compile(r"BETWEEN '(\d{4}-\d\d-\d\d)' AND '(\d{4}-\d\d-\d\d)'")
 
 
 def _extract_select_columns(sql: str) -> set:
@@ -242,11 +276,28 @@ def _extract_where(sql: str):
     return m.group(1).strip() if m else None
 
 
+# Finding 4: a naive split on every "AND" token also splits the AND that is
+# part of `BETWEEN x AND y` (not a top-level WHERE-clause separator), which
+# means a query with just `date BETWEEN '1996-01-01' AND '2013-12-31'` --
+# with NO real universe filter at all -- already yields 2+ "fragments" and
+# trivially satisfies a "combined via a top-level AND" check regardless of
+# whether a universe filter is actually present or joined correctly. Protect
+# the BETWEEN...AND... internal AND with a placeholder before splitting on
+# real top-level ANDs, then restore it, so fragment count/content reflects
+# only genuine top-level WHERE-clause conditions.
+_BETWEEN_AND_RE = re.compile(
+    r"\bBETWEEN\b\s+('[^']*'|\S+)\s+\bAND\b\s+('[^']*'|\S+)", re.IGNORECASE
+)
+_BETWEEN_AND_PLACEHOLDER = "\x00BETWEEN_INTERNAL_AND\x00"
+
+
 def _split_top_level_and(where_clause: str):
-    return [
-        f.strip()
-        for f in re.split(r"(?<![A-Za-z0-9_])AND(?![A-Za-z0-9_])", where_clause, flags=re.IGNORECASE)
-    ]
+    protected = _BETWEEN_AND_RE.sub(
+        lambda m: f"BETWEEN {m.group(1)} {_BETWEEN_AND_PLACEHOLDER} {m.group(2)}",
+        where_clause,
+    )
+    fragments = re.split(r"(?<![A-Za-z0-9_])AND(?![A-Za-z0-9_])", protected, flags=re.IGNORECASE)
+    return [f.replace(_BETWEEN_AND_PLACEHOLDER, "AND").strip() for f in fragments]
 
 
 def _has_top_level_or(where_clause: str) -> bool:
@@ -276,6 +327,13 @@ def audit_table(key: str, sqls: list) -> dict:
     # AND (never OR, never missing). N/A for Phase A tables (unfiltered by
     # design). ---
     if expects_universe_filter or expects_date_filter:
+        universe_col = _UNIVERSE_COLUMN_BY_KEY.get(key)
+        if expects_universe_filter and universe_col is None:
+            raise AssertionError(
+                f"{key} expects a universe filter but has no entry in "
+                f"_UNIVERSE_COLUMN_BY_KEY -- add one (this is an audit bug, "
+                f"not a production-code failure)"
+            )
         failures = []
         for sql in sqls:
             where_clause = _extract_where(sql)
@@ -287,11 +345,22 @@ def audit_table(key: str, sqls: list) -> dict:
                 continue
             fragments = _split_top_level_and(where_clause)
             has_date = any("BETWEEN" in f.upper() for f in fragments)
-            has_universe = any(re.search(r"\bIN\s*\(", f) for f in fragments)
+            # Finding 1: must match specifically on the expected identifier
+            # column's own `<column> IN (` -- NOT just any `IN (...)`
+            # clause anywhere in the WHERE, which would also (wrongly) pass
+            # for e.g. an unrelated `dlstcd IN (100, 200)` clause even if
+            # the real `permno IN (...)` universe filter was missing.
+            has_universe = universe_col is not None and any(
+                re.search(rf"(?<![A-Za-z0-9_]){re.escape(universe_col)}\s+IN\s*\(", f)
+                for f in fragments
+            )
             if expects_date_filter and not has_date:
                 failures.append("no date-range (BETWEEN) fragment found")
             if expects_universe_filter and not has_universe:
-                failures.append("no universe IN (...) fragment found")
+                failures.append(
+                    f"no '{universe_col} IN (...)' fragment found (an unrelated "
+                    f"IN (...) clause on a different column does not count)"
+                )
             if expects_date_filter and expects_universe_filter and len(fragments) < 2:
                 failures.append("date range and universe filter not joined via AND")
         detail = "; ".join(sorted(set(failures))) or (
@@ -306,23 +375,93 @@ def audit_table(key: str, sqls: list) -> dict:
         )
 
     # --- Check 3 (crsp.dsf only): each year-chunk scoped to just its own
-    # year, not the full multi-year lookback/return range. ---
+    # year, not the full multi-year lookback/return range, AND the whole set
+    # of chunks collectively covers the real full date range with no gaps
+    # and no duplicated years (Finding 2). Ground truth for what each
+    # chunk's boundaries SHOULD be comes from the REAL production chunking
+    # function, pull_wrds_crsp._dsf_year_chunks() -- not a second,
+    # hand-rolled copy of that boundary logic that could itself drift out
+    # of sync with the real one. ---
     if year_scoped:
         failures = []
+        expected_chunks = list(crsp_script._dsf_year_chunks())  # [(year, start_iso, end_iso), ...]
+        expected_ranges = sorted((start, end) for _year, start, end in expected_chunks)
+
+        actual_ranges = []
         for sql in sqls:
             m = _YEAR_RANGE_RE.search(sql)
             if not m:
                 failures.append("could not find a BETWEEN date range")
                 continue
-            y1, y2 = int(m.group(1)), int(m.group(2))
-            if y1 != y2:
-                failures.append(f"date range spans multiple years ({y1}-{y2})")
+            start_s, end_s = m.group(1), m.group(2)
+            actual_ranges.append((start_s, end_s))
+            start_d, end_d = dt.date.fromisoformat(start_s), dt.date.fromisoformat(end_s)
+            if start_d.year != end_d.year:
+                failures.append(f"date range spans multiple years ({start_s} to {end_s})")
                 continue
-            span_days = (dt.date(y2, 12, 31) - dt.date(y1, 1, 1)).days
+            span_days = (end_d - start_d).days
             if span_days > 366:
-                failures.append(f"date range wider than one year ({span_days} days)")
+                failures.append(f"date range wider than one year ({span_days} days): {start_s} to {end_s}")
+            if (start_s, end_s) not in expected_ranges:
+                failures.append(
+                    f"chunk {start_s}..{end_s} does not match any of the real "
+                    f"_dsf_year_chunks() boundaries {expected_ranges}"
+                )
+
+        # Collective check: the captured chunks, as a SET, must exactly
+        # match the real per-year boundaries -- this is what catches e.g.
+        # 20 identical chunks all scoped to the same year (each one
+        # individually "single-year scoped" and <=366 days, but never
+        # collectively covering the real range, and full of duplicates).
+        distinct_years = {dt.date.fromisoformat(s).year for s, _e in actual_ranges}
+        if len(actual_ranges) != len(expected_chunks):
+            failures.append(
+                f"expected {len(expected_chunks)} year-chunk queries but captured "
+                f"{len(actual_ranges)}"
+            )
+        elif len(distinct_years) != len(expected_chunks):
+            failures.append(
+                f"expected {len(expected_chunks)} DISTINCT years covered but only "
+                f"{len(distinct_years)} distinct year(s) found across the captured "
+                f"chunks (duplicated year-chunk(s)): {sorted(distinct_years)}"
+            )
+        elif sorted(actual_ranges) != expected_ranges:
+            failures.append(
+                f"captured chunk date ranges {sorted(actual_ranges)} do not exactly "
+                f"match the real _dsf_year_chunks() boundaries {expected_ranges}"
+            )
+        else:
+            # No gaps/overlaps: the union of chunks, laid end to end in
+            # order, must reconstruct the exact original
+            # [LOOKBACK_START_DATE, RETURN_END_DATE] span with each chunk's
+            # start being exactly one day after the previous chunk's end.
+            ordered = sorted(actual_ranges)
+            if ordered[0][0] != lib.LOOKBACK_START_DATE:
+                failures.append(
+                    f"union of chunks starts at {ordered[0][0]}, not "
+                    f"LOOKBACK_START_DATE ({lib.LOOKBACK_START_DATE})"
+                )
+            if ordered[-1][1] != lib.RETURN_END_DATE:
+                failures.append(
+                    f"union of chunks ends at {ordered[-1][1]}, not "
+                    f"RETURN_END_DATE ({lib.RETURN_END_DATE})"
+                )
+            for (_prev_start, prev_end), (next_start, _next_end) in zip(ordered, ordered[1:]):
+                expected_next_start = (
+                    dt.date.fromisoformat(prev_end) + dt.timedelta(days=1)
+                ).isoformat()
+                if next_start != expected_next_start:
+                    failures.append(
+                        f"gap or overlap between chunk ending {prev_end} and chunk "
+                        f"starting {next_start} (expected the next chunk to start "
+                        f"{expected_next_start})"
+                    )
+
         detail = "; ".join(sorted(set(failures))) or (
-            f"OK -- all {len(sqls)} year-chunks confirmed scoped to their own single year"
+            f"OK -- all {len(sqls)} year-chunks confirmed scoped to their own single "
+            f"year, matching the real _dsf_year_chunks() boundaries exactly, "
+            f"collectively covering {lib.LOOKBACK_START_DATE}..{lib.RETURN_END_DATE} "
+            f"with no gaps and no duplicated years"
         )
         checks["yearly_chunk_scoped_to_one_year"] = (not failures, detail)
 
@@ -331,8 +470,30 @@ def audit_table(key: str, sqls: list) -> dict:
 
 def build_report(captured: dict) -> list:
     rows = []
-    for key in _EXPECTED_COLUMNS:
+    # Finding 3: iterate over the UNION of the hardcoded expected-tables
+    # list and whatever was actually captured -- never just the hardcoded
+    # list alone. A query against a table this audit doesn't know about
+    # (e.g. a newly added crsp.msf pull, or one accidentally left in after
+    # a refactor) must show up as an explicit FAIL row, never be silently
+    # dropped from the report with no failure raised anywhere.
+    unexpected_keys = sorted(set(captured) - set(_EXPECTED_COLUMNS))
+    for key in list(_EXPECTED_COLUMNS) + unexpected_keys:
         sqls = captured.get(key, [])
+        if key not in _EXPECTED_COLUMNS:
+            rows.append({
+                "table": key,
+                "n_queries": len(sqls),
+                "n_queries_expected": "?",
+                "overall": "FAIL",
+                "detail": (
+                    f"query captured against {key!r}, which is NOT in this "
+                    f"audit's _ALL_TABLE_SPECS list -- an unexpected/unaudited "
+                    f"table was queried; add it to _ALL_TABLE_SPECS (and "
+                    f"_FILTER_EXPECTATIONS) so it gets properly audited "
+                    f"instead of silently skipped"
+                ),
+            })
+            continue
         row = {
             "table": key,
             "n_queries": len(sqls),

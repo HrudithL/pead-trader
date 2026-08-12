@@ -419,6 +419,16 @@ def test_dsf_year_chunk_output_content_is_not_cross_contaminated_across_threads(
     for year in range(lookback_start.year, return_end.year + 1):
         f = raw_dir / "crsp" / f"dsf_{year}.parquet"
         df = pd.read_parquet(f)
+        # Finding 6: `.all()` on an empty Series/DataFrame is vacuously
+        # True -- an empty dsf_<year>.parquet would silently "pass" this
+        # check without a single row ever actually being compared, which
+        # would make this test unable to catch cross-contamination at all
+        # for that year. Assert there's actually something to check first.
+        assert len(df) > 0, (
+            f"{f} has zero rows -- the cross-contamination check below "
+            f"would vacuously pass via an empty '.all()' without actually "
+            f"comparing anything"
+        )
         assert (df["prc"].astype(str) == str(year)).all(), (
             f"{f} contains data tagged for a different year than its own "
             f"filename -- cross-contamination between concurrent year-chunk "

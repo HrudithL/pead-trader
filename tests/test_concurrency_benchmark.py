@@ -49,12 +49,12 @@ def test_uniform_workload_concurrent_path_is_at_least_2x_faster(tmp_path):
     delay_fn = bc.make_uniform_delay_fn(TEST_DELAY_SECONDS)
 
     sequential_s = bc.run_crsp_pull(tmp_path / "sequential", delay_fn, max_workers=1)
-    concurrent_s = bc.run_crsp_pull(tmp_path / "concurrent", delay_fn, max_workers=bc.PRODUCTION_MAX_WORKERS)
+    concurrent_s = bc.run_crsp_pull(tmp_path / "concurrent", delay_fn, max_workers=bc.production_max_workers())
 
     speedup = sequential_s / concurrent_s
     assert speedup >= 2.0, (
         f"expected the real ThreadPoolExecutor-based concurrent path "
-        f"({bc.PRODUCTION_MAX_WORKERS} workers) to be at least 2x faster than "
+        f"({bc.production_max_workers()} workers) to be at least 2x faster than "
         f"running the identical simulated workload with 1 worker, but measured "
         f"only {speedup:.2f}x (sequential {sequential_s:.2f}s, concurrent "
         f"{concurrent_s:.2f}s) -- this would suggest the tasks are not actually "
@@ -74,7 +74,7 @@ def test_nonuniform_workload_concurrent_path_still_meaningfully_faster(tmp_path)
     delay_fn = bc.make_nonuniform_delay_fn(TEST_DELAY_SECONDS)
 
     sequential_s = bc.run_crsp_pull(tmp_path / "sequential", delay_fn, max_workers=1)
-    concurrent_s = bc.run_crsp_pull(tmp_path / "concurrent", delay_fn, max_workers=bc.PRODUCTION_MAX_WORKERS)
+    concurrent_s = bc.run_crsp_pull(tmp_path / "concurrent", delay_fn, max_workers=bc.production_max_workers())
 
     speedup = sequential_s / concurrent_s
     assert speedup >= 1.5, (

@@ -45,7 +45,6 @@ import random
 import re
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 
@@ -56,10 +55,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import wrds_pull_lib as lib  # noqa: E402
 import pull_wrds_crsp as crsp_script  # noqa: E402
 
-# The real, configured concurrency cap this project actually ships with --
-# captured now, before anything below temporarily overrides
-# lib.MAX_CONCURRENT_CONNECTIONS for a sequential (1-worker) run.
-PRODUCTION_MAX_WORKERS = lib.MAX_CONCURRENT_CONNECTIONS
+def production_max_workers() -> int:
+    """The real, configured concurrency cap this project actually ships
+    with, read FRESH from `wrds_pull_lib.MAX_CONCURRENT_CONNECTIONS` at
+    call time -- never cached once at import time. Caching it at import
+    (as a plain module-level constant) would give a false sense of
+    security: this benchmark/its tests would keep reporting against
+    whatever the setting happened to be when the module was first
+    imported, even if the real production setting changed afterward (or
+    was temporarily monkeypatched elsewhere in the same test session)."""
+    return lib.MAX_CONCURRENT_CONNECTIONS
 
 # Approximating typical WRDS query round-trip latency for a small-to-medium
 # result set, based on this project's own prior interactive-WRDS-query
@@ -182,19 +187,36 @@ def _patched_module_attrs(module, **attrs):
     """Minimal save/restore context manager. This benchmark runs as a plain
     script, not under pytest, so it can't use the `monkeypatch` fixture the
     test suite uses for the exact same kind of substitution (see e.g.
-    tests/test_pull_wrds_crsp.py's `_patch_crsp_env`)."""
-    missing = object()
-    originals = {name: getattr(module, name, missing) for name in attrs}
+    tests/test_pull_wrds_crsp.py's `_patch_crsp_env`).
+
+    Finding 5: refuses (raises) if the target attribute doesn't already
+    exist on `module`, rather than silently creating a new one. Without
+    this guard, a renamed constant (e.g. RAW_DIR -> RAW_DATA_DIR) would
+    silently no-op this benchmark's sandboxing -- the real
+    wrds_pull_lib.RAW_DIR would be left untouched while this function
+    happily creates and later deletes an unrelated attribute, and this
+    benchmark could then write into the REAL data/raw_wrds directory or
+    load REAL WRDS credentials via load_env_file instead of the fakes it
+    relies on."""
+    for name in attrs:
+        if not hasattr(module, name):
+            raise AttributeError(
+                f"refusing to patch {module!r}.{name}: no such attribute "
+                f"exists on the real module. Patching it anyway would "
+                f"silently CREATE a new attribute rather than substituting "
+                f"the real one -- exactly the kind of silent sandboxing "
+                f"failure that could let this benchmark touch real "
+                f"data/WRDS credentials. If this attribute was renamed in "
+                f"the production module, update this call's keyword to match."
+            )
+    originals = {name: getattr(module, name) for name in attrs}
     try:
         for name, value in attrs.items():
             setattr(module, name, value)
         yield
     finally:
         for name, original in originals.items():
-            if original is missing:
-                delattr(module, name)
-            else:
-                setattr(module, name, original)
+            setattr(module, name, original)
 
 
 def _write_resolved_ids(metadata_dir: Path, permnos=(1, 2, 3)):
@@ -242,7 +264,13 @@ def run_crsp_pull(tmp_root: Path, delay_fn, max_workers: int) -> float:
     return elapsed
 
 
-def benchmark(label: str, delay_fn, workdir: Path, concurrent_workers: int = PRODUCTION_MAX_WORKERS) -> dict:
+def benchmark(label: str, delay_fn, workdir: Path, concurrent_workers: int = None) -> dict:
+    # Read the real production concurrency cap FRESH here (a default
+    # argument value is evaluated once, at function-definition time, which
+    # would reintroduce the same stale-caching problem this was fixed to
+    # avoid) rather than at import time.
+    if concurrent_workers is None:
+        concurrent_workers = production_max_workers()
     print(f"\n--- {label} ---")
     print(f"Workload: {N_TASKS} tasks ({N_DSF_YEARS} crsp.dsf year-chunks + crsp.dsi + crsp.dsedelist)")
 
@@ -273,7 +301,7 @@ def main():
         f"latency for a small-to-medium result set (base: {DEFAULT_DELAY_SECONDS}s/task) --\n"
         f"illustrative, NOT measured from a live connection.\n"
         f"Real, configured production concurrency cap "
-        f"(wrds_pull_lib.MAX_CONCURRENT_CONNECTIONS): {PRODUCTION_MAX_WORKERS}",
+        f"(wrds_pull_lib.MAX_CONCURRENT_CONNECTIONS): {production_max_workers()}",
         flush=True,
     )
 
@@ -301,10 +329,11 @@ def main():
             f"Concurrent ({r['workers']} workers): {r['concurrent_s']:.2f}s.  "
             f"Speedup: {r['speedup']:.2f}x"
         )
-    idealized = float(PRODUCTION_MAX_WORKERS)
+    max_workers = production_max_workers()
+    idealized = float(max_workers)
     print(
         f"\nFor reference, the idealized (uniform-workload, zero-overhead) speedup "
-        f"bound for {PRODUCTION_MAX_WORKERS} workers is {idealized:.1f}x -- a bounded "
+        f"bound for {max_workers} workers is {idealized:.1f}x -- a bounded "
         f"thread pool's REAL speedup under an UNEVEN workload (run 2 above) can fall "
         f"meaningfully short of that idealized ratio, since one long straggler task "
         f"can leave other workers idle waiting for it; the numbers above are the "
