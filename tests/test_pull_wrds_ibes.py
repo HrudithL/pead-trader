@@ -419,3 +419,49 @@ def test_every_query_failing_exits_nonzero_and_does_not_print_success(tmp_path, 
     assert (manifest["status"] == "query_failed").all()
     for _lib_name, table, _req, _opt in TABLE_SPECS:
         assert not (raw_dir / "ibes" / f"{table}.parquet").exists()
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 (round 3 review): the three ibes.*_epsus tables are ticker-filtered,
+# substantive tables -- a genuine zero-row result (no exception, no
+# pre-existing file) is essentially always a bug, not a legitimate empty
+# result, so it must be classified as a FAILURE status
+# ("ok_suspicious_zero_rows"), not plain "ok".
+# ---------------------------------------------------------------------------
+
+
+class _ZeroRowFakeIbesDB(FakeIbesDB):
+    def raw_sql(self, sql, return_iter=False):
+        self.calls.append(sql)
+        select_list = sql.split("FROM")[0].replace("SELECT", "")
+        cols = [c.strip() for c in select_list.split(",") if c.strip()]
+        if self.fail_marker is not None and self.fail_marker in sql:
+            empty = pd.DataFrame({c: [] for c in cols})
+            return iter([empty]) if return_iter else empty
+        row = pd.DataFrame({c: [1] for c in cols})
+        return iter([row]) if return_iter else row
+
+
+def test_statsumu_epsus_zero_rows_is_suspicious_and_fails_the_script(tmp_path, monkeypatch, capsys):
+    raw_dir, _metadata_dir, manifest_path = _patch_ibes_env(monkeypatch, tmp_path)
+
+    def _connect():
+        return _ZeroRowFakeIbesDB(fail_marker="ibes.statsumu_epsus")
+
+    monkeypatch.setattr(lib, "connect", _connect)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_ibes.py"])
+
+    with pytest.raises(SystemExit):
+        ibes_script.main()
+
+    out = capsys.readouterr().out
+    assert "SUCCESS" not in out
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    statsumu_rows = manifest[manifest["table"] == "statsumu_epsus"]
+    assert (statsumu_rows["status"] == "ok_suspicious_zero_rows").any()
+    assert not (raw_dir / "ibes" / "statsumu_epsus.parquet").exists()
+    # The other two tables, unaffected by the marker, must complete normally.
+    for table in ("actu_epsus", "detu_epsus"):
+        rows = manifest[manifest["table"] == table]
+        assert (rows["status"] == "ok").any()

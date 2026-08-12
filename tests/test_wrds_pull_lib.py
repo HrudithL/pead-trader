@@ -2438,3 +2438,287 @@ def test_documented_peak_total_connections_matches_the_three_scripts_real_peak_u
     compustat_peak = min(lib.MAX_CONCURRENT_CONNECTIONS, 2)
     ibes_peak = min(lib.MAX_CONCURRENT_CONNECTIONS, 3)
     assert lib.DOCUMENTED_PEAK_TOTAL_CONNECTIONS == crsp_peak + compustat_peak + ibes_peak
+
+
+# ---------------------------------------------------------------------------
+# Fix 1 (round 3 review): provenance-aware re-pull, replacing the prior
+# round's destructive "delete every existing dsf_<year>.parquet chunk up
+# front on --force" sweep (a data-destruction regression -- see
+# pull_wrds_crsp.py's module docstring). compute_universe_fingerprint,
+# last_manifest_fingerprint_for_path, and determine_chunk_force are the
+# three new pieces this mechanism is built from.
+# ---------------------------------------------------------------------------
+
+
+def test_compute_universe_fingerprint_stable_for_identical_bytes(tmp_path):
+    path = tmp_path / "resolved_universe_ids.parquet"
+    path.write_bytes(b"identical-content")
+    assert (
+        lib.compute_universe_fingerprint(path)
+        == lib.compute_universe_fingerprint(path)
+    )
+
+
+def test_compute_universe_fingerprint_differs_for_different_bytes(tmp_path):
+    path_a = tmp_path / "a.parquet"
+    path_b = tmp_path / "b.parquet"
+    path_a.write_bytes(b"universe-version-one")
+    path_b.write_bytes(b"universe-version-two")
+    assert (
+        lib.compute_universe_fingerprint(path_a)
+        != lib.compute_universe_fingerprint(path_b)
+    )
+
+
+def test_compute_universe_fingerprint_defaults_to_resolved_ids_path(tmp_path, monkeypatch):
+    resolved_path = tmp_path / "resolved_universe_ids.parquet"
+    resolved_path.write_bytes(b"default-path-content")
+    monkeypatch.setattr(lib, "RESOLVED_IDS_PATH", resolved_path)
+    assert lib.compute_universe_fingerprint() == lib.compute_universe_fingerprint(resolved_path)
+
+
+def test_last_manifest_fingerprint_for_path_returns_none_when_manifest_missing(tmp_path):
+    assert lib.last_manifest_fingerprint_for_path(tmp_path / "no_such_manifest.csv", "some/path") is None
+
+
+def test_last_manifest_fingerprint_for_path_returns_none_when_no_matching_row(tmp_path):
+    manifest_path = tmp_path / "manifest.csv"
+    lib.append_manifest_row(
+        {"library": "crsp", "table": "dsf", "status": "ok", "rows": 1,
+         "path": "some/other/path.parquet", "missing_columns": "",
+         "optional_columns_missing": "", "error": "", "start_date": "", "end_date": "",
+         "universe_fingerprint": "fp-1"},
+        manifest_path=manifest_path,
+    )
+    assert lib.last_manifest_fingerprint_for_path(manifest_path, "target/path.parquet") is None
+
+
+def test_last_manifest_fingerprint_for_path_returns_none_when_field_blank(tmp_path):
+    """A row with a BLANK universe_fingerprint (e.g. one written before this
+    field existed, or via a call site that never passed one -- see
+    pull_table's `universe_fingerprint or ""` default) must read back as
+    None (no provenance), not as the literal empty string."""
+    manifest_path = tmp_path / "manifest.csv"
+    target = "target/dsf_2000.parquet"
+    lib.append_manifest_row(
+        {"library": "crsp", "table": "dsf", "status": "ok", "rows": 1,
+         "path": target, "missing_columns": "", "optional_columns_missing": "",
+         "error": "", "start_date": "", "end_date": "",
+         "universe_fingerprint": ""},
+        manifest_path=manifest_path,
+    )
+    assert lib.last_manifest_fingerprint_for_path(manifest_path, target) is None
+
+
+def test_last_manifest_fingerprint_for_path_returns_most_recent_of_multiple_rows(tmp_path):
+    manifest_path = tmp_path / "manifest.csv"
+    target = "target/dsf_2000.parquet"
+    for fingerprint in ("fp-old", "fp-newer", "fp-newest"):
+        lib.append_manifest_row(
+            {"library": "crsp", "table": "dsf", "status": "ok", "rows": 1,
+             "path": target, "missing_columns": "", "optional_columns_missing": "",
+             "error": "", "start_date": "", "end_date": "",
+             "universe_fingerprint": fingerprint},
+            manifest_path=manifest_path,
+        )
+    assert lib.last_manifest_fingerprint_for_path(manifest_path, target) == "fp-newest"
+
+
+def test_determine_chunk_force_true_when_requested_force_regardless_of_everything_else(tmp_path):
+    out_path = tmp_path / "raw" / "crsp" / "dsf_2000.parquet"
+    out_path.parent.mkdir(parents=True)
+    out_path.write_bytes(b"x")
+    manifest_path = tmp_path / "manifest.csv"
+    lib.append_manifest_row(
+        {"library": "crsp", "table": "dsf", "status": "ok", "rows": 1,
+         "path": str(out_path), "missing_columns": "", "optional_columns_missing": "",
+         "error": "", "start_date": "", "end_date": "",
+         "universe_fingerprint": "same-fingerprint"},
+        manifest_path=manifest_path,
+    )
+    assert lib.determine_chunk_force(
+        out_path, manifest_path, universe_fingerprint="same-fingerprint", requested_force=True,
+    ) is True
+
+
+def test_determine_chunk_force_false_when_file_does_not_exist(tmp_path):
+    out_path = tmp_path / "raw" / "crsp" / "dsf_2000.parquet"
+    manifest_path = tmp_path / "manifest.csv"
+    assert lib.determine_chunk_force(
+        out_path, manifest_path, universe_fingerprint="fp", requested_force=False,
+    ) is False
+
+
+def test_determine_chunk_force_true_when_no_manifest_history(tmp_path):
+    out_path = tmp_path / "raw" / "crsp" / "dsf_2000.parquet"
+    out_path.parent.mkdir(parents=True)
+    out_path.write_bytes(b"x")
+    manifest_path = tmp_path / "manifest.csv"  # never created
+    assert lib.determine_chunk_force(
+        out_path, manifest_path, universe_fingerprint="fp", requested_force=False,
+    ) is True
+
+
+def test_determine_chunk_force_true_when_fingerprint_mismatches(tmp_path):
+    out_path = tmp_path / "raw" / "crsp" / "dsf_2000.parquet"
+    out_path.parent.mkdir(parents=True)
+    out_path.write_bytes(b"x")
+    manifest_path = tmp_path / "manifest.csv"
+    lib.append_manifest_row(
+        {"library": "crsp", "table": "dsf", "status": "ok", "rows": 1,
+         "path": str(out_path), "missing_columns": "", "optional_columns_missing": "",
+         "error": "", "start_date": "", "end_date": "",
+         "universe_fingerprint": "old-fingerprint"},
+        manifest_path=manifest_path,
+    )
+    assert lib.determine_chunk_force(
+        out_path, manifest_path, universe_fingerprint="new-fingerprint", requested_force=False,
+    ) is True
+
+
+def test_determine_chunk_force_false_when_fingerprint_matches(tmp_path):
+    out_path = tmp_path / "raw" / "crsp" / "dsf_2000.parquet"
+    out_path.parent.mkdir(parents=True)
+    out_path.write_bytes(b"x")
+    manifest_path = tmp_path / "manifest.csv"
+    lib.append_manifest_row(
+        {"library": "crsp", "table": "dsf", "status": "ok", "rows": 1,
+         "path": str(out_path), "missing_columns": "", "optional_columns_missing": "",
+         "error": "", "start_date": "", "end_date": "",
+         "universe_fingerprint": "same-fingerprint"},
+        manifest_path=manifest_path,
+    )
+    assert lib.determine_chunk_force(
+        out_path, manifest_path, universe_fingerprint="same-fingerprint", requested_force=False,
+    ) is False
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 (round 3 review): a substantive, universe-filtered table returning
+# zero rows with NO exception and NO pre-existing file is essentially
+# always a bug (a disconnected filter, a wrong join, a shifted date column)
+# -- callers opt in via zero_rows_is_suspicious=True. Distinct from the
+# "kept existing" tests above (which fire only when out_path already
+# exists, regardless of this flag).
+# ---------------------------------------------------------------------------
+
+
+def test_pull_table_streaming_zero_rows_without_existing_file_is_suspicious_when_flagged(tmp_path):
+    empty_chunk = pd.DataFrame({"permno": pd.Series([], dtype="int64"),
+                                 "date": pd.Series([], dtype="object")})
+    db = StubDB(columns=["permno", "date"], chunks=[empty_chunk])
+    log = []
+
+    lib.pull_table(
+        db, log, "crsp", "dsf", ["permno", "date"],
+        raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
+        stream=True, zero_rows_is_suspicious=True,
+    )
+
+    assert log[0]["status"] == "ok_suspicious_zero_rows"
+    assert log[0]["rows"] == 0
+    assert not (tmp_path / "raw" / "crsp" / "dsf.parquet").exists()
+
+
+def test_pull_table_non_streaming_zero_rows_without_existing_file_is_suspicious_when_flagged(tmp_path):
+    db = StubDB(
+        columns=["permno"],
+        rows=pd.DataFrame({"permno": pd.Series([], dtype="int64")}),
+    )
+    log = []
+
+    lib.pull_table(
+        db, log, "crsp", "dsedelist", ["permno"],
+        raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
+        zero_rows_is_suspicious=True,
+    )
+
+    assert log[0]["status"] == "ok_suspicious_zero_rows"
+    assert log[0]["rows"] == 0
+
+
+def test_pull_table_zero_rows_without_flag_defaults_to_plain_ok_not_suspicious(tmp_path):
+    """zero_rows_is_suspicious defaults to False -- existing callers that
+    don't pass it (e.g. crsp.dsi, the small Phase A reference tables) must
+    be unaffected."""
+    empty_chunk = pd.DataFrame({"permno": pd.Series([], dtype="int64")})
+    db = StubDB(columns=["permno"], chunks=[empty_chunk])
+    log = []
+
+    lib.pull_table(
+        db, log, "crsp", "dsi", ["permno"],
+        raw_dir=tmp_path / "raw", manifest_path=tmp_path / "manifest.csv",
+        stream=True,
+    )
+
+    assert log[0]["status"] == "ok"
+
+
+def test_pull_table_zero_rows_with_existing_file_is_not_suspicious_even_when_flagged(tmp_path):
+    """ok_suspicious_zero_rows is a DIFFERENT scenario from
+    ok_empty_query_kept_existing -- when out_path already exists, the
+    existing "kept existing" status takes precedence regardless of
+    zero_rows_is_suspicious."""
+    raw_dir = tmp_path / "raw"
+    out_dir = raw_dir / "crsp"
+    out_dir.mkdir(parents=True)
+    out_path = out_dir / "dsf.parquet"
+    out_path.write_bytes(b"STALE-BUT-STILL-GOOD")
+
+    empty_chunk = pd.DataFrame({"permno": pd.Series([], dtype="int64"),
+                                 "date": pd.Series([], dtype="object")})
+    db = StubDB(columns=["permno", "date"], chunks=[empty_chunk])
+    log = []
+
+    lib.pull_table(
+        db, log, "crsp", "dsf", ["permno", "date"],
+        raw_dir=raw_dir, manifest_path=tmp_path / "manifest.csv",
+        stream=True, force=True, zero_rows_is_suspicious=True,
+    )
+
+    assert log[0]["status"] == "ok_empty_query_kept_existing"
+
+
+def test_ok_suspicious_zero_rows_is_not_a_success_status():
+    assert "ok_suspicious_zero_rows" not in lib.SUCCESS_STATUSES
+    failures = lib.find_run_log_failures([
+        {"status": "ok_suspicious_zero_rows"},
+        {"status": "ok"},
+    ])
+    assert len(failures) == 1
+    assert failures[0]["status"] == "ok_suspicious_zero_rows"
+
+
+def test_library_unavailable_is_a_success_status():
+    """Fix 3 (round 3 review): "library_unavailable" must be excluded from
+    find_run_log_failures -- a library simply not being visible on this
+    account is not a failure of any pull that was actually attempted."""
+    assert "library_unavailable" in lib.SUCCESS_STATUSES
+    failures = lib.find_run_log_failures([
+        {"status": "library_unavailable"},
+        {"status": "ok"},
+    ])
+    assert failures == []
+
+
+# ---------------------------------------------------------------------------
+# Lower-priority fix (round 3 review): append_manifest_row/record's
+# manifest_path is now a REQUIRED parameter -- omitting it must raise
+# immediately instead of silently falling back to the vestigial shared
+# lib.MANIFEST_PATH constant.
+# ---------------------------------------------------------------------------
+
+
+def test_append_manifest_row_requires_manifest_path_argument():
+    with pytest.raises(TypeError):
+        lib.append_manifest_row({"library": "crsp", "table": "dsf", "status": "ok"})
+
+
+def test_append_manifest_row_rejects_explicit_none_manifest_path():
+    with pytest.raises(ValueError):
+        lib.append_manifest_row({"library": "crsp", "table": "dsf", "status": "ok"}, manifest_path=None)
+
+
+def test_record_requires_manifest_path_argument():
+    with pytest.raises(TypeError):
+        lib.record([], {"library": "crsp", "table": "dsf", "status": "ok"})

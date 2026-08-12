@@ -95,6 +95,27 @@ def main():
         final_resolved_ids_path.suffix + ".tmp"
     )
 
+    # Lower-priority fix (round 3 review): the audit CSVs used to be written
+    # straight to their final paths inside resolve_universe(), NOT gated
+    # behind the same atomic-promotion-after-checks-pass logic as the main
+    # resolved-ids Parquet above -- so a failed run could leave a mismatched
+    # set of audit files sitting next to a STALE (from a prior successful
+    # run) resolved-ids file. Same tmp-path-then-os.replace-together pattern
+    # as tmp_resolved_ids_path: every one of these is written to a `.tmp`
+    # path by resolve_universe() below, and only promoted to its final path
+    # (all four together, right alongside the resolved-ids file) after every
+    # floor/canary/failure check has passed.
+    audit_csv_final_paths = {
+        "unresolved_secids": lib.METADATA_DIR / "unresolved_secids.csv",
+        "ambiguous_links": lib.METADATA_DIR / "ambiguous_links.csv",
+        "permnos_without_gvkey": lib.METADATA_DIR / "permnos_without_gvkey.csv",
+        "permnos_without_ibes_ticker": lib.METADATA_DIR / "permnos_without_ibes_ticker.csv",
+    }
+    audit_csv_tmp_paths = {
+        name: path.with_suffix(path.suffix + ".tmp")
+        for name, path in audit_csv_final_paths.items()
+    }
+
     # Fix 4: absolute-count floor on the universe file, checked BEFORE
     # connecting to WRDS at all -- see _check_universe_secid_floor's
     # docstring for why the existing RATE-based floor
@@ -247,11 +268,15 @@ def main():
                 stocknames_path=lib.RAW_DIR / "crsp" / "stocknames.parquet",
                 ccmxpf_lnkhist_path=lib.RAW_DIR / "crsp" / "ccmxpf_lnkhist.parquet",
                 ibcrsphist_path=lib.RAW_DIR / "wrdsapps" / "ibcrsphist.parquet",
-                unresolved_secids_out=lib.METADATA_DIR / "unresolved_secids.csv",
-                ambiguous_links_out=lib.METADATA_DIR / "ambiguous_links.csv",
+                # Lower-priority fix: these four audit CSVs now also go to
+                # TEMP paths, promoted together with tmp_resolved_ids_path
+                # only after every check below passes -- see this function's
+                # top-of-main comment for audit_csv_tmp_paths.
+                unresolved_secids_out=audit_csv_tmp_paths["unresolved_secids"],
+                ambiguous_links_out=audit_csv_tmp_paths["ambiguous_links"],
                 resolved_ids_out=tmp_resolved_ids_path,
-                permnos_without_gvkey_out=lib.METADATA_DIR / "permnos_without_gvkey.csv",
-                permnos_without_ibes_ticker_out=lib.METADATA_DIR / "permnos_without_ibes_ticker.csv",
+                permnos_without_gvkey_out=audit_csv_tmp_paths["permnos_without_gvkey"],
+                permnos_without_ibes_ticker_out=audit_csv_tmp_paths["permnos_without_ibes_ticker"],
             )
         except lib.UniverseResolutionError as e:
             print(
@@ -306,15 +331,51 @@ def main():
                 flush=True,
             )
             raise SystemExit(1)
+
+        # Fix 3 (round 3 review): pull_wrds_reference.py was previously
+        # exempt from the "did any pull actually fail" check the three
+        # consumer scripts already apply to themselves -- resolve_universe()
+        # can complete and every floor/canary check above can pass using
+        # ONLY the Phase A tables that pulled correctly, silently masking a
+        # real Phase A failure (query_failed, missing_required_columns,
+        # describe_table_error, or the new ok_suspicious_zero_rows from Fix
+        # 2). Checked here, inside this same try block, so a failure gets
+        # identical treatment to the floor/canary checks above: cleanup via
+        # the except clause below, and neither the resolved-ids file nor the
+        # audit CSVs are ever promoted. "library_unavailable" (a library
+        # simply not being on this account) is correctly NOT a failure here
+        # -- see SUCCESS_STATUSES's docstring in wrds_pull_lib.py.
+        run_log_failures = lib.find_run_log_failures(log)
+        if run_log_failures:
+            print(
+                f"FATAL: {len(run_log_failures)} Phase A table pull(s) did "
+                f"not succeed -- refusing to promote "
+                f"{final_resolved_ids_path} or declare success, even though "
+                f"universe resolution itself may have completed using only "
+                f"the tables that DID pull correctly. The three consumer "
+                f"scripts must NOT be run:",
+                flush=True,
+            )
+            for row in run_log_failures:
+                print(
+                    f"  - {row.get('library')}.{row.get('table')}: "
+                    f"status={row.get('status')} error={row.get('error')}",
+                    flush=True,
+                )
+            raise SystemExit(1)
     except BaseException:
-        # Finding 1: best-effort cleanup of the temp resolved-ids file on
-        # ANY abort path (including the SystemExit(1) calls above, which are
-        # BaseException, not Exception) -- not required for correctness
-        # (nothing else ever checks tmp_resolved_ids_path's existence), just
-        # tidiness so a failed run doesn't leave debris a human might
-        # mistake for something meaningful.
+        # Finding 1: best-effort cleanup of the temp resolved-ids file (and,
+        # lower-priority fix, the temp audit CSVs) on ANY abort path
+        # (including the SystemExit(1) calls above, which are BaseException,
+        # not Exception) -- not required for correctness (nothing else ever
+        # checks these tmp paths' existence), just tidiness so a failed run
+        # doesn't leave debris a human might mistake for something
+        # meaningful.
         if tmp_resolved_ids_path.exists():
             tmp_resolved_ids_path.unlink(missing_ok=True)
+        for tmp_path in audit_csv_tmp_paths.values():
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
         raise
     finally:
         db.close()
@@ -323,10 +384,17 @@ def main():
     # Finding 1: every floor/canary check above has now passed -- ONLY now
     # is the resolved-IDs file promoted (atomically, via os.replace) to the
     # final path the 3 consumer scripts' require_resolved_universe_file()
-    # guard checks. If anything above raised, this line is never reached,
-    # so final_resolved_ids_path is left exactly as it was before this run
+    # guard checks (including, this round, Fix 3's run_log_failures check).
+    # If anything above raised, this line is never reached, so
+    # final_resolved_ids_path is left exactly as it was before this run
     # (still absent, or still whatever a prior successful run produced).
+    # The four audit CSVs are promoted together with it, for the same
+    # reason (lower-priority fix): a failed run must not leave a mismatched
+    # set of audit files sitting next to a stale prior-run resolved-ids
+    # file.
     os.replace(tmp_resolved_ids_path, final_resolved_ids_path)
+    for name, tmp_path in audit_csv_tmp_paths.items():
+        os.replace(tmp_path, audit_csv_final_paths[name])
 
     # --- Summary (the manifest itself was already written incrementally,
     # row by row, above -- this just prints what this run did) ---

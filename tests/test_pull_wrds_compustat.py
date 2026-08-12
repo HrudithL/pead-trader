@@ -390,6 +390,51 @@ def test_every_query_failing_exits_nonzero_and_does_not_print_success(tmp_path, 
 
 
 # ---------------------------------------------------------------------------
+# Fix 2 (round 3 review): comp.fundq/comp.funda are GVKEY-filtered,
+# substantive tables -- a genuine zero-row result (no exception, no
+# pre-existing file) is essentially always a bug, not a legitimate empty
+# result, so it must be classified as a FAILURE status
+# ("ok_suspicious_zero_rows"), not plain "ok".
+# ---------------------------------------------------------------------------
+
+
+class _ZeroRowFakeCompustatDB(FakeCompustatDB):
+    def raw_sql(self, sql, return_iter=False):
+        self.calls.append(sql)
+        select_list = sql.split("FROM")[0].replace("SELECT", "")
+        cols = [c.strip() for c in select_list.split(",") if c.strip()]
+        if self.fail_marker is not None and self.fail_marker in sql:
+            empty = pd.DataFrame({c: [] for c in cols})
+            return iter([empty]) if return_iter else empty
+        row = pd.DataFrame({c: [1] for c in cols})
+        return iter([row]) if return_iter else row
+
+
+def test_fundq_zero_rows_is_suspicious_and_fails_the_script(tmp_path, monkeypatch, capsys):
+    raw_dir, _metadata_dir, manifest_path = _patch_compustat_env(monkeypatch, tmp_path)
+
+    def _connect():
+        return _ZeroRowFakeCompustatDB(fail_marker="comp.fundq")
+
+    monkeypatch.setattr(lib, "connect", _connect)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_compustat.py"])
+
+    with pytest.raises(SystemExit):
+        compustat_script.main()
+
+    out = capsys.readouterr().out
+    assert "SUCCESS" not in out
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    fundq_rows = manifest[manifest["table"] == "fundq"]
+    assert (fundq_rows["status"] == "ok_suspicious_zero_rows").any()
+    assert not (raw_dir / "comp" / "fundq.parquet").exists()
+    # funda, unaffected by the marker, must have completed normally.
+    funda_rows = manifest[manifest["table"] == "funda"]
+    assert (funda_rows["status"] == "ok").any()
+
+
+# ---------------------------------------------------------------------------
 # Finding 4: Compustat is queried under whichever library alias
 # pull_wrds_reference.py actually resolved (comp/compa/compustat), never a
 # hardcoded "comp" literal.

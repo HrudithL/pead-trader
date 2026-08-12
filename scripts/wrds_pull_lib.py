@@ -38,6 +38,7 @@ same values instead of each keeping its own copy that could drift.
 import builtins
 import csv
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -260,6 +261,7 @@ CRSP_CCMXPF_LNKHIST_COLUMNS = (
 MANIFEST_FIELDNAMES = [
     "library", "table", "status", "rows", "path", "missing_columns",
     "optional_columns_missing", "error", "pulled_at", "start_date", "end_date",
+    "universe_fingerprint",
 ]
 
 # Manifest error-text sanitization (Fix 4): data/metadata/wrds_pull_manifest.csv
@@ -418,7 +420,7 @@ def _rel(path: Path) -> str:
         return str(path)
 
 
-def append_manifest_row(row: dict, manifest_path: Path = None) -> None:
+def append_manifest_row(row: dict, manifest_path: Path) -> None:
     """Append one row to the manifest CSV immediately, creating the header if
     the file doesn't exist yet (or is empty). Writing per-row -- rather than
     buffering the whole run's log in memory and writing once at the end,
@@ -435,8 +437,23 @@ def append_manifest_row(row: dict, manifest_path: Path = None) -> None:
     thread pool means multiple threads within ONE process can call this
     concurrently against the same manifest_path -- see _MANIFEST_LOCK's
     docstring for exactly what this does and does not protect against.
+
+    `manifest_path` is REQUIRED, with no fallback default (lower-priority
+    fix, round 3 review): this used to default to the module-level
+    `MANIFEST_PATH` constant, a vestigial single shared path left over from
+    before the per-script manifest split (see `manifest_path_for`'s
+    docstring) -- if a future call site forgot to pass `manifest_path=`, it
+    would silently write to that old shared/racy path instead of erroring.
+    Now a call site that omits it gets an immediate TypeError, and an
+    explicit `manifest_path=None` raises ValueError here rather than
+    silently falling back.
     """
-    manifest_path = Path(manifest_path) if manifest_path is not None else MANIFEST_PATH
+    if manifest_path is None:
+        raise ValueError(
+            "append_manifest_row: manifest_path must not be None -- pass "
+            "the specific per-script manifest path (see manifest_path_for)."
+        )
+    manifest_path = Path(manifest_path)
     row = dict(row)
     if row.get("error"):
         row["error"] = _sanitize_error_text(str(row["error"]))
@@ -453,7 +470,7 @@ def append_manifest_row(row: dict, manifest_path: Path = None) -> None:
             writer.writerow({k: row.get(k, "") for k in MANIFEST_FIELDNAMES})
 
 
-def record(log: list, row: dict, manifest_path: Path = None) -> None:
+def record(log: list, row: dict, manifest_path: Path) -> None:
     """Add one entry to both the in-memory run log (used only for the final
     printed summary -- kept un-sanitized since it's console-only, never
     committed) and the on-disk manifest (the durable, git-tracked record,
@@ -465,6 +482,9 @@ def record(log: list, row: dict, manifest_path: Path = None) -> None:
     caller after all futures complete) are responsible for their own
     thread-safety around it; append_manifest_row's own lock only protects
     the shared on-disk manifest file, not this in-memory list.
+
+    `manifest_path` is REQUIRED -- see append_manifest_row's docstring for
+    why this no longer has a silent fallback default.
     """
     row = dict(row)
     row.setdefault(
@@ -477,13 +497,30 @@ def record(log: list, row: dict, manifest_path: Path = None) -> None:
 # Finding 3 (review round 8): the statuses pull_table()/record() can log that
 # mean "this table/chunk's data is genuinely present and usable" -- anything
 # else (missing_required_columns, no_such_table, describe_table_error,
-# query_failed, ...) means a table/chunk that was ATTEMPTED did not actually
-# produce usable data, and must not be silently reported as an overall
-# script SUCCESS. "ok_empty_query_kept_existing" counts as success: it means
-# a --force re-pull's query legitimately returned zero rows and the
-# previously-good file at out_path was correctly left untouched -- not a
-# failure, just a no-op this run.
-SUCCESS_STATUSES = {"ok", "skipped_exists", "ok_empty_query_kept_existing"}
+# query_failed, ok_suspicious_zero_rows, ...) means a table/chunk that was
+# ATTEMPTED did not actually produce usable data, and must not be silently
+# reported as an overall script SUCCESS. "ok_empty_query_kept_existing"
+# counts as success: it means a --force re-pull's query legitimately
+# returned zero rows and the previously-good file at out_path was correctly
+# left untouched -- not a failure, just a no-op this run. NOTE this is a
+# DIFFERENT scenario from "ok_suspicious_zero_rows" (Fix 2, round 3 review):
+# that status fires when a substantive, universe-filtered table returns zero
+# rows with NO pre-existing file to fall back on -- a real zero-row result
+# for one of those tables is essentially always a sign of a bug (a
+# disconnected filter, a wrong join, a shifted date column), so it is
+# deliberately NOT added here and IS treated as a failure by
+# find_run_log_failures below.
+#
+# "library_unavailable" (round 3 review, Fix 3) also counts as success: it
+# means pull_wrds_reference.py's one-time db.list_libraries() audit found a
+# given library (ibes/crsp/comp) simply isn't visible on this WRDS account --
+# that's a legitimate, expected account-tier fact, not a failure of any pull
+# that was actually attempted, so it must not gate pull_wrds_reference.py's
+# own "safe to proceed" success check (added this round) the way a genuine
+# query/schema failure does.
+SUCCESS_STATUSES = {
+    "ok", "skipped_exists", "ok_empty_query_kept_existing", "library_unavailable",
+}
 
 
 def find_run_log_failures(run_log) -> list:
@@ -753,6 +790,8 @@ def pull_table(
     raw_dir=None,
     manifest_path=None,
     force=False,
+    universe_fingerprint=None,
+    zero_rows_is_suspicious=False,
 ):
     """Check real columns first, save to Parquet, log the outcome.
 
@@ -788,6 +827,31 @@ def pull_table(
     then written incrementally via a real ParquetWriter -- see that
     function's docstring) instead of loading the full result into a
     DataFrame first; use it for any table that could plausibly be large.
+
+    `universe_fingerprint` (round 3 review, Fix 1): an opaque string the
+    caller computes ONCE per script run (see compute_universe_fingerprint)
+    identifying which resolved-universe filter this run is using -- recorded
+    verbatim on every manifest row this call produces (via `_log` below),
+    purely for provenance/auditability. This function does NOT use it to
+    make any decision itself; the caller (see determine_chunk_force) is
+    responsible for comparing it against a chunk's prior recorded value
+    BEFORE deciding what `force` value to pass in here.
+
+    `zero_rows_is_suspicious` (round 3 review, Fix 2): when True, a
+    genuinely zero-row query result (no exception, and no pre-existing
+    out_path to fall back on -- see the "ok_empty_query_kept_existing"
+    branch below, which is unaffected by this flag) is logged as the
+    distinct "ok_suspicious_zero_rows" status instead of plain "ok".
+    Callers should only pass True for substantive, universe-filtered tables
+    where a real empty result is essentially always a sign of a bug (a
+    disconnected filter, a wrong join, a shifted date column) rather than a
+    legitimately empty dataset -- e.g. crsp.dsf/crsp.dsedelist,
+    comp.fundq/comp.funda, and the ibes.*_epsus family. Leave this False
+    (the default) for unfiltered/reference tables (crsp.dsi, the small
+    Phase A tables) where a zero-row result has different, legitimate
+    emptiness characteristics. "ok_suspicious_zero_rows" is NOT included in
+    SUCCESS_STATUSES, so find_run_log_failures() treats it as a failure for
+    the purposes of a script's overall exit code -- unlike plain "ok".
     """
     # Validate every identifier that's about to be interpolated into the SQL
     # string -- see _validate_sql_identifier's docstring -- before `library`
@@ -825,6 +889,7 @@ def pull_table(
                 "error": error,
                 "start_date": start_date or "",
                 "end_date": end_date or "",
+                "universe_fingerprint": universe_fingerprint or "",
             },
             manifest_path=manifest_path,
         )
@@ -930,6 +995,28 @@ def pull_table(
                     "ok_empty_query_kept_existing",
                     rows=0,
                     path=_rel(out_path),
+                    optional_columns_missing=optional_missing_str,
+                )
+            elif zero_rows_is_suspicious:
+                # Fix 2 (round 3 review): for a substantive, universe-
+                # filtered table (the caller opted in via
+                # zero_rows_is_suspicious=True), a genuine zero-row result
+                # with no pre-existing file to fall back on is essentially
+                # always a sign of a bug -- a disconnected filter, a wrong
+                # join, a shifted date column -- not a legitimately empty
+                # dataset. Log a distinct, NON-success status so this is
+                # visible and gates the script's exit code (see
+                # SUCCESS_STATUSES/find_run_log_failures) instead of
+                # silently blending into ordinary "ok".
+                print(
+                    "  WARNING: 0 rows returned for a filtered substantive "
+                    "table with no pre-existing file -- treating as "
+                    "SUSPICIOUS (likely a disconnected filter, a wrong "
+                    "join, or a shifted date column), not a clean success.",
+                    flush=True,
+                )
+                _log(
+                    "ok_suspicious_zero_rows", rows=0,
                     optional_columns_missing=optional_missing_str,
                 )
             else:
@@ -1912,6 +1999,130 @@ def load_library_availability(path=None) -> dict:
             f"{e}. Re-run scripts/pull_wrds_reference.py (with --force if "
             f"needed) to regenerate it."
         ) from e
+
+
+# ---------------------------------------------------------------------------
+# Round 3 review, Fix 1: provenance-aware re-pull, replacing the round-2
+# "delete every existing dsf_<year>.parquet chunk up front on --force" sweep
+# (Finding 2 from the prior round). That sweep was found to be WORSE than the
+# mixed-vintage problem it fixed: if the connection died (or every re-pull
+# legitimately returned zero rows) partway through a --force re-run, it had
+# already deleted every chunk file before replacing any of them, destroying
+# hours of good data and -- if nothing failed loudly enough to raise -- still
+# printing SUCCESS.
+#
+# The replacement never deletes anything up front. Instead, each chunk's
+# output file carries (via the manifest) a record of WHICH resolved-universe
+# filter produced it. Before deciding whether to trust an existing chunk file
+# (the pre-existing skip-if-exists idempotency check pull_table() already
+# does), the caller compares the CURRENT run's universe fingerprint against
+# that chunk's own last-recorded fingerprint -- a mismatch (or no recorded
+# fingerprint at all) means "don't trust the skip shortcut, ask pull_table()
+# to attempt a re-pull", exactly like passing --force for that one chunk.
+# pull_table()'s existing atomic write-to-temp-then-os.replace-only-on-
+# success logic (unchanged by this fix) is what actually guarantees a failed
+# re-pull attempt leaves the existing file completely untouched -- this
+# mechanism only ever decides whether to ASK for an attempt, never deletes
+# anything itself and never decides the attempt's outcome.
+# ---------------------------------------------------------------------------
+
+
+def compute_universe_fingerprint(resolved_ids_path=None) -> str:
+    """Stable fingerprint for "which resolved-universe filter produced this
+    run's pulls", computed ONCE per script run (never per chunk) and passed
+    through to every pull_table() call that run makes.
+
+    Implementation: sha256 of data/metadata/resolved_universe_ids.parquet's
+    raw file bytes. A content hash is used rather than mtime or row count --
+    the two simpler alternatives this round considered: mtime granularity
+    can collide across two genuinely different regenerations of the file
+    (or survive a same-content copy that resets it), and row count alone
+    can't detect a same-count-but-different-membership universe change
+    (e.g. one PERMNO swapped for another). Hashing the whole file's raw
+    bytes also means ANY change to the resolved-ids file -- including a
+    GVKEY or I/B/E/S ticker change that never touches the PERMNO column at
+    all -- is detected, which is the conservative/safe direction for a
+    provenance check whose whole job is "did the universe change".
+    """
+    resolved_ids_path = (
+        Path(resolved_ids_path) if resolved_ids_path is not None else RESOLVED_IDS_PATH
+    )
+    return hashlib.sha256(Path(resolved_ids_path).read_bytes()).hexdigest()
+
+
+def last_manifest_fingerprint_for_path(manifest_path, rel_out_path: str):
+    """Return the most recently recorded `universe_fingerprint` among the
+    manifest rows whose `path` field equals `rel_out_path` exactly (the
+    same relative-path string pull_table()'s `_rel(out_path)` produces), or
+    None if the manifest doesn't exist yet, has no such row, or the
+    matching row(s) predate this field being introduced (blank/missing).
+
+    Manifest rows are appended in chronological order (see
+    append_manifest_row), so the LAST matching row is the most recent
+    provenance fact known about this exact output file. `path` is only
+    populated on statuses that actually concern out_path ("ok",
+    "skipped_exists", "ok_empty_query_kept_existing") -- rows for a failed
+    attempt (e.g. "query_failed") don't set it and are correctly never
+    matched here, since they never affected what's actually sitting at
+    out_path.
+    """
+    manifest_path = Path(manifest_path)
+    if not manifest_path.exists():
+        return None
+    last_row = None
+    with manifest_path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get("path") == rel_out_path:
+                last_row = row
+    if last_row is None:
+        return None
+    fingerprint = last_row.get("universe_fingerprint")
+    return fingerprint if fingerprint else None
+
+
+def determine_chunk_force(out_path, manifest_path, universe_fingerprint, requested_force) -> bool:
+    """Decide the `force` value to pass to pull_table() for ONE specific
+    chunk/table output (`out_path`), given the CURRENT run's
+    `universe_fingerprint` and that chunk's own manifest history --
+    replacing the deleted upfront sweep (see this section's module comment).
+
+    Returns True (ask pull_table() to attempt a re-pull) when:
+      - `requested_force` is True (the user explicitly passed --force --
+        unconditionally re-verify every chunk, the same top-level meaning
+        --force has always had), OR
+      - `out_path` doesn't exist yet (harmless either way: pull_table()'s
+        own `out_path.exists() and not force` skip check only ever
+        special-cases an EXISTING file, so the return value here is moot
+        when there's nothing to protect -- False is returned for clarity),
+        OR
+      - the most recent manifest row for this exact `out_path` has NO
+        recorded universe_fingerprint (no provenance to trust) or records a
+        DIFFERENT fingerprint than the current run's (the universe filter
+        has changed since this chunk was last pulled).
+
+    Returns False (trust the existing file; let pull_table()'s normal
+    skip-if-exists idempotency apply) only when the file exists AND its
+    last recorded fingerprint matches the current run's exactly.
+
+    This function NEVER deletes anything and NEVER decides a re-pull
+    attempt's outcome -- it only decides whether pull_table() is ASKED to
+    attempt one. pull_table()'s existing write-to-temp-then-os.replace-
+    only-on-success logic is what actually guarantees a failed attempt
+    leaves `out_path` completely untouched.
+    """
+    if requested_force:
+        return True
+    out_path = Path(out_path)
+    if not out_path.exists():
+        return False
+    recorded = last_manifest_fingerprint_for_path(manifest_path, _rel(out_path))
+    if recorded is None:
+        # No provenance to compare against -- lean toward re-pulling rather
+        # than silently trusting a file with no known history (see this
+        # section's module comment / the PR description's Fix 1 point 5).
+        return True
+    return recorded != universe_fingerprint
 
 
 # Finding 12 (review round 8): the columns load_resolved_filter_lists()

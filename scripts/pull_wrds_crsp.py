@@ -46,6 +46,31 @@ of the run. A KeyboardInterrupt (Ctrl-C) during the run cancels every
 not-yet-started queued task promptly rather than waiting for all 22 to
 drain (Finding 10).
 
+--force / re-pull semantics (round 3 review, Fix 1 -- replacing a
+regression from the prior round): passing --force does NOT delete any
+existing dsf_<year>.parquet chunk (crsp.dsedelist, similarly permno-
+filtered, is treated the same way). A prior round did exactly that -- an
+upfront delete-all-existing-chunks sweep meant to prevent a partial
+--force re-run from splicing together year-chunks pulled under different
+universe filters -- and adversarial review found it destroys hours of good
+data if the connection then fails partway through (or if every re-pull
+legitimately returns zero rows) before any chunk is replaced.
+
+Instead, this script computes a `universe_fingerprint` ONCE per run (a
+content hash of data/metadata/resolved_universe_ids.parquet -- see
+wrds_pull_lib.compute_universe_fingerprint) and, for every permno-filtered
+output (each dsf_<year>.parquet, dsedelist.parquet), compares it against
+that chunk's own last-recorded fingerprint in the manifest (see
+wrds_pull_lib.determine_chunk_force) BEFORE deciding whether to ask
+pull_table() to attempt a re-pull. --force now means "don't trust the
+skip-if-exists shortcut for ANY chunk, ask pull_table() to re-verify/
+re-pull every one of them" -- the same as a fingerprint mismatch would
+trigger on its own, even without --force. Either way, nothing is ever
+deleted up front: pull_table()'s existing atomic write-to-temp-then-
+os.replace-only-on-success logic is what actually replaces a chunk file,
+and it leaves the existing file completely untouched if the re-pull
+attempt fails for any reason (connection error, zero rows, etc.).
+
 Usage:
     python scripts/pull_wrds_crsp.py [--force]
 Requires WRDS_USERNAME and WRDS_PASSWORD in a .env file at the repo root.
@@ -123,7 +148,10 @@ def _dsf_year_chunks():
         yield year, chunk_start.isoformat(), chunk_end.isoformat()
 
 
-def _pull_dsf_year_chunk(year, chunk_start, chunk_end, permno_filter, force, manifest_path, conn_pool):
+def _pull_dsf_year_chunk(
+    year, chunk_start, chunk_end, permno_filter, force, universe_fingerprint,
+    manifest_path, conn_pool,
+):
     """Worker function for one calendar year of crsp.dsf, run inside the
     bounded thread pool below. Uses `conn_pool` to get THIS thread's shared
     connection (Finding 9) -- never opens or closes a connection itself;
@@ -144,11 +172,16 @@ def _pull_dsf_year_chunk(year, chunk_start, chunk_end, permno_filter, force, man
         start_date=chunk_start, end_date=chunk_end,
         manifest_path=manifest_path,
         force=force,
+        universe_fingerprint=universe_fingerprint,
+        # Fix 2: crsp.dsf is permno-filtered and this project's date range is
+        # entirely inside CRSP's real coverage -- a genuine zero-row year is
+        # essentially always a disconnected filter/join bug, not a real gap.
+        zero_rows_is_suspicious=True,
     )
     return chunk_log
 
 
-def _pull_dsi(permno_filter, force, manifest_path, conn_pool):
+def _pull_dsi(permno_filter, force, universe_fingerprint, manifest_path, conn_pool):
     """crsp.dsi: the market-benchmark counterpart to dsf. Left unfiltered
     by design -- one row per trading day market-wide, already tiny, and
     there is no per-security ID to filter it by. `permno_filter` is
@@ -164,11 +197,14 @@ def _pull_dsi(permno_filter, force, manifest_path, conn_pool):
         start_date=lib.LOOKBACK_START_DATE, end_date=lib.RETURN_END_DATE,
         manifest_path=manifest_path,
         force=force,
+        universe_fingerprint=universe_fingerprint,
+        # Fix 2: dsi is unfiltered (no per-security ID) -- left as plain "ok"
+        # for a zero-row result, unchanged from before this round.
     )
     return chunk_log
 
 
-def _pull_dsedelist(permno_filter, force, manifest_path, conn_pool):
+def _pull_dsedelist(permno_filter, force, universe_fingerprint, manifest_path, conn_pool):
     db = conn_pool.get()
     chunk_log = []
     lib.pull_table(
@@ -182,6 +218,9 @@ def _pull_dsedelist(permno_filter, force, manifest_path, conn_pool):
         start_date=lib.LOOKBACK_START_DATE, end_date=lib.RETURN_END_DATE,
         manifest_path=manifest_path,
         force=force,
+        universe_fingerprint=universe_fingerprint,
+        # Fix 2: permno-filtered, substantive table -- same reasoning as dsf.
+        zero_rows_is_suspicious=True,
     )
     return chunk_log
 
@@ -260,43 +299,41 @@ def main():
 
     permno_filter = lib.build_numeric_in_clause("permno", permnos)
 
-    # Finding 2 (simpler stopgap, per review): a partial --force re-run can
-    # otherwise splice year-chunks pulled under different universe filters
-    # together -- each dsf_<year>.parquet is independently skip-if-exists,
-    # so if a --force re-run (after the universe filter changed) dies
-    # partway through, some years hold the new filter's data and some hold
-    # the old filter's, and a subsequent NON-force run silently treats every
-    # one of them as complete. Deleting every existing year-chunk file
-    # upfront -- before any of the 20 pulls start -- means a partial force
-    # run can never leave a mixed-vintage set: a year either got re-pulled
-    # under the current filter, or its file is simply absent (so a later
-    # non-force run correctly re-pulls it), never "silently stale".
-    if force:
-        removed = 0
-        for year, _chunk_start, _chunk_end in _dsf_year_chunks():
-            stale_path = lib.RAW_DIR / "crsp" / f"dsf_{year}.parquet"
-            if stale_path.exists():
-                stale_path.unlink()
-                removed += 1
-        if removed:
-            print(
-                f"--force: removed {removed} existing dsf_<year>.parquet "
-                f"chunk file(s) up front, so a partial re-run under a "
-                f"changed universe filter can never leave a mixed-vintage "
-                f"set (some years old-filter, some new-filter) that a "
-                f"later non-force run would silently treat as complete.",
-                flush=True,
-            )
+    # Fix 1 (round 3 review, replacing Finding 2's upfront delete sweep from
+    # the prior round -- see this file's module docstring for why that sweep
+    # was found to be a data-destruction regression). Computed ONCE for the
+    # whole run, then compared per-chunk against each chunk's own manifest
+    # history via lib.determine_chunk_force -- never deletes anything;
+    # only decides what `force` value pull_table() receives for that one
+    # chunk. A mismatch (or no recorded history) behaves like --force for
+    # that specific chunk; a match lets the normal skip-if-exists apply.
+    universe_fingerprint = lib.compute_universe_fingerprint(resolved_ids_path)
+
+    def _permno_filtered_chunk_force(out_name: str) -> bool:
+        out_path = lib.RAW_DIR / "crsp" / f"{out_name}.parquet"
+        return lib.determine_chunk_force(out_path, manifest_path, universe_fingerprint, force)
 
     tasks = []
     for year, chunk_start, chunk_end in _dsf_year_chunks():
+        chunk_force = _permno_filtered_chunk_force(f"dsf_{year}")
         tasks.append((
             f"crsp.dsf ({year})",
             _pull_dsf_year_chunk,
-            (year, chunk_start, chunk_end, permno_filter, force, manifest_path),
+            (year, chunk_start, chunk_end, permno_filter, chunk_force, universe_fingerprint, manifest_path),
         ))
-    tasks.append(("crsp.dsi", _pull_dsi, (permno_filter, force, manifest_path)))
-    tasks.append(("crsp.dsedelist", _pull_dsedelist, (permno_filter, force, manifest_path)))
+    # crsp.dsi is unfiltered (no permno_filter at all), so there is no
+    # "universe changed" story for it -- its force value is simply whatever
+    # the user passed on the command line, same as every script before this
+    # fix.
+    tasks.append((
+        "crsp.dsi", _pull_dsi,
+        (permno_filter, force, universe_fingerprint, manifest_path),
+    ))
+    dsedelist_force = _permno_filtered_chunk_force("dsedelist")
+    tasks.append((
+        "crsp.dsedelist", _pull_dsedelist,
+        (permno_filter, dsedelist_force, universe_fingerprint, manifest_path),
+    ))
 
     print(
         f"Running {len(tasks)} task(s) ({len(tasks) - 2} crsp.dsf year-chunks "

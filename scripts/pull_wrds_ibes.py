@@ -83,6 +83,10 @@ def _pull_statsumu_epsus(ticker_filter, force, manifest_path):
             start_date=lib.LOOKBACK_START_DATE, end_date=lib.END_DATE,
             manifest_path=manifest_path,
             force=force,
+            # Fix 2 (round 3 review): ticker-filtered, substantive table -- a
+            # genuine zero-row result within this project's real date range
+            # is essentially always a disconnected filter/join bug.
+            zero_rows_is_suspicious=True,
         )
     finally:
         db.close()
@@ -110,6 +114,8 @@ def _pull_actu_epsus(ticker_filter, force, manifest_path):
             start_date=lib.LOOKBACK_START_DATE, end_date=lib.RETURN_END_DATE,
             manifest_path=manifest_path,
             force=force,
+            # Fix 2 (round 3 review): same reasoning as statsumu_epsus above.
+            zero_rows_is_suspicious=True,
         )
     finally:
         db.close()
@@ -147,6 +153,8 @@ def _pull_detu_epsus(ticker_filter, force, manifest_path):
             start_date=lib.LOOKBACK_START_DATE, end_date=lib.RETURN_END_DATE,
             manifest_path=manifest_path,
             force=force,
+            # Fix 2 (round 3 review): same reasoning as statsumu_epsus above.
+            zero_rows_is_suspicious=True,
         )
     finally:
         db.close()

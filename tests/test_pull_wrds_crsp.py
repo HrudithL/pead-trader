@@ -157,18 +157,92 @@ def test_force_flag_rewires_a_year_chunk_that_already_exists(tmp_path, monkeypat
     )
 
 
-def test_without_force_flag_skips_existing_year_chunk(tmp_path, monkeypatch):
-    raw_dir, _metadata_dir, _manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
+def test_without_force_flag_skips_year_chunk_when_fingerprint_matches(tmp_path, monkeypatch):
+    """Fix 1 (round 3 review): without --force, an existing year-chunk file
+    is only trusted (skipped) if its last-recorded manifest fingerprint
+    matches the CURRENT run's universe_fingerprint exactly."""
+    raw_dir, metadata_dir, manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
     (raw_dir / "crsp").mkdir(parents=True)
     stale_year = dt.date.fromisoformat(lib.LOOKBACK_START_DATE).year
-    (raw_dir / "crsp" / f"dsf_{stale_year}.parquet").write_bytes(b"stale-marker")
+    out_path = raw_dir / "crsp" / f"dsf_{stale_year}.parquet"
+    out_path.write_bytes(b"stale-marker")
+
+    fingerprint = lib.compute_universe_fingerprint(metadata_dir / "resolved_universe_ids.parquet")
+    lib.append_manifest_row(
+        {
+            "library": "crsp", "table": "dsf", "status": "ok", "rows": 1,
+            "path": str(out_path), "missing_columns": "", "optional_columns_missing": "",
+            "error": "", "start_date": "", "end_date": "",
+            "universe_fingerprint": fingerprint,
+        },
+        manifest_path=manifest_path,
+    )
 
     monkeypatch.setattr(lib, "connect", _connect_factory())
     monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py"])
 
     crsp_script.main()
 
-    assert (raw_dir / "crsp" / f"dsf_{stale_year}.parquet").read_bytes() == b"stale-marker"
+    assert out_path.read_bytes() == b"stale-marker", (
+        "a MATCHING recorded universe_fingerprint must let the existing "
+        "year-chunk file be trusted (skipped) even without --force"
+    )
+
+
+def test_fingerprint_mismatch_triggers_repull_without_force(tmp_path, monkeypatch):
+    """Fix 1 (round 3 review): a chunk's recorded universe_fingerprint that
+    no longer matches the current run's must trigger a re-pull attempt EVEN
+    WITHOUT --force -- the universe filter changed since this chunk was
+    last pulled, so the skip-if-exists shortcut can no longer be trusted."""
+    raw_dir, _metadata_dir, manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
+    (raw_dir / "crsp").mkdir(parents=True)
+    stale_year = dt.date.fromisoformat(lib.LOOKBACK_START_DATE).year
+    out_path = raw_dir / "crsp" / f"dsf_{stale_year}.parquet"
+    out_path.write_bytes(b"stale-marker")
+
+    lib.append_manifest_row(
+        {
+            "library": "crsp", "table": "dsf", "status": "ok", "rows": 1,
+            "path": str(out_path), "missing_columns": "", "optional_columns_missing": "",
+            "error": "", "start_date": "", "end_date": "",
+            "universe_fingerprint": "a-fingerprint-from-a-since-changed-universe",
+        },
+        manifest_path=manifest_path,
+    )
+
+    monkeypatch.setattr(lib, "connect", _connect_factory())
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py"])  # no --force
+
+    crsp_script.main()
+
+    assert out_path.read_bytes() != b"stale-marker", (
+        "a fingerprint MISMATCH must trigger a re-pull attempt even without "
+        "--force"
+    )
+
+
+def test_no_manifest_history_triggers_repull_without_force(tmp_path, monkeypatch):
+    """Fix 1 (round 3 review), point 5: a chunk file that exists with NO
+    recorded fingerprint history (e.g. a first-ever run after this
+    mechanism shipped, or a reset manifest) has no provenance to trust --
+    lean toward re-pulling rather than silently trusting unknown
+    provenance, even without --force."""
+    raw_dir, _metadata_dir, _manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
+    (raw_dir / "crsp").mkdir(parents=True)
+    stale_year = dt.date.fromisoformat(lib.LOOKBACK_START_DATE).year
+    out_path = raw_dir / "crsp" / f"dsf_{stale_year}.parquet"
+    out_path.write_bytes(b"stale-marker")
+    # Deliberately NO manifest row written for this path.
+
+    monkeypatch.setattr(lib, "connect", _connect_factory())
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py"])
+
+    crsp_script.main()
+
+    assert out_path.read_bytes() != b"stale-marker", (
+        "a chunk with no recorded fingerprint history must be re-pulled "
+        "rather than silently trusted"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -543,6 +617,44 @@ def test_every_query_failing_exits_nonzero_and_does_not_print_success(tmp_path, 
 
 
 # ---------------------------------------------------------------------------
+# Fix 2 (round 3 review): a genuine zero-row result (no exception) for a
+# permno-filtered year-chunk, with no pre-existing file to fall back on,
+# must be classified as a FAILURE status ("ok_suspicious_zero_rows") -- not
+# plain "ok" -- and must make the whole script report failure / exit
+# non-zero rather than printing SUCCESS.
+# ---------------------------------------------------------------------------
+
+
+def test_one_year_zero_rows_is_suspicious_and_fails_the_whole_script(tmp_path, monkeypatch, capsys):
+    raw_dir, _metadata_dir, manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
+    lookback_start = dt.date.fromisoformat(lib.LOOKBACK_START_DATE)
+    suspicious_year = lookback_start.year + 2
+
+    def _connect():
+        return _ZeroRowOnMarkerFakeCrspDB(fail_marker=f"'{suspicious_year}-01-01'")
+
+    monkeypatch.setattr(lib, "connect", _connect)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py"])  # no pre-existing files at all
+
+    with pytest.raises(SystemExit):
+        crsp_script.main()
+
+    out = capsys.readouterr().out
+    assert "SUCCESS" not in out
+
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    suspicious_rows = manifest[manifest["start_date"] == f"{suspicious_year}-01-01"]
+    assert (suspicious_rows["status"] == "ok_suspicious_zero_rows").any()
+    assert not (raw_dir / "crsp" / f"dsf_{suspicious_year}.parquet").exists()
+    # Every OTHER year (and dsi/dsedelist) must still have completed normally.
+    return_end = dt.date.fromisoformat(lib.RETURN_END_DATE)
+    for year in range(lookback_start.year, return_end.year + 1):
+        if year == suspicious_year:
+            continue
+        assert (raw_dir / "crsp" / f"dsf_{year}.parquet").exists()
+
+
+# ---------------------------------------------------------------------------
 # Finding 5: empty/invalid PERMNO list must be caught and reported clearly,
 # never silently produce a match-nothing "permno IN (NULL)" pull that then
 # reports success.
@@ -594,49 +706,106 @@ def test_malformed_permno_value_is_caught_and_reported_clearly(tmp_path, monkeyp
 
 
 # ---------------------------------------------------------------------------
-# Finding 2: --force must delete every existing dsf_<year>.parquet chunk
-# up front, so a partial re-run under a changed universe filter can never
-# leave a mixed-vintage set (some years old-filter, some new-filter) that a
-# later non-force run would silently treat as complete.
+# Fix 1 (round 3 review): replaces the prior round's "--force deletes every
+# existing dsf_<year>.parquet chunk up front" sweep (Finding 2), which
+# adversarial review found to be a data-destruction regression -- if the
+# connection died (or every re-pull legitimately returned zero rows)
+# partway through a --force re-run, every chunk had already been deleted
+# before any was replaced, destroying hours of good data (and, in the
+# zero-rows case, doing so while still printing SUCCESS). The tests above
+# (test_without_force_flag_skips_year_chunk_when_fingerprint_matches,
+# test_fingerprint_mismatch_triggers_repull_without_force,
+# test_no_manifest_history_triggers_repull_without_force) prove the new
+# provenance-aware skip/re-pull DECISION; the tests below prove the actual
+# data-safety property that decision feeds into: a re-pull ATTEMPT that
+# fails (for any reason) must never destroy the previously-good file.
 # ---------------------------------------------------------------------------
 
 
-def test_force_flag_deletes_all_existing_year_chunks_upfront_preventing_mixed_vintage_splice(tmp_path, monkeypatch):
-    raw_dir, _metadata_dir, _manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
+def test_force_repull_connection_failure_leaves_existing_year_chunk_completely_untouched(tmp_path, monkeypatch):
+    """The core property this round's Fix 1 exists to guarantee: a
+    previously-good dsf_<year>.parquet must survive COMPLETELY UNTOUCHED if
+    a subsequent run's re-pull attempt for that chunk (here, triggered by
+    --force) fails because of a query/connection error -- proving the
+    deleted upfront-delete-sweep regression is gone: nothing is ever
+    removed before pull_table()'s own atomic write-to-temp-then-os.replace-
+    only-on-success logic proves a replacement is actually ready."""
+    raw_dir, _metadata_dir, manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
     (raw_dir / "crsp").mkdir(parents=True)
     lookback_start = dt.date.fromisoformat(lib.LOOKBACK_START_DATE)
-    return_end = dt.date.fromisoformat(lib.RETURN_END_DATE)
     failing_year = lookback_start.year + 2  # an interior year, not the first/last
-
-    # Simulate stale chunks left by a PRIOR run under a DIFFERENT universe
-    # filter -- every year gets a distinct marker so we can tell a
-    # genuinely re-pulled file apart from one that was merely left alone.
-    for year in range(lookback_start.year, return_end.year + 1):
-        (raw_dir / "crsp" / f"dsf_{year}.parquet").write_bytes(f"stale-{year}".encode())
+    out_path = raw_dir / "crsp" / f"dsf_{failing_year}.parquet"
+    good_bytes = b"GENUINELY-GOOD-PRIOR-PULL-CONTENT"
+    out_path.write_bytes(good_bytes)
 
     monkeypatch.setattr(lib, "connect", _connect_factory(fail_marker=f"'{failing_year}-01-01'"))
     monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py", "--force"])
 
     with pytest.raises(SystemExit):
-        # Finding 3's fix means the one simulated query failure (for
-        # failing_year) now makes this exit non-zero -- expected here, and
-        # orthogonal to what THIS test is proving (the upfront deletion).
         crsp_script.main()
 
-    for year in range(lookback_start.year, return_end.year + 1):
-        f = raw_dir / "crsp" / f"dsf_{year}.parquet"
-        if year == failing_year:
-            assert not f.exists(), (
-                "the failing year's STALE chunk must be gone too -- a "
-                "subsequent non-force run must re-pull it rather than "
-                "silently treating the old, different-vintage file as done"
-            )
-        else:
-            assert f.read_bytes() != f"stale-{year}".encode(), (
-                f"year {year} must have been genuinely re-pulled under "
-                f"--force, not left as the stale marker from a prior run "
-                f"under a different universe filter"
-            )
+    assert out_path.read_bytes() == good_bytes, (
+        "a failed re-pull attempt (connection/query error) must leave a "
+        "previously-good year-chunk file COMPLETELY UNTOUCHED"
+    )
+    # A "query_failed" row never sets `path` (see pull_table's _log calls),
+    # since nothing was ever written to out_path -- match on start_date
+    # instead, which every dsf year-chunk row (success or failure) sets.
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    failing_rows = manifest[manifest["start_date"] == f"{failing_year}-01-01"]
+    assert (failing_rows["status"] == "query_failed").any()
+
+
+class _ZeroRowOnMarkerFakeCrspDB(FakeCrspDB):
+    """Like FakeCrspDB, but returns a genuinely EMPTY result (no exception)
+    for any query matching `fail_marker`, instead of raising."""
+
+    def raw_sql(self, sql, return_iter=False):
+        self.calls.append(sql)
+        select_list = sql.split("FROM")[0].replace("SELECT", "")
+        cols = [c.strip() for c in select_list.split(",") if c.strip()]
+        if self.fail_marker is not None and self.fail_marker in sql:
+            empty = pd.DataFrame({c: [] for c in cols})
+            return iter([empty]) if return_iter else empty
+        row = pd.DataFrame({c: [1] for c in cols})
+        return iter([row]) if return_iter else row
+
+
+def test_force_repull_zero_rows_leaves_existing_year_chunk_completely_untouched(tmp_path, monkeypatch):
+    """Same core property as the connection-failure test above, but for the
+    OTHER failure mode Fix 1 explicitly calls out: a re-pull attempt that
+    returns zero rows (no exception at all) must ALSO leave the existing
+    file untouched -- this is the exact scenario the deleted upfront-
+    delete-sweep got wrong (it would have already removed the file BEFORE
+    this legitimately-empty re-pull result was even known)."""
+    raw_dir, _metadata_dir, manifest_path = _patch_crsp_env(monkeypatch, tmp_path)
+    (raw_dir / "crsp").mkdir(parents=True)
+    lookback_start = dt.date.fromisoformat(lib.LOOKBACK_START_DATE)
+    failing_year = lookback_start.year + 2
+    out_path = raw_dir / "crsp" / f"dsf_{failing_year}.parquet"
+    good_bytes = b"GENUINELY-GOOD-PRIOR-PULL-CONTENT"
+    out_path.write_bytes(good_bytes)
+
+    def _connect():
+        return _ZeroRowOnMarkerFakeCrspDB(fail_marker=f"'{failing_year}-01-01'")
+
+    monkeypatch.setattr(lib, "connect", _connect)
+    monkeypatch.setattr(sys, "argv", ["pull_wrds_crsp.py", "--force"])
+
+    # A zero-row re-pull with an existing file already at out_path is
+    # "ok_empty_query_kept_existing" -- a SUCCESS status (a different
+    # scenario from Fix 2's "ok_suspicious_zero_rows", which only fires when
+    # there's no pre-existing file to fall back on) -- so this run must NOT
+    # raise SystemExit.
+    crsp_script.main()
+
+    assert out_path.read_bytes() == good_bytes, (
+        "a zero-row re-pull attempt must ALSO leave a previously-good "
+        "year-chunk file completely untouched"
+    )
+    manifest = pd.read_csv(manifest_path, keep_default_na=False)
+    failing_rows = manifest[manifest["path"] == str(out_path)]
+    assert (failing_rows["status"] == "ok_empty_query_kept_existing").any()
 
 
 # ---------------------------------------------------------------------------
