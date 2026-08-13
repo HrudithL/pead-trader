@@ -46,6 +46,14 @@ this script's main()):
    units artifact. See attach_share_basis()/compute_sue_analyst()/
    compute_sue_seasonal() for how this is corrected using CRSP's cumulative
    share-adjustment factor (cfacshr).
+4. attach_share_basis() itself, per (3), unconditionally assumed a reported
+   eps_actual is already on the POST-step basis whenever a cfacshr step
+   falls between a consensus snapshot and the announcement -- wrong on
+   ~30% of the narrow subset of rows where a step instead falls inside the
+   row's own (fpedats, anndats] reporting window. resolve_eps_basis()
+   discriminates that narrow subset using each ticker's own prior-quarter
+   actual as evidence, never a future quarter. See resolve_eps_basis() and
+   FINDINGS.md's `eps_basis_status` section.
 
 Usage:
     python scripts/clean_ibes_earnings.py
@@ -124,11 +132,42 @@ MAX_SEASONAL_WINDOW_SPAN_DAYS = 1095
 # increase by an identical rounded amount every year.
 _ZERO_STDEV_EPSILON = 1e-6
 
+# --- eps_basis discriminator (Step 2 follow-up fix) -------------------------
+#
+# The original split-adjustment fix (attach_share_basis, below) unconditionally
+# assumed a reported eps_actual is on the POST-step (cfacshr_anndats) basis.
+# An adversarial review found that assumption wrong on ~30% of the narrow
+# subset of rows where a real cfacshr step falls inside the row's own
+# (fpedats, anndats] reporting window -- fabricating new fake extreme
+# surprises as bad as the ones the original fix corrected. resolve_eps_basis()
+# below discriminates those in-window rows using each ticker's own
+# PRIOR-quarter actual (never a future quarter, to avoid introducing a new
+# look-ahead violation).
+
+# Minimum ratio between the losing and winning candidate-basis distances
+# before the prior-quarter evidence is treated as decisive. Validated
+# against 9 known-ground-truth split events: the worst true-positive
+# margin is 4.25x, so 2.0 leaves a ~2x cushion while still rejecting
+# near-ties (where the two hypotheses differ by a factor of R_c and a
+# coin flip would be materially wrong).
+EPS_BASIS_DECISIVE_MIN_RATIO = 2.0
+
+# Day-count bounds for accepting the immediately-preceding panel row as
+# the prior-quarter reference. Wide enough for 52/53-week fiscal
+# calendars, tight enough to reject a skipped quarter.
+EPS_BASIS_PRIOR_GAP_MIN_DAYS = 45
+EPS_BASIS_PRIOR_GAP_MAX_DAYS = 135
+
+# Gap bounds (days) for validate_qtr_ann_consistency's ordered
+# prior-QTR-row lookups at lag 1, 2, 3.
+QTR_ANN_GAP_BOUNDS = {1: (60, 120), 2: (150, 210), 3: (240, 300)}
+
 FINAL_COLUMNS = [
     "ibes_ticker", "permno", "gvkey", "identifier_matched", "identifier_ambiguous",
     "fpedats", "anndats", "anntims",
     "eps_actual", "eps_actual_dup_flag", "eps_actual_multiple_anndats",
     "cfacshr_anndats", "cfacshr_statpers", "eps_actual_adj", "share_basis_status",
+    "cfacshr_step_date", "cfacshr_prestep", "cfacshr_eps_basis", "eps_basis_status", "eps_basis_evidence_ratio",
     "consensus_statpers", "consensus_meanest", "consensus_medest", "consensus_stdev", "consensus_numest",
     "consensus_staleness_days", "n_candidates", "n_lookahead_excluded",
     "sue_analyst",
@@ -391,12 +430,19 @@ def resolve_actual_duplicates(
 
     1. Keep only pdicity == 'QTR' rows (drops ANN/SAN reporters and any
        ANN/SAN duplicate of a QTR row for the same period-end). This is a
-       real, small universe reduction (some tickers only ever report
-       annually/semiannually and vanish here entirely) -- reported, not
-       hidden. If this drops more than 5% of (ticker, fpedats) groups, that
-       does not match the verified expectation (~2%) and this function
-       stops rather than proceeding on data that doesn't look like what
-       was checked.
+       real, small universe reduction -- but most of the dropped GROUPS
+       belong to tickers that DO report quarterly elsewhere; a genuine
+       annual/semiannual-only reporter (one that vanishes from the universe
+       entirely) is the minority case. See groups_dropped_ticker_reports_
+       qtr_elsewhere/groups_dropped_december in `stats` -- most of what's
+       dropped is a systematic Q4 coverage gap (I/B/E/S carrying only an ANN
+       row for that one fiscal-year-end quarter), not "annual-only
+       reporters." Reported, not hidden either way. On the real pull this
+       loss is 1.1% of groups, below the spec's ~2% expectation and well
+       under the 5% safety threshold below; if a future re-pull ever drops
+       more than 5% of (ticker, fpedats) groups, that is far enough off the
+       verified expectation that this function stops rather than proceeding
+       on data that doesn't look like what was checked.
 
     2. Among the QTR-only rows, remaining (ticker, fpedats) duplicates are
        classified by (n_anndats, n_values) computed BEFORE dropping
@@ -426,6 +472,8 @@ def resolve_actual_duplicates(
 
     non_qtr_mask = df["pdicity"] != "QTR"
     stats["non_qtr_rows_dropped"] = int(non_qtr_mask.sum())
+
+    pre_filter_groups = df.drop_duplicates(["ticker", "fpedats"])[["ticker", "fpedats"]]
     df = df[df["pdicity"] == "QTR"].copy()
 
     stats["groups_after_period_filter"] = df.drop_duplicates(["ticker", "fpedats"]).shape[0]
@@ -433,6 +481,24 @@ def resolve_actual_duplicates(
         stats["groups_before_period_filter"] - stats["groups_after_period_filter"]
     )
     stats["tickers_vanished_after_qtr_filter"] = tickers_before - df["ticker"].nunique()
+
+    # Which of the dropped GROUPS belong to a ticker that still reports QTR
+    # somewhere else, vs. a ticker that vanishes from the universe entirely
+    # (see the docstring above) -- and how many of the dropped groups are
+    # specifically a December (Q4/fiscal-year-end) period-end, the concrete
+    # mechanism behind "I/B/E/S only carried an ANN row for that one
+    # quarter." Computed here (not deferred to FINDINGS-render time) since
+    # this is the one place both the pre- and post-filter group sets exist.
+    post_filter_groups = df.drop_duplicates(["ticker", "fpedats"])[["ticker", "fpedats"]]
+    dropped_groups = pre_filter_groups.merge(
+        post_filter_groups, on=["ticker", "fpedats"], how="left", indicator=True
+    )
+    dropped_groups = dropped_groups[dropped_groups["_merge"] == "left_only"]
+    tickers_with_qtr_elsewhere = set(post_filter_groups["ticker"])
+    stats["groups_dropped_ticker_reports_qtr_elsewhere"] = int(
+        dropped_groups["ticker"].isin(tickers_with_qtr_elsewhere).sum()
+    )
+    stats["groups_dropped_december"] = int((dropped_groups["fpedats"].dt.month == 12).sum())
 
     loss_fraction = (
         stats["groups_dropped_by_period_filter"] / stats["groups_before_period_filter"]
@@ -444,10 +510,11 @@ def resolve_actual_duplicates(
         raise RuntimeError(
             f"resolve_actual_duplicates: the QTR-only filter dropped "
             f"{loss_fraction:.1%} of (ticker, fpedats) groups, exceeding "
-            f"the {max_qtr_loss_fraction:.0%} safety threshold. This does not match the verified "
-            f"expectation (~2%) -- stopping rather than silently "
-            f"proceeding on data that looks different than what was "
-            f"checked. Stats so far: {stats}"
+            f"the {max_qtr_loss_fraction:.0%} safety threshold -- well above "
+            f"the spec's ~2% expectation (the real pull measured 1.1%, "
+            f"itself below that expectation) -- stopping rather than "
+            f"silently proceeding on data that looks different than what "
+            f"was checked. Stats so far: {stats}"
         )
 
     # Deterministic sort before every drop_duplicates below: ticker/fpedats
@@ -529,19 +596,33 @@ def validate_qtr_ann_consistency(actuals: pd.DataFrame, tolerance: float = 0.05)
     consensus disambiguation was).
 
     For (ticker, fpedats) groups where the prior 3 same-ticker fiscal
-    quarters (fpedats minus 3, 6, and 9 months) each have exactly one QTR
-    row, and the current fpedats has both a QTR row and an ANN row (each
-    unique) for the same ticker, the ANN value should approximately equal
-    the sum of the 4 QTR values if `pdicity` is correctly distinguishing
-    quarterly from annual actuals.
+    quarters each have exactly one QTR row, and the current fpedats has
+    both a QTR row and an ANN row (each unique) for the same ticker, the
+    ANN value should approximately equal the sum of the 4 QTR values if
+    `pdicity` is correctly distinguishing quarterly from annual actuals.
+
+    The prior 3 quarters are found by taking the immediately-preceding rows
+    in each ticker's own OWN chronological QTR series (ordered
+    prior-row lookups at lag 1/2/3, gated by a day-count window --
+    QTR_ANN_GAP_BOUNDS), not by shifting each candidate's own date forward
+    by a fixed `pd.DateOffset(months=...)`. An earlier version of this
+    function used the DateOffset approach and had a real, silent bug:
+    `DateOffset` preserves day-of-month, so `2000-09-30 + 3 months =
+    2000-12-30`, which never matches an actual `2000-12-31` row -- silently
+    excluding every December fiscal-year-end (73% of the eligible sample on
+    the real pull) from this check. The ordered-prior-row approach has no
+    such blind spot: it only cares about the actual gap in days between
+    consecutive real QTR rows, never about day-of-month arithmetic.
 
     `actuals` must be shaped like clean_actuals()'s output (columns
     ticker, fpedats, eps_actual, pdicity) and, importantly, must NOT yet
     have had resolve_actual_duplicates()'s QTR-only filter applied -- this
     needs to see both the QTR and ANN rows for the same (ticker, fpedats).
 
-    Returns {"n_cases": ..., "n_passed": ..., "pass_rate": ...} (pass_rate
-    is None if no qualifying cases were found at all).
+    Returns {"n_cases", "n_passed", "pass_rate", "n_cases_december"}
+    (pass_rate is None if no qualifying cases were found at all;
+    n_cases_december counts qualifying cases whose own fpedats falls in
+    December, so the specific bug above stays visibly closed).
     """
     df = actuals[["ticker", "fpedats", "eps_actual", "pdicity"]].drop_duplicates()
 
@@ -554,24 +635,34 @@ def validate_qtr_ann_consistency(actuals: pd.DataFrame, tolerance: float = 0.05)
     qtr_unique = _unique_by_group(df[df["pdicity"] == "QTR"])
     ann_unique = _unique_by_group(df[df["pdicity"] == "ANN"]).rename(columns={"eps_actual": "ann_value"})
 
-    candidates = ann_unique.merge(qtr_unique.rename(columns={"eps_actual": "q0"}), on=["ticker", "fpedats"], how="inner")
+    qtr = qtr_unique.sort_values(["ticker", "fpedats"]).reset_index(drop=True)
+    g = qtr.groupby("ticker")
+    eligible = pd.Series(True, index=qtr.index)
+    for lag, (lo, hi) in QTR_ANN_GAP_BOUNDS.items():
+        qtr[f"q_m{3 * lag}"] = g["eps_actual"].shift(lag)
+        gap = (qtr["fpedats"] - g["fpedats"].shift(lag)).dt.days
+        eligible &= qtr[f"q_m{3 * lag}"].notna() & gap.between(lo, hi)
 
-    for months, label in [(3, "q_m3"), (6, "q_m6"), (9, "q_m9")]:
-        # Shift the "prior quarter" candidates FORWARD by `months` so that
-        # a row originally at (ticker, fpedats=F-months) lines up, on
-        # merge, with the current row at (ticker, fpedats=F).
-        shifted = qtr_unique.rename(columns={"eps_actual": label}).copy()
-        shifted["fpedats"] = shifted["fpedats"] + pd.DateOffset(months=months)
-        candidates = candidates.merge(shifted, on=["ticker", "fpedats"], how="inner")
+    candidates = (
+        qtr[eligible]
+        .rename(columns={"eps_actual": "q0"})
+        .merge(ann_unique, on=["ticker", "fpedats"], how="inner")
+    )
 
     n_cases = len(candidates)
     if n_cases == 0:
-        return {"n_cases": 0, "n_passed": 0, "pass_rate": None}
+        return {"n_cases": 0, "n_passed": 0, "pass_rate": None, "n_cases_december": 0}
 
     predicted_sum = candidates["q0"] + candidates["q_m3"] + candidates["q_m6"] + candidates["q_m9"]
     passed = (candidates["ann_value"] - predicted_sum).abs() <= tolerance
     n_passed = int(passed.sum())
-    return {"n_cases": n_cases, "n_passed": n_passed, "pass_rate": n_passed / n_cases}
+    n_cases_december = int((candidates["fpedats"].dt.month == 12).sum())
+    return {
+        "n_cases": n_cases,
+        "n_passed": n_passed,
+        "pass_rate": n_passed / n_cases,
+        "n_cases_december": n_cases_december,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +695,12 @@ def compute_sue_analyst(eps_actual: pd.Series, meanest: pd.Series, stdev: pd.Ser
     return (eps_actual - meanest) / stdev_safe
 
 
+SUE_SEASONAL_OUTPUT_COLUMNS = [
+    "eps_year_ago", "eps_diff_yoy", "seasonal_n_prior_diffs",
+    "seasonal_diff_stdev", "seasonal_window_span_days", "sue_seasonal",
+]
+
+
 def compute_sue_seasonal(
     panel: pd.DataFrame,
     min_history: int = MIN_SEASONAL_DIFF_HISTORY,
@@ -615,6 +712,17 @@ def compute_sue_seasonal(
     seasonal_diff_stdev, seasonal_window_span_days, and sue_seasonal to
     `panel` (one row per (ticker, fpedats) -- see resolve_actual_
     duplicates).
+
+    Raises ValueError up front if `panel` already contains any of
+    SUE_SEASONAL_OUTPUT_COLUMNS -- build_event_table() calls this function
+    twice per run (once for the FINDINGS.md before/after comparison, once
+    for real, on the split-adjusted basis), and a second call on a frame
+    that already carries these columns would previously silently produce
+    merge-suffixed columns (e.g. "eps_year_ago_x"/"_y") internally and then
+    fail downstream with a confusing bare KeyError -- a live footgun now
+    that this runs twice. Callers must pass a copy of `panel` without these
+    columns (e.g. the ORIGINAL panel both times, not one call's output fed
+    into the other).
 
     `eps_col` (default "eps_actual") is the column used as "the actual EPS"
     throughout -- build_event_table() passes "eps_actual_adj" (the
@@ -656,6 +764,16 @@ def compute_sue_seasonal(
     out whenever that span exceeds MAX_SEASONAL_WINDOW_SPAN_DAYS, even if
     seasonal_n_prior_diffs already cleared min_history.
     """
+    conflicting = [c for c in SUE_SEASONAL_OUTPUT_COLUMNS if c in panel.columns]
+    if conflicting:
+        raise ValueError(
+            f"compute_sue_seasonal: panel already contains output column(s) "
+            f"{conflicting} -- refusing to run again on a frame that already "
+            "carries them (a second pass would silently produce merge-"
+            "suffixed columns internally and then fail with a confusing "
+            "KeyError). Pass a copy of the panel without these columns."
+        )
+
     df = panel.sort_values([ticker_col, "fpedats"]).reset_index(drop=True).copy()
 
     prior = df[[ticker_col, "fpedats", eps_col]].rename(
@@ -731,12 +849,24 @@ def _build_cfacshr_step_table(raw: pd.DataFrame) -> pd.DataFrame:
     Separated from load_cfacshr_step_table() so tests can exercise this on
     a small synthetic or filtered-real frame without reading CRSP's full
     daily file set from disk.
+
+    Also carries `prev_cfacshr` (the cfacshr in force immediately before
+    this step row -- null on a permno's first observation, since there is
+    no "before" to speak of) and `is_change` (True only for a REAL change,
+    i.e. `prev_cfacshr` is non-null and differs from this row's own
+    cfacshr -- False on every permno's first-observation row, which is
+    kept only so the merge_asof level lookups elsewhere have a value to
+    resolve against before that permno's first real change, if any).
+    resolve_eps_basis() filters to `is_change` rows specifically, since a
+    first-observation row is not evidence of an actual corporate action.
     """
     raw = raw.dropna(subset=["cfacshr"]).sort_values(["permno", "date"]).reset_index(drop=True)
     prev_cfacshr = raw.groupby("permno")["cfacshr"].shift(1)
     changed = prev_cfacshr.isna() | (raw["cfacshr"] != prev_cfacshr)
     step = raw.loc[changed, ["permno", "date", "cfacshr"]].reset_index(drop=True)
     step["permno"] = step["permno"].astype("float64")
+    step["prev_cfacshr"] = prev_cfacshr[changed].to_numpy()  # NaN on first obs
+    step["is_change"] = step["prev_cfacshr"].notna() & (step["cfacshr"] != step["prev_cfacshr"])
     return step.sort_values("date").reset_index(drop=True)
 
 
@@ -772,19 +902,30 @@ def resolve_share_basis(
     one of:
       "resolved" -- a usable cfacshr was found (the caller decides
         no_change vs. adjusted by comparing it to 1.0).
-      "unavailable_no_permno" -- permno_raw is null/empty, or target_date
-        is null (nothing to resolve against).
+      "unavailable_no_permno" -- permno_raw itself is null/empty (nothing
+        to resolve against, regardless of target_date).
+      "unavailable_no_target_date" -- permno_raw is present, but
+        target_date is null (nothing to resolve it AT).
       "unavailable_ambiguous_permno" -- more than one CRSP-covered
         candidate PERMNO, and they do not agree on cfacshr.
       "unavailable_no_crsp_coverage" -- no candidate PERMNO has a usable
         (non-null, positive) step-table entry on or before target_date.
+    These were previously conflated into a single "unavailable_no_permno"
+    value covering both the no-permno and no-target-date cases; split so a
+    later slice can tell "nothing to resolve against" apart from "resolvable
+    in principle, but this particular date is missing."
     """
     idx = permno_raw.index
     result_value = pd.Series(np.nan, index=idx, dtype="float64")
-    result_status = pd.Series("unavailable_no_permno", index=idx, dtype="object")
 
     permno_str = permno_raw.astype("string")
-    eligible = permno_str.notna() & (permno_str.str.len() > 0) & target_date.notna()
+    has_permno = permno_str.notna() & (permno_str.str.len() > 0)
+    result_status = pd.Series(
+        np.where(has_permno, "unavailable_no_target_date", "unavailable_no_permno"),
+        index=idx, dtype="object",
+    )
+
+    eligible = has_permno & target_date.notna()
     if not eligible.any():
         return result_value, result_status
 
@@ -824,34 +965,41 @@ def resolve_share_basis(
 
 
 def attach_share_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    """Adds cfacshr_anndats, cfacshr_statpers, eps_actual_adj, and
-    share_basis_status to `panel` (which must already have `permno`,
-    `anndats`, `consensus_statpers`, and `eps_actual`).
+    """Adds cfacshr_anndats, cfacshr_statpers, and share_basis_status to
+    `panel` (which must already have `permno`, `anndats`,
+    `consensus_statpers`, and `eps_actual`).
 
     cfacshr_statpers is only meaningfully resolved where consensus_statpers
     is non-null (resolve_share_basis treats a null target_date as
-    unavailable). eps_actual_adj = eps_actual / cfacshr_anndats is defined
-    for every row that has a resolved cfacshr_anndats, independent of
-    whether a consensus was ever selected at all -- it feeds the seasonal
-    path too, which needs no consensus.
+    unavailable).
+
+    Does NOT set `eps_actual_adj` -- an earlier version of this function
+    unconditionally computed it as `eps_actual / cfacshr_anndats`, which an
+    adversarial review found wrong on ~30% of the narrow subset of rows
+    where a real cfacshr step falls inside the row's own (fpedats, anndats]
+    reporting window (it assumes the reported actual is always already on
+    the POST-step basis, which is not always true). That assignment moved
+    to resolve_eps_basis() (below, called immediately after this function
+    in build_event_table), which discriminates the in-window rows first and
+    sets `eps_actual_adj = eps_actual / cfacshr_eps_basis` -- the corrected
+    divisor -- for every row, not just the in-window ones. This function
+    still runs first because resolve_eps_basis() needs `cfacshr_anndats`
+    and `share_basis_status` as inputs.
 
     share_basis_status describes the cfacshr_anndats resolution
-    specifically (the one used for eps_actual_adj, which is used
-    everywhere): "no_change" if resolved and equal to 1.0 (eps_actual_adj
-    is numerically identical to raw eps_actual for this row -- CRSP resets
+    specifically: "no_change" if resolved and equal to 1.0 (CRSP resets
     cfacshr to 1.0 immediately after a split, so this does NOT mean the
     permno has never split, only that nothing needs rescaling as of THIS
-    row's own anndats), "adjusted" if resolved and not 1.0 (eps_actual_adj
-    genuinely differs from eps_actual), or one of resolve_share_basis()'s
-    three "unavailable_*" statuses otherwise. Note this is independent of
-    whether sue_analyst's own R_c ratio (cfacshr_statpers / cfacshr_anndats)
-    differs from 1.0 -- a row can show "no_change" here (cfacshr_anndats
-    == 1.0) while still getting a real R_c-driven correction if
-    cfacshr_statpers != cfacshr_anndats (e.g. a split landing between the
-    consensus snapshot and an announcement that happens to land exactly on
-    CRSP's post-split reset value of 1.0). Both cfacshr columns are
-    exposed directly in the output, so R_c itself can always be recomputed
-    downstream rather than inferred from this status.
+    row's own anndats), "adjusted" if resolved and not 1.0, or one of
+    resolve_share_basis()'s four "unavailable_*" statuses otherwise. Note
+    this is independent of whether sue_analyst's own R_c ratio
+    (cfacshr_statpers / cfacshr_eps_basis) differs from 1.0 -- a row can
+    show "no_change" here (cfacshr_anndats == 1.0) while still getting a
+    real R_c-driven correction if cfacshr_statpers != cfacshr_anndats (e.g.
+    a split landing between the consensus snapshot and an announcement that
+    happens to land exactly on CRSP's post-split reset value of 1.0). Both
+    cfacshr columns are exposed directly in the output, so R_c itself can
+    always be recomputed downstream rather than inferred from this status.
     """
     df = panel.copy()
 
@@ -860,7 +1008,6 @@ def attach_share_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[p
 
     df["cfacshr_anndats"] = cfacshr_anndats
     df["cfacshr_statpers"] = cfacshr_statpers
-    df["eps_actual_adj"] = df["eps_actual"] / df["cfacshr_anndats"]
 
     is_resolved = status_anndats == "resolved"
     is_no_change = is_resolved & np.isclose(cfacshr_anndats.to_numpy(dtype="float64", na_value=np.nan), 1.0)
@@ -872,6 +1019,175 @@ def attach_share_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[p
 
     stats = {str(k): int(v) for k, v in df["share_basis_status"].value_counts(dropna=False).items()}
     return df, stats
+
+
+def resolve_eps_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Determines the per-share basis (`cfacshr_eps_basis`) that each row's
+    reported `eps_actual` is actually denominated in, correcting
+    attach_share_basis()'s unconditional assumption that it is always
+    already on the post-step (`cfacshr_anndats`) basis.
+
+    That assumption is only ever in question for the narrow subset of rows
+    where a real CRSP `cfacshr` step (split/stock dividend) falls inside
+    the row's own reporting window `(fpedats, anndats]` -- outside that
+    window there is no ambiguity to resolve, and the prior assumption is
+    kept as-is (`eps_basis_status="anndats_basis_assumed"`). An adversarial
+    review found the unconditional version wrong on ~30% of that narrow
+    in-window subset, fabricating fake extreme surprises as bad as the ones
+    the original split-adjustment fix (attach_share_basis) was fixing.
+
+    Inside the window, this discriminates between two hypotheses -- the
+    actual is already on the post-step basis (`cfacshr_anndats`), or it is
+    still on the pre-step basis (`cfacshr_prestep`) because the press
+    release had not yet been restated -- using each ticker's own
+    PRIOR-quarter actual as independent evidence for which hypothesis is
+    closer to that ticker's own recent normal scale. The prior quarter is
+    used deliberately, never a future one: using the NEXT quarter to
+    resolve row t's basis would let a later publication flip row t's
+    surprise sign, a real look-ahead violation. The two hypotheses are only
+    trusted apart when one fits decisively better (see
+    EPS_BASIS_DECISIVE_MIN_RATIO); otherwise the row is left explicitly
+    undetermined rather than guessed.
+
+    Requires `panel` to already carry permno, fpedats, anndats, eps_actual,
+    cfacshr_anndats, share_basis_status, and ibes_ticker (attach_share_basis
+    must run first). Returns a copy of `panel` with five new columns:
+      cfacshr_step_date, cfacshr_prestep -- the most recent REAL cfacshr
+        change at or before anndats for this row's permno, and the cfacshr
+        in force immediately before it (both null if none/unresolvable).
+      cfacshr_eps_basis -- the single divisor to use everywhere downstream
+        for this row's eps_actual (null means undetermined).
+      eps_basis_status -- one of six values: "anndats_basis_assumed" (out
+        of window, prior behavior kept), "basis_unverified_no_crsp"
+        (share_basis_status is one of the "unavailable_*" statuses -- no
+        rescaling attempted, cfacshr_eps_basis=1.0, explicitly tagged
+        rather than silently defaulted), "basis_undetermined_no_reference"
+        (in window, but no usable prior-quarter reference),
+        "basis_undetermined_ambiguous" (in window, reference exists, but
+        the two hypotheses are not decisively separable),
+        "anndats_basis_confirmed" (in window, decisive, current code was
+        right), "prestep_basis_confirmed" (in window, decisive, current
+        code was wrong -- the actual was still pre-step).
+      eps_basis_evidence_ratio -- the decisiveness ratio (max/min distance
+        to the prior-quarter reference), non-null only where the
+        discriminator actually ran (i.e. the row is in-window with a usable
+        reference).
+    Also sets `eps_actual_adj = eps_actual / cfacshr_eps_basis` here rather
+    than in attach_share_basis (which runs before cfacshr_eps_basis exists)
+    -- see attach_share_basis's docstring.
+
+    Returns (df, stats) where stats is eps_basis_status's value_counts().
+    """
+    df = panel.copy()
+
+    # --- 4.1: last real cfacshr change at or before anndats, per permno ---
+    # Cast permno to float64 to match the step table's dtype -- a raw
+    # string/int mismatch raises MergeError: incompatible merge keys.
+    # Multi-candidate (comma-joined) permno strings deliberately fail this
+    # cast to NaN rather than being resolved per candidate: they get null
+    # cfacshr_step_date/cfacshr_prestep and fall through to
+    # anndats_basis_assumed or basis_unverified_no_crsp below.
+    left = pd.DataFrame({
+        "_row_id": np.arange(len(df)),
+        "anndats": df["anndats"].to_numpy(),
+        "_permno": pd.to_numeric(df["permno"], errors="coerce").astype("float64").to_numpy(),
+    }).sort_values("anndats", kind="mergesort")
+
+    right = (
+        step_table.loc[step_table["is_change"], ["permno", "date", "prev_cfacshr"]]
+        .rename(columns={"permno": "_permno", "date": "_step_date"})
+        .sort_values("_step_date", kind="mergesort")
+    )
+
+    merged = (
+        pd.merge_asof(left, right, left_on="anndats", right_on="_step_date", by="_permno", direction="backward")
+        .set_index("_row_id")
+        .reindex(np.arange(len(df)))
+    )
+    df["cfacshr_step_date"] = merged["_step_date"].to_numpy()
+    df["cfacshr_prestep"] = merged["prev_cfacshr"].to_numpy()
+
+    # --- 4.2: row scope -- does a cfacshr step land in (fpedats, anndats]? ---
+    unavailable = df["share_basis_status"].astype(str).str.startswith("unavailable_")
+    step_in_report_window = (
+        df["cfacshr_step_date"].notna()
+        & (df["cfacshr_step_date"] > df["fpedats"])       # strictly after period end
+        & (df["cfacshr_step_date"] <= df["anndats"])      # at or before announcement
+        & df["cfacshr_prestep"].notna()
+        & df["cfacshr_anndats"].notna()
+        & ~np.isclose(df["cfacshr_prestep"], df["cfacshr_anndats"])
+        & ~unavailable
+    )
+    df["_step_in_report_window"] = step_in_report_window
+
+    # --- 4.3: prior-quarter reference (point-in-time safe: prior rows only) ---
+    # The panel is NOT sorted by (ibes_ticker, fpedats) at this point in
+    # build_event_table (that sort happens only at the very end) -- sort
+    # explicitly here, compute, then restore the caller's row order below.
+    sorted_df = df.sort_values(["ibes_ticker", "fpedats"], kind="mergesort")
+    g = sorted_df.groupby("ibes_ticker")
+
+    prev_eps = g["eps_actual"].shift(1)
+    prev_fpedats = g["fpedats"].shift(1)
+    prev_basis = g["cfacshr_anndats"].shift(1)
+    prev_inwin = g["_step_in_report_window"].shift(1)
+    gap_days = (sorted_df["fpedats"] - prev_fpedats).dt.days
+
+    reference_ok = (
+        prev_eps.notna() & prev_basis.notna() & (prev_basis > 0)
+        & gap_days.between(EPS_BASIS_PRIOR_GAP_MIN_DAYS, EPS_BASIS_PRIOR_GAP_MAX_DAYS)
+        & (prev_inwin == False)  # noqa: E712 -- NaN (no prior row) correctly excluded
+    )
+    reference = prev_eps / prev_basis
+
+    # --- 4.4: two candidate values, on a common basis ---
+    cand_post = sorted_df["eps_actual"] / sorted_df["cfacshr_anndats"]  # code's current assumption
+    cand_pre = sorted_df["eps_actual"] / sorted_df["cfacshr_prestep"]   # release not yet restated
+    d_post = (cand_post - reference).abs()
+    d_pre = (cand_pre - reference).abs()
+
+    # --- 4.5: decisiveness ---
+    dmin = np.minimum(d_post, d_pre)
+    dmax = np.maximum(d_post, d_pre)
+    # dmin <= 0.0 yields inf (an exact match on one hypothesis is maximally
+    # decisive, not a divide-by-zero).
+    ratio = pd.Series(np.where(dmin <= 0.0, np.inf, dmax / dmin), index=sorted_df.index)
+    W = sorted_df["_step_in_report_window"]
+    sorted_df["eps_basis_evidence_ratio"] = ratio.where(W & reference_ok)
+
+    # --- 4.6: assign status and basis -- order matters, see docstring ---
+    status = pd.Series("anndats_basis_assumed", index=sorted_df.index, dtype=object)
+    basis = sorted_df["cfacshr_anndats"].copy()
+
+    unavailable_sorted = sorted_df["share_basis_status"].astype(str).str.startswith("unavailable_")
+    status[unavailable_sorted] = "basis_unverified_no_crsp"
+    basis[unavailable_sorted] = 1.0
+
+    sel = W & ~reference_ok
+    status[sel] = "basis_undetermined_no_reference"
+    basis[sel] = np.nan
+
+    sel = W & reference_ok & (ratio < EPS_BASIS_DECISIVE_MIN_RATIO)
+    status[sel] = "basis_undetermined_ambiguous"
+    basis[sel] = np.nan
+
+    sel = W & reference_ok & (ratio >= EPS_BASIS_DECISIVE_MIN_RATIO) & (d_post < d_pre)
+    status[sel] = "anndats_basis_confirmed"
+    basis[sel] = sorted_df.loc[sel, "cfacshr_anndats"]
+
+    sel = W & reference_ok & (ratio >= EPS_BASIS_DECISIVE_MIN_RATIO) & ~(d_post < d_pre)
+    status[sel] = "prestep_basis_confirmed"
+    basis[sel] = sorted_df.loc[sel, "cfacshr_prestep"]
+
+    sorted_df["eps_basis_status"] = status
+    sorted_df["cfacshr_eps_basis"] = basis
+    sorted_df["eps_actual_adj"] = sorted_df["eps_actual"] / sorted_df["cfacshr_eps_basis"]
+
+    # --- restore the caller's original row order ---
+    out = sorted_df.reindex(df.index).drop(columns=["_step_in_report_window"])
+
+    stats = {str(k): int(v) for k, v in out["eps_basis_status"].value_counts(dropna=False).items()}
+    return out, stats
 
 
 # ---------------------------------------------------------------------------
@@ -1067,11 +1383,31 @@ def build_event_table(
     stats["share_basis"] = share_basis_stats
     stats["share_basis_step_table_rows"] = len(cfacshr_step_table)
 
+    # eps_basis: discriminates the narrow subset of rows where a real
+    # cfacshr step falls inside (fpedats, anndats] -- see resolve_eps_basis
+    # for why attach_share_basis's unconditional post-step assumption is
+    # wrong on ~30% of exactly that subset. Sets cfacshr_eps_basis (the
+    # corrected divisor used everywhere below) and eps_actual_adj.
+    panel, eps_basis_stats = resolve_eps_basis(panel, cfacshr_step_table)
+    stats["eps_basis"] = eps_basis_stats
+    in_window_statuses = (
+        "anndats_basis_confirmed", "prestep_basis_confirmed",
+        "basis_undetermined_ambiguous", "basis_undetermined_no_reference",
+    )
+    stats["eps_basis"]["step_in_report_window_total"] = sum(
+        eps_basis_stats.get(s, 0) for s in in_window_statuses
+    )
+
     # sue_analyst: R_c rescales the raw actual onto the SAME per-share
     # basis the (possibly pre-split) consensus was formed on, leaving the
-    # consensus columns themselves untouched. Defaults to 1.0 (no
-    # adjustment attempted) whenever either factor could not be resolved.
-    cfacshr_ratio = (panel["cfacshr_statpers"] / panel["cfacshr_anndats"]).fillna(1.0)
+    # consensus columns themselves untouched.
+    cfacshr_ratio = panel["cfacshr_statpers"] / panel["cfacshr_eps_basis"]
+    # statpers unresolvable but the actual's own basis IS known: assume the
+    # consensus was formed on that same basis (no rescaling).
+    cfacshr_ratio = cfacshr_ratio.where(panel["cfacshr_statpers"].notna(), 1.0)
+    # basis undetermined: there is no defensible sue_analyst for this row.
+    cfacshr_ratio = cfacshr_ratio.where(panel["cfacshr_eps_basis"].notna(), np.nan)
+
     sue_analyst_unadjusted = compute_sue_analyst(panel["eps_actual"], panel["consensus_meanest"], panel["consensus_stdev"])
     panel["sue_analyst"] = compute_sue_analyst(
         panel["eps_actual"] * cfacshr_ratio, panel["consensus_meanest"], panel["consensus_stdev"]
@@ -1080,9 +1416,73 @@ def build_event_table(
     # sue_analyst correction: a row can resolve cfacshr_anndats to exactly
     # 1.0 (share_basis_status="no_change") while cfacshr_statpers still
     # differs from it -- e.g. a split landing exactly on CRSP's post-split
-    # reset value. R_c != 1.0 is the precise, direct measure of "did this
-    # row's sue_analyst actually get rescaled."
-    sue_analyst_r_c_adjusted = int((~np.isclose(cfacshr_ratio.to_numpy(dtype="float64"), 1.0)).sum())
+    # reset value. R_c != 1.0 (excluding rows where R_c itself is
+    # undetermined, i.e. cfacshr_ratio is null) is the precise, direct
+    # measure of "did this row's sue_analyst actually get rescaled."
+    r_c_notna = cfacshr_ratio.notna()
+    sue_analyst_r_c_adjusted = int((r_c_notna & ~np.isclose(cfacshr_ratio.fillna(1.0).to_numpy(dtype="float64"), 1.0)).sum())
+
+    # The eps_basis fix's OWN before/after tail effect -- separate from the
+    # original split-fix's >100 tracking below, and at a lower |sue_analyst|
+    # threshold (10, not 100), since this fix corrects a narrower, subtler
+    # population than the original three-named-event fix. "Before" here
+    # means the immediately-prior code state (unconditionally assuming the
+    # post-step/cfacshr_anndats basis -- the bug THIS fix corrects), not the
+    # pre-any-split-fix raw sue_analyst tracked elsewhere. Per the fix
+    # spec's own caveat, this is reported honestly rather than oversold as
+    # "shrinking the tail": the value of this fix is that the REMAINING
+    # large values are real actual-vs-consensus gaps, not basis artifacts,
+    # and the tail count can legitimately rise for some rows (e.g. a
+    # prestep_basis_confirmed row landing on a genuinely tiny analyst
+    # stdev).
+    cfacshr_ratio_old_unconditional = (panel["cfacshr_statpers"] / panel["cfacshr_anndats"]).fillna(1.0)
+    sue_analyst_old_unconditional = compute_sue_analyst(
+        panel["eps_actual"] * cfacshr_ratio_old_unconditional, panel["consensus_meanest"], panel["consensus_stdev"]
+    )
+    old_extreme10 = sue_analyst_old_unconditional.abs() > 10
+    new_extreme10 = panel["sue_analyst"].abs() > 10
+    prestep_mask = panel["eps_basis_status"] == "prestep_basis_confirmed"
+    stats["eps_basis_fix_tail"] = {
+        "extreme10_left": int((old_extreme10 & ~new_extreme10).sum()),
+        "extreme10_entered": int((~old_extreme10 & new_extreme10).sum()),
+        "prestep_extreme10_before": int((old_extreme10 & prestep_mask).sum()),
+        "prestep_extreme10_after": int((new_extreme10 & prestep_mask).sum()),
+    }
+
+    # FAMR (fpedats 1998-06-30) is FINDINGS.md's running illustrative
+    # example of a row the immediately-prior code state got wrong (it was a
+    # new entrant into the |sue_analyst|>100 extreme-tail set under that
+    # unconditional-assumption code) and this eps_basis fix gets right --
+    # looked up dynamically from this run's own output, not hardcoded, so
+    # the narrative can never silently drift out of sync with a re-pull.
+    famr_mask = (panel["ibes_ticker"] == "FAMR") & (panel["fpedats"] == pd.Timestamp("1998-06-30"))
+    if famr_mask.any():
+        famr_pos = panel.index[famr_mask][0]
+        stats["famr_example"] = {
+            "sue_analyst_before_this_fix": float(sue_analyst_old_unconditional.loc[famr_pos]),
+            "sue_analyst_after_this_fix": float(panel.loc[famr_pos, "sue_analyst"]),
+            "eps_basis_status": panel.loc[famr_pos, "eps_basis_status"],
+        }
+    else:
+        stats["famr_example"] = None
+
+    # Small-stock-dividend rows (cfacshr_prestep/cfacshr_anndats within
+    # [1/1.3, 1.3]) that actually landed in basis_undetermined_ambiguous:
+    # the discriminator has no statistical power at that magnitude (the two
+    # candidate bases are too close together relative to normal
+    # quarter-to-quarter EPS noise), so the claim being verified here is
+    # specifically that a ratio in this band predicts landing in
+    # basis_undetermined_ambiguous -- tracked here so FINDINGS.md doesn't
+    # need to claim special-case handling that doesn't exist. (A small-ratio
+    # row occasionally still resolves decisively if the prior-quarter
+    # reference happens to align cleanly with one hypothesis -- this count
+    # deliberately excludes those, since they are not the "no statistical
+    # power" case being described.)
+    step_ratio = panel["cfacshr_prestep"] / panel["cfacshr_anndats"]
+    small_dividend_mask = (
+        (panel["eps_basis_status"] == "basis_undetermined_ambiguous") & step_ratio.between(1 / 1.3, 1.3)
+    )
+    stats["eps_basis"]["small_stock_dividend_ambiguous_rows"] = int(small_dividend_mask.sum())
 
     # Real before/after numbers for the three named split-artifact events
     # an adversarial review flagged as suspiciously extreme (see
@@ -1184,6 +1584,9 @@ def render_findings(panel: pd.DataFrame, stats: dict, statsumu_total_rows: int |
     extra = stats["coverage_extra"]
     named_events = stats["named_split_events"]
     step_table_rows = stats["share_basis_step_table_rows"]
+    eps_basis = stats["eps_basis"]
+    eps_tail = stats["eps_basis_fix_tail"]
+    famr = stats["famr_example"]
 
     anndats_min = panel["anndats"].min()
     anndats_max = panel["anndats"].max()
@@ -1207,9 +1610,10 @@ def render_findings(panel: pd.DataFrame, stats: dict, statsumu_total_rows: int |
 
     if qtr_ann["pass_rate"] is not None:
         qtr_ann_note = (
-            f"Across {qtr_ann['n_cases']:,} such cases found in the real data, the ANN value "
-            f"matched the sum of the 4 QTR values (within {'0.05'}) in {qtr_ann['n_passed']:,} "
-            f"cases -- a {qtr_ann['pass_rate']:.1%} pass rate."
+            f"Across {qtr_ann['n_cases']:,} such cases found in the real data ({qtr_ann['n_cases_december']:,} "
+            f"of them a December/fiscal-year-end period, now included -- see the date-arithmetic fix "
+            f"below), the ANN value matched the sum of the 4 QTR values (within 0.05) in "
+            f"{qtr_ann['n_passed']:,} cases -- a {qtr_ann['pass_rate']:.1%} pass rate."
         )
     else:
         qtr_ann_note = "No qualifying cases (4 consecutive clean QTR quarters plus a matching ANN row) were found in this run's data to check."
@@ -1224,6 +1628,48 @@ def render_findings(panel: pd.DataFrame, stats: dict, statsumu_total_rows: int |
                 f"| {ticker} | {ev['fpedats']} | {split_desc} | {fmt_sue(ev['sue_analyst_before'])} | {fmt_sue(ev['sue_analyst_after'])} |"
             )
     named_events_table = "\n".join(named_event_rows)
+
+    eps_basis_status_labels = [
+        ("anndats_basis_assumed", "Out of window: no cfacshr step falls in this row's own (fpedats, anndats] -- nothing to discriminate, the post-step assumption is kept as-is."),
+        ("basis_unverified_no_crsp", "cfacshr itself could not be resolved for this row at all (share_basis_status is one of the unavailable_* statuses) -- no rescaling attempted; cfacshr_eps_basis is explicitly set to 1.0 rather than silently defaulting."),
+        ("anndats_basis_confirmed", "In window, and the ticker's own prior-quarter history decisively confirms the actual is already on the post-step basis -- the original assumption was right here."),
+        ("basis_undetermined_ambiguous", "In window, a prior-quarter reference exists, but the two hypotheses are not decisively separable (includes small stock dividends -- see below)."),
+        ("prestep_basis_confirmed", "In window, and the evidence decisively shows the actual is STILL on the pre-step basis -- the original assumption was wrong here; this is the corrected subset."),
+        ("basis_undetermined_no_reference", "In window, but no usable prior-quarter reference exists (missing prior quarter, gap outside the accepted day-count window, or the prior quarter is itself basis-ambiguous)."),
+    ]
+    eps_basis_status_rows = "\n".join(
+        f"| `{status}` | {eps_basis.get(status, 0):,} | {pct(eps_basis.get(status, 0), cov['total_events'])} | {desc} |"
+        for status, desc in eps_basis_status_labels
+    )
+    eps_basis_step_in_window = eps_basis["step_in_report_window_total"]
+
+    entrant_note = (
+        " -- investigated individually rather than silently accepted; see the next section"
+        if extra["sue_analyst_extreme_entered"] > 0
+        else ""
+    )
+
+    if famr is not None:
+        famr_before = f"sue_analyst {famr['sue_analyst_before_this_fix']:.2f}"
+        famr_after = f"sue_analyst {famr['sue_analyst_after_this_fix']:.2f}"
+        famr_status = famr["eps_basis_status"]
+    else:
+        famr_before = "sue_analyst 248.50 (from the review that first flagged it)"
+        famr_after = "not present in this run's output"
+        famr_status = "n/a"
+
+    # The OLD (pre-fix) DateOffset-based check's real historical result on
+    # this same pull -- 8,471 cases, 86.2% pass rate at tolerance 0.05.
+    # There is no live code path that reproduces this anymore (the buggy
+    # implementation was replaced, not kept alongside the fix), so it is
+    # recorded here as a fixed historical reference point; the "after" side
+    # and the multiplier between them are both computed fresh from this
+    # run's own `stats` so they can never silently drift out of sync with
+    # what actually ran.
+    OLD_QTR_ANN_N_CASES = 8471
+    qtr_ann_evidence_multiple = (
+        qtr_ann["n_cases"] / OLD_QTR_ANN_N_CASES if qtr_ann["n_cases"] else 0.0
+    )
 
     return f"""# I/B/E/S Earnings Data: Findings
 
@@ -1317,7 +1763,7 @@ estimated several hundred wrong-signed events. **That logic has been
 completely removed.** `pdicity` was re-pulled and is now used directly:
 
 - Rows by period type: {', '.join(f"{k}: {v:,}" for k, v in dedup['rows_by_period_type'].items())}.
-- Keeping only `pdicity == 'QTR'` rows dropped {dedup['non_qtr_rows_dropped']:,} rows, taking {dedup['groups_before_period_filter']:,} (ticker, fpedats) groups down to {dedup['groups_after_period_filter']:,} ({pct(dedup['groups_dropped_by_period_filter'], dedup['groups_before_period_filter'])} of groups lost entirely -- these are ANN/SAN-only reporters with no QTR row for that period at all, a real universe reduction, not de-duplication). {dedup['tickers_vanished_after_qtr_filter']:,} tickers vanish completely (every one of their reported periods was ANN/SAN, never QTR).
+- Keeping only `pdicity == 'QTR'` rows dropped {dedup['non_qtr_rows_dropped']:,} rows, taking {dedup['groups_before_period_filter']:,} (ticker, fpedats) groups down to {dedup['groups_after_period_filter']:,} ({pct(dedup['groups_dropped_by_period_filter'], dedup['groups_before_period_filter'])} of groups lost entirely, below the spec's ~2% expectation and well under its 5% safety ceiling). **Most of that loss is not "annual-only reporters"** -- of the {dedup['groups_dropped_by_period_filter']:,} dropped groups, {dedup['groups_dropped_ticker_reports_qtr_elsewhere']:,} ({pct(dedup['groups_dropped_ticker_reports_qtr_elsewhere'], dedup['groups_dropped_by_period_filter'])}) belong to a ticker that reports QTR actuals just fine for OTHER fiscal quarters, and {dedup['groups_dropped_december']:,} ({pct(dedup['groups_dropped_december'], dedup['groups_dropped_by_period_filter'])}) are specifically a December period-end. The real pattern is a **systematic Q4 coverage gap**: for a fiscal-year-end quarter, I/B/E/S sometimes only carried an ANN (full-year) row rather than a separate QTR row for that one quarter, not that the ticker never reports quarterly at all. Only {dedup['tickers_vanished_after_qtr_filter']:,} tickers vanish from the universe completely (every one of their reported periods was ANN/SAN, never QTR) -- that smaller, genuine "annual/semiannual-only reporter" case.
 - Among the surviving QTR-only rows, {dedup['groups_multiple_anndats']:,} (ticker, fpedats) groups had genuinely different announcement dates for the same fiscal quarter (e.g. a restatement) -- the earliest anndats was kept in each case (that is when the market actually first learned the result), flagged via `eps_actual_multiple_anndats`.
 - Separately, {dedup['groups_ambiguous_same_anndats_conflict']:,} groups ({pct(dedup['groups_ambiguous_same_anndats_conflict'], dedup['groups_after_period_filter'])} of QTR groups) reported more than one distinct EPS value under the exact same announcement date -- a genuine value conflict, not a quarterly/annual mix-up. These are resolved deterministically (sort by `eps_actual` ascending, keep the first row) and flagged `eps_actual_dup_flag="ambiguous_same_anndats_conflict"` -- never by proximity to consensus or by magnitude.
 - `eps_actual_dup_flag` no longer has "consensus_disambiguated" or "magnitude_fallback" values anywhere in the code or output.
@@ -1328,6 +1774,24 @@ fpedats) groups where the 3 prior same-ticker fiscal quarters each had
 exactly one QTR row, and the current fpedats had both a QTR and an ANN row
 for the same ticker, the ANN value should approximately equal the sum of the
 4 QTR values if `pdicity` is labeling things correctly. {qtr_ann_note}
+
+**Fix: a date-arithmetic bug was silently excluding every December
+fiscal-year-end from this check.** The prior version of this check found
+the "3 prior same-ticker fiscal quarters" by shifting each candidate QTR
+row FORWARD by `pandas.DateOffset(months=3/6/9)` and merging back onto the
+current row's own `fpedats`. `DateOffset` preserves day-of-month, so
+`2000-09-30 + 3 months = 2000-12-30`, which never matches an actual
+`2000-12-31` row -- silently excluding every December fiscal-year-end
+(73% of the eligible sample) from ever being checked at all. The fix
+replaces that with ordered prior-row lookups (the immediately preceding 1st,
+2nd, and 3rd QTR rows for the same ticker, gated by a day-count window wide
+enough for 52/53-week fiscal calendars but tight enough to reject a skipped
+quarter), which has no day-of-month blind spot. The before/after evidence
+is {qtr_ann_evidence_multiple:.2f}x larger ({OLD_QTR_ANN_N_CASES:,} cases before, {qtr_ann['n_cases']:,} after) at
+materially the same pass rate ({qtr_ann['pass_rate']:.1%} vs. the prior
+86.2%) -- confirmatory, not a reason to second-guess the QTR/ANN
+disambiguation fix above. December cases specifically go from 0 (structurally
+impossible under the old arithmetic) to {qtr_ann['n_cases_december']:,}.
 
 ## Fix: I/B/E/S actuals and consensus are split-unadjusted -- now corrected
 
@@ -1354,13 +1818,14 @@ the selected consensus's `statpers` (`cfacshr_statpers`), compressed from
 CRSP's ~20M-row daily file set into a ~{step_table_rows:,}-row "step table" (one row per
 permno per adjustment event) via a groupby/shift/diff, then resolved for an
 arbitrary date via `merge_asof`. `sue_analyst` rescales the raw actual by
-`R_c = cfacshr_statpers / cfacshr_anndats` before comparing it to consensus
-(defaulting to no adjustment, R_c=1.0, whenever either factor cannot be
-resolved) -- mathematically equivalent to adjusting both sides to a common
+`R_c = cfacshr_statpers / cfacshr_eps_basis` before comparing it to consensus
+(defaulting to no adjustment, R_c=1.0, whenever `cfacshr_statpers` cannot be
+resolved; left null when `cfacshr_eps_basis` itself is undetermined -- see
+below) -- mathematically equivalent to adjusting both sides to a common
 basis while leaving the consensus columns themselves untouched. `sue_seasonal`
 runs its ENTIRE year-over-year path (the prior-year lookup, the diff, and the
 rolling std dev that scales it) off the split-adjusted actual
-(`eps_actual_adj = eps_actual / cfacshr_anndats`) instead of the raw one, so a
+(`eps_actual_adj = eps_actual / cfacshr_eps_basis`) instead of the raw one, so a
 split does not masquerade as a year-over-year surprise and does not go on to
 poison the volatility estimate for several subsequent quarters either -- this
 second effect was found only during the fix's own verification pass, and
@@ -1369,17 +1834,90 @@ contamination rate on the year-over-year side vs. the originally-flagged
 consensus-side issue, since annual gaps make splits far more likely than the
 short consensus-to-announcement gap).
 
-`share_basis_status` (whether `eps_actual_adj` -- and so the seasonal path -- needed rescaling) breakdown across all {basis_total:,} events: {', '.join(f"{k}: {v:,} ({pct(v, basis_total)})" for k, v in basis.items())}. Note "no_change" here does not mean "never split": CRSP resets `cfacshr` to 1.0 immediately after a split, so a row can show `cfacshr_anndats == 1.0` (share_basis_status="no_change") while still getting a real `sue_analyst` correction if `cfacshr_statpers` differs from it. The precise count of events where `sue_analyst`'s own R_c ratio was not 1.0 (a genuine cross-basis rescaling was applied) is **{cov['sue_analyst_r_c_adjusted']:,} of {cov['total_events']:,}** ({pct(cov['sue_analyst_r_c_adjusted'], cov['total_events'])}).
+`share_basis_status` (whether `cfacshr_anndats` itself needed rescaling from 1.0) breakdown across all {basis_total:,} events: {', '.join(f"{k}: {v:,} ({pct(v, basis_total)})" for k, v in basis.items())}. Note "no_change" here does not mean "never split": CRSP resets `cfacshr` to 1.0 immediately after a split, so a row can show `cfacshr_anndats == 1.0` (share_basis_status="no_change") while still getting a real `sue_analyst` correction if `cfacshr_statpers` differs from it. `resolve_share_basis`'s "unavailable" case is now split into four specific statuses (previously two of them were conflated into one "unavailable_no_permno" label): no usable permno at all, a permno but no usable target date, an ambiguous multi-candidate permno, or a permno with no CRSP coverage on or before the target date -- see the module docstring for exactly which is which.
 
-Measured effect on the extreme tail (`|sue_*| > 100`): `sue_analyst` had
-{cov['sue_analyst_extreme_before_split_fix']:,} such events before this fix and {cov['sue_analyst_extreme']:,} after; `sue_seasonal` had
+Measured effect on the extreme tail (`|sue_*| > 100`, using the raw,
+completely unadjusted `sue_analyst` as the "before" baseline): `sue_analyst` had
+{cov['sue_analyst_extreme_before_split_fix']:,} such events before any split-basis correction and {cov['sue_analyst_extreme']:,} after (both fixes below combined); `sue_seasonal` had
 {cov['sue_seasonal_extreme_before_split_fix']:,} before and {cov['sue_seasonal_extreme']:,} after. The net `sue_analyst`
 change is not one-directional: {extra['sue_analyst_extreme_left']:,} events (including all three named above) LEFT the
-extreme set, while {extra['sue_analyst_extreme_entered']:,} newly ENTERED it. Spot-checked: the one entrant found in
-this run (FAMR, fpedats 1998-06-30) has a real, CRSP-confirmed 3-for-1 split landing right at the
-consensus-to-announcement boundary -- the correction is mechanically working as designed, but this specific case is a
-reminder that a uniform correction can occasionally reveal a DIFFERENT extreme where I/B/E/S's own analyst-estimate-vs.
--reported-actual basis convention is itself inconsistent around a split, not just fix the previously-known ones.
+extreme set, while {extra['sue_analyst_extreme_entered']:,} newly ENTERED it{entrant_note} -- a reminder that a uniform
+correction can occasionally reveal a DIFFERENT extreme where I/B/E/S's own analyst-estimate-vs-reported-actual basis
+convention is itself inconsistent around a split, not just fix the previously-known ones. (FAMR, fpedats 1998-06-30,
+was exactly this kind of new entrant under an earlier, intermediate version of this correction -- see the next
+section for why it is fully resolved, not merely relocated, in this output.)
+
+## Fix: the post-step-basis assumption itself was wrong on ~30% of the rows it actually applied to
+
+The correction above assumes the reported `eps_actual` is already on the
+POST-step basis (`cfacshr_anndats`) whenever a split falls between the
+consensus snapshot and the announcement. A second, later adversarial review
+found that assumption applied unconditionally, and wrong on roughly 30% of
+the narrow subset of rows where a real `cfacshr` step falls strictly inside
+that row's own reporting window -- after the fiscal period ended but at or
+before the announcement (`(fpedats, anndats]`) -- fabricating new fake
+extreme surprises as bad as the ones the original fix corrected. FAMR
+(fpedats 1998-06-30) is exactly this: a real, CRSP-confirmed 3-for-1 split
+landing right at the consensus-to-announcement boundary, which the
+unconditional assumption got wrong ({famr_before}) and the
+discriminator below now gets right ({famr_after}, `{famr_status}`).
+
+**Why that specific window, and not simply "every row with a split
+anywhere nearby":** a step BEFORE the fiscal period ended means the
+financial statements were prepared entirely post-step, so the press
+release must already be on the post-step basis -- no ambiguity, nothing to
+check. A step AFTER the period ended but before or at the announcement is
+genuinely unknown: I/B/E/S sometimes restates a just-completed quarter's
+actual onto the new post-split basis before announcing it, and sometimes
+does not.
+
+**Fix:** `eps_basis_status` discriminates the in-window rows using each
+ticker's OWN prior-quarter actual as evidence -- never a future quarter,
+since using one would let a later publication flip an earlier row's
+surprise sign, a real look-ahead violation. Two candidate values are formed
+(actual assumed post-step vs. pre-step) and compared against that prior
+quarter's own EPS level; the two hypotheses are only trusted apart when one
+fits at least {EPS_BASIS_DECISIVE_MIN_RATIO:.1f}x better than the other (validated against 9
+known-ground-truth split events spanning three different quarters of a
+single ticker, TRH -- see the test suite -- where the worst true-positive
+margin was 4.25x). Six statuses result:
+
+| `eps_basis_status` | Count | % of events | Meaning |
+|---|---|---|---|
+{eps_basis_status_rows}
+
+{eps_basis_step_in_window:,} events ({pct(eps_basis_step_in_window, cov['total_events'])}) actually fall inside the ambiguity window at all -- confirming this is a narrow, targeted fix, not a wholesale rework: `anndats_basis_confirmed` ({eps_basis.get('anndats_basis_confirmed', 0):,}) means the original assumption was right; `prestep_basis_confirmed` ({eps_basis.get('prestep_basis_confirmed', 0):,}) means it was wrong and is now corrected; the remaining {eps_basis.get('basis_undetermined_ambiguous', 0) + eps_basis.get('basis_undetermined_no_reference', 0):,} are left explicitly undetermined (`cfacshr_eps_basis` null, `sue_analyst` null) rather than guessed. Because `anndats_basis_assumed` is its own distinct value, a downstream analysis that wants to drop every row with any basis question at all can do so with `eps_basis_status != "anndats_basis_assumed"`, without needing a separate boolean flag column.
+
+Of the {eps_basis.get('basis_undetermined_ambiguous', 0):,} `basis_undetermined_ambiguous` rows, {eps_basis['small_stock_dividend_ambiguous_rows']:,} have a `cfacshr_prestep`/`cfacshr_anndats` ratio between 1/1.3 and 1.3 -- small stock dividends, not full splits. These need no special handling: the discriminator has no statistical power at that magnitude (the two candidate bases sit too close together relative to normal quarter-to-quarter EPS movement to tell apart), so they land in `basis_undetermined_ambiguous` automatically, which is the correct, honest outcome.
+
+**This fix's value is NOT shrinking the extreme tail -- it is making the
+REMAINING large values trustworthy.** At the `|sue_analyst| > 10` threshold
+(a lower bar than the `> 100` tail tracked above, chosen because this fix's
+population is narrower and subtler than the original three-event fix):
+{eps_tail['extreme10_left']:,} events left that tail and {eps_tail['extreme10_entered']:,} newly entered it --
+a roughly even trade, not a one-directional shrinkage. Among the
+`prestep_basis_confirmed` rows specifically, {eps_tail['prestep_extreme10_before']:,} were already over the
+threshold before this fix and {eps_tail['prestep_extreme10_after']:,} are after -- reverting to the
+pre-step basis (and, with it, `R_c=1.0` against the point-in-time
+consensus) can itself land on a genuinely tiny analyst stdev and produce a
+large standardized value. That is not a bug: it means the surprise is now
+computed against the correct per-share basis, and whatever tail remains
+reflects real actual-vs-consensus gaps rather than an arithmetic artifact
+of comparing two numbers on different per-share bases.
+
+**Caveat carried forward, not solved here: `cfacshr` is cumulative to the
+end of the CRSP file on disk (2014-06-30), not to the end of this
+project's 1996-2013 core sample.** `eps_actual_adj` and `eps_diff_yoy` are
+therefore levels denominated in a per-share basis that is partly fixed by
+corporate actions that happened AFTER the sample window each row belongs
+to. `sue_seasonal` itself is unaffected -- it divides a year-over-year diff
+and that diff's own rolling standard deviation by the same per-ticker
+constant, which is scale-invariant -- but any FUTURE use of the level
+columns (`eps_actual_adj`, `eps_diff_yoy`) for winsorizing, price-scaling,
+or pooling across firms needs to re-base `cfacshr` to a common reference
+point first. No consumer of these level columns exists yet, so re-basing
+is deliberately deferred rather than built speculatively; this is a
+documented caveat for whichever later slice is first to need it.
 
 ## The point-in-time filter's measured effect
 
@@ -1456,7 +1994,7 @@ limitation rather than fixed here.
 
 ## Identifiers
 
-`resolved_universe_ids.parquet` is one row per OptionMetrics secid (8,358 rows), not one row per I/B/E/S ticker, and a handful of secids resolve ambiguously to more than one candidate PERMNO/GVKEY/ticker (recorded there as a comma-joined string rather than a silently-picked guess). This file's `ibes_ticker` -> PERMNO/GVKEY crosswalk was built by exploding those comma-joined ticker values into individually-joinable tickers and unioning whatever PERMNO/GVKEY values map to each one: {cov['identifier_matched']:,} of {cov['total_events']:,} events ({pct(cov['identifier_matched'], cov['total_events'])}) matched to a USABLE identifier. `identifier_matched` now requires permno OR gvkey to actually be populated, not merely that the ticker string appeared in the crosswalk -- a prior version of this document's claim here was based on the weaker, ticker-presence-only definition, which is a real bug ({both_null_secids:,} of the 8,358 secids in the broader universe have BOTH permno and gvkey null). On this specific pull, though, that correction does not change the aggregate match rate: none of those {both_null_secids:,} fully-unresolved secids' I/B/E/S tickers have a surviving row in this output (a secid with no usable identifier at all is also unlikely to have clean, surviving actuals data), so the fixed definition and the old, weaker one happen to agree here -- reported honestly rather than implying a specific row count moved when none did.
+`resolved_universe_ids.parquet` is one row per OptionMetrics secid (8,358 rows), not one row per I/B/E/S ticker, and a handful of secids resolve ambiguously to more than one candidate PERMNO/GVKEY/ticker (recorded there as a comma-joined string rather than a silently-picked guess). This file's `ibes_ticker` -> PERMNO/GVKEY crosswalk was built by exploding those comma-joined ticker values into individually-joinable tickers and unioning whatever PERMNO/GVKEY values map to each one: {cov['identifier_matched']:,} of {cov['total_events']:,} events ({pct(cov['identifier_matched'], cov['total_events'])}) matched to a USABLE identifier. `identifier_matched` requires permno OR gvkey to actually be populated, not merely that the ticker string appeared in the crosswalk. On THIS pull, that stricter definition is mathematically identical to plain ticker-presence: none of the {both_null_secids:,} (of 8,358) secids in the broader universe with BOTH permno and gvkey null have a surviving I/B/E/S ticker in this output at all (a secid with no usable identifier is also unlikely to have clean, surviving actuals data), so the two definitions can never disagree on this specific data. The stricter check is defense-in-depth for a FUTURE pull where that coincidence might not hold, not something that changed any number here today.
 
 Of the matched events, {cov['identifier_ambiguous']:,} ({pct(cov['identifier_ambiguous'], cov['identifier_matched'])} of matched events) carry more than one distinct candidate PERMNO or GVKEY (comma-joined in the output, `identifier_ambiguous=True`) -- most often because the same company was reassigned a new PERMNO/GVKEY after a corporate restructuring. This is flagged, not resolved, here: resolving it correctly needs announcement-date-aware matching against equity history, which belongs in the later event-table-assembly slice, not this one. {cov['identifier_unmatched']:,} events had no usable identifier at all.
 
