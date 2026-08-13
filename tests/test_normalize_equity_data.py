@@ -1652,6 +1652,113 @@ def test_build_findings_markdown_handles_skipped_crossval():
     assert "could not run this time" in md
 
 
+def test_build_findings_markdown_ticker_gate_margin_is_derived_not_asserted():
+    # Round-5 review: "cleanly separated with a gap between them" is
+    # unfalsifiable (retained/misaligned are complementary masks on the
+    # same threshold) -- the report now derives a ratio instead.
+    ctx = _minimal_findings_ctx()
+    ctx["crossval_stats"]["segments_quarantined_misaligned"] = 2
+    ctx["crossval_stats"]["rows_quarantined_misaligned"] = 100
+    ctx["crossval_stats"]["ticker_gate_worst_retained_median_diff"] = 6.9e-4
+    ctx["crossval_stats"]["ticker_gate_closest_quarantined_median_diff"] = 3.79e-3
+    md = neq.build_findings_markdown(ctx)
+    assert "5.5x apart" in md
+    assert "cleanly separated" not in md
+
+    ctx2 = _minimal_findings_ctx()
+    ctx2["crossval_stats"]["ticker_gate_worst_retained_median_diff"] = 0.0
+    ctx2["crossval_stats"]["ticker_gate_closest_quarantined_median_diff"] = 3.79e-3
+    md2 = neq.build_findings_markdown(ctx2)
+    assert "Every kept segment on this run measured exactly 0" in md2
+
+
+def test_cross_validate_master_stock_full_overlap_but_no_usable_price_is_too_few():
+    # Round-5 review finding: "too few overlapping DAYS" was wrong for a
+    # real ticker (TOPS) with COMPLETE date overlap but an inf/-inf (i.e.
+    # null after cleaning) master price on every one of those days --
+    # quarantined for too few usable price PAIRS, not date overlap.
+    dates = pd.date_range("2012-01-03", periods=5, freq="B")
+    crsp = pd.DataFrame({
+        "permno": 1, "ticker": "TOPS", "date": dates,
+        "prc": [10.0, 10.1, 10.2, 10.3, 10.4], "ret": 0.01, "retx": 0.01,
+    })
+    master = pd.DataFrame({"ticker": "TOPS", "date": dates, "price": [np.nan] * 5})
+    stats, _merged = neq.cross_validate_master_stock(crsp, master, dates.min(), dates.max())
+    assert stats["matched_rows"] == 5
+    assert stats["segments_quarantined_too_few_prices"] == 1
+    assert stats["rows_quarantined_too_few_prices"] == 5
+    assert stats["segments_quarantined_misaligned"] == 0
+
+
+def test_build_findings_markdown_too_few_bucket_names_unusable_prices():
+    ctx = _minimal_findings_ctx()
+    ctx["crossval_stats"]["segments_quarantined_too_few_prices"] = 1
+    ctx["crossval_stats"]["rows_quarantined_too_few_prices"] = 754
+    md = neq.build_findings_markdown(ctx)
+    assert "don't have enough overlapping days" not in md
+    assert "too few days where both sides actually have a price" in md
+
+
+def test_build_findings_markdown_split_bullet_matches_verdict_gate():
+    # Round-5 review BLOCKER: the split bullet used to sound conclusive
+    # whenever n_big >= 1, while the verdict needs n_big >= 30 -- both now
+    # read the same gate (adjustment_verdict["split_status"]).
+    for n_big in [0, 1, 5, 29, 30, 35]:
+        ctx = _minimal_findings_ctx()
+        event_stats = neq.summarize_adjustment_events(_events_df(n_big, 0.0))
+        ctx["event_stats"] = event_stats
+        ctx["adjustment_verdict"] = neq.classify_adjustment_status(event_stats, ctx["dsf_stats"])
+        md = neq.build_findings_markdown(ctx)
+        expect_conclusive = ctx["adjustment_verdict"]["split_status"] != "inconclusive"
+        conclusive = "a fully unadjusted return column would measure close to 100% here" in md
+        could_not_run = "so this check could not run" in md
+        assert conclusive == expect_conclusive, f"n_big={n_big}"
+        assert could_not_run != expect_conclusive, f"n_big={n_big}"
+
+
+def test_build_findings_markdown_does_not_judge_ret_scale_when_verdict_cannot():
+    # n_big=5 is below ADJUSTMENT_VERDICT_MIN_EVENTS, so split_status is
+    # "inconclusive" -- even though actual_ret_abs_median (0.5, from ret
+    # always matching naive) is implausibly large, the report must not
+    # print a scale judgment the verdict itself declines to make.
+    event_stats = neq.summarize_adjustment_events(_events_df(5, 1.0))
+    ctx = _minimal_findings_ctx()
+    ctx["event_stats"] = event_stats
+    ctx["adjustment_verdict"] = neq.classify_adjustment_status(event_stats, ctx["dsf_stats"])
+    assert ctx["adjustment_verdict"]["split_status"] == "inconclusive"
+    assert ctx["adjustment_verdict"]["ret_scale_status"] == "plausible"  # can't judge -> defaults, doesn't flag
+    md = neq.build_findings_markdown(ctx)
+    assert "far too large to be an ordinary daily return" not in md
+
+
+def test_build_findings_markdown_suspiciously_close_threshold_uses_named_constant():
+    ctx = _minimal_findings_ctx()
+    ctx["crossval_stats"]["return_median_abs_diff"] = 9.9e-5  # just under CROSSVAL_SUSPICIOUSLY_CLOSE_MEDIAN_DIFF
+    md = neq.build_findings_markdown(ctx)
+    assert "hundred-thousandths" not in md
+    assert "rarely agree to that many decimal places" in md
+
+
+def test_build_findings_markdown_coverage_gap_derived_from_crossval_years(monkeypatch):
+    monkeypatch.setattr(neq, "CROSSVAL_YEARS", (2005, 2006))
+    ctx = _minimal_findings_ctx()
+    ctx["crossval_stats"]["return_comparison_rows_retained"] = 50
+    md = neq.build_findings_markdown(ctx)
+    assert "1996-2004" in md
+    assert "1996-2010" not in md
+
+
+def test_build_findings_markdown_crossval_verdict_requires_correlation_sanity_floor():
+    # Round-5 review finding: frac-within-1pct alone can't rule out a
+    # pathological near-zero-correlation case.
+    ctx = _minimal_findings_ctx()
+    ctx["crossval_stats"]["return_comparison_rows_retained"] = 50
+    ctx["crossval_stats"]["return_frac_within_1pct"] = 0.96
+    ctx["crossval_stats"]["return_correlation"] = 0.02
+    md = neq.build_findings_markdown(ctx)
+    assert "**Verdict: this check is inconclusive for this run.**" in md
+
+
 # ---------------------------------------------------------------------------
 # main() end-to-end, against a fully faked data/ tree (no real WRDS/CRSP
 # files touched).
@@ -1809,9 +1916,13 @@ def test_main_end_to_end_exercises_adjustment_evidence_branch(tmp_path, monkeypa
 
     assert (out_dir / "equity_2005.parquet").exists()
     findings_text = (out_dir / "FINDINGS.md").read_text()
-    # The whole-universe quantitative check found at least the one real event.
-    assert "adjustment events happened across the whole universe" in findings_text
-    assert "0 such adjustment events" not in findings_text
+    # Only 1 big-raw-move event -- below ADJUSTMENT_VERDICT_MIN_EVENTS (30),
+    # so the report's split bullet now follows the verdict's own gate
+    # (split_status == "inconclusive") and reports "could not run" rather
+    # than sounding conclusive on a single event.
+    assert "Only 1 big-raw-move adjustment event(s)" in findings_text
+    assert "so this check could not run" in findings_text
+    assert "adjustment events happened across the whole universe" not in findings_text
     # The AAPL 2005 spot-check table is populated (not the empty placeholder).
     assert "2005-02-28" in findings_text
 

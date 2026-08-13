@@ -117,6 +117,9 @@ MSFT_DIVIDEND_SPOT_YEAR = pd.Timestamp(MSFT_DIVIDEND_SPOT_DATE).year
 NAIVE_RET_BIG_MOVE_THRESHOLD = 0.20
 UNADJUSTED_RET_MATCH_TOL = 0.01
 ADJUSTMENT_VERDICT_MIN_EVENTS = 30
+# detect_adjustment_events' min_change default -- a cfacpr move smaller
+# than this is rounding drift, not a real split/distribution.
+CFACPR_EVENT_MIN_CHANGE = 0.01
 
 # classify_adjustment_status's dividend and return-scale discriminators
 # (added after round-3 review found the single split-based discriminator
@@ -148,7 +151,7 @@ DIVIDEND_EVIDENCE_MIN_FRACTION = 1e-4  # this pull: 6.706e-03 (0.67%), 67x over;
 DIVIDEND_EVIDENCE_MAX_WRONG_DIRECTION_FRACTION = 0.01
 RET_PLAUSIBLE_MIN_FRAC_ABS_GT_BIG_MOVE = 1e-4  # this pull: 3.842e-03 (0.38%), 38x over; an all-zero/constant ret column measures 0
 RET_PLAUSIBLE_MAX_FRAC_ABS_GT_BIG_MOVE = 0.05  # this pull: 3.842e-03, 13x under; a percent-units ret column (1.0 == 100%) measures ~0.8-1.0
-RET_PLAUSIBLE_MAX_EVENT_ABS_MEDIAN = 0.10  # this pull's event-day median |ret|: 0.0217, 4.6x under; percent-units measures ~1.0
+RET_PLAUSIBLE_MAX_EVENT_ABS_MEDIAN = 0.10  # this pull's event-day median |ret|: 0.0222, 4.5x under; percent-units measures ~1.0
 
 # A single-day return difference bigger than this between CRSP and
 # master_stock.csv is not plausibly "the same real trading day, measured
@@ -156,6 +159,10 @@ RET_PLAUSIBLE_MAX_EVENT_ABS_MEDIAN = 0.10  # this pull's event-day median |ret|:
 # implausible master_stock.csv values (see cross_validate_master_stock) when
 # reporting a trimmed correlation alongside the untrimmed one.
 EXTREME_RETURN_DIFF_THRESHOLD = 0.10
+
+# Below this, retx and master_ret agree closer than two independent
+# vendors plausibly would by chance -- this pull: 2.51e-07.
+CROSSVAL_SUSPICIOUSLY_CLOSE_MEDIAN_DIFF = 1e-4
 
 # Per-ticker alignment gate for cross_validate_master_stock (see its
 # docstring for why this has to be per ticker, not a single pooled check).
@@ -205,6 +212,10 @@ TICKER_ALIGNMENT_MIN_PRICE_PAIRS = 2
 # distinct constant since the two thresholds guard unrelated checks and
 # have no reason to move together.
 CROSSVAL_VERDICT_MIN_RETAINED_ROWS = 30
+# Sanity floor, not a precision target: frac-within-1pct alone can't rule
+# out a pathological case (high agreement-within-1pt with near-zero
+# correlation); this pull measures 0.9998, 2x over.
+CROSSVAL_VERDICT_MIN_CORRELATION = 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -621,7 +632,7 @@ def update_event_carryover(event_carryover, year_event_cols: pd.DataFrame) -> pd
     return safe_concat([remainder, new_last], ignore_index=True)
 
 
-def detect_adjustment_events(df: pd.DataFrame, min_change: float = 0.01) -> pd.DataFrame:
+def detect_adjustment_events(df: pd.DataFrame, min_change: float = CFACPR_EVENT_MIN_CHANGE) -> pd.DataFrame:
     """Given a cleaned multi-year CRSP frame (permno, date, prc, ret,
     cfacpr), find every (permno, date) where cfacpr changed by more than
     `min_change` (fractional) from the immediately preceding trading day
@@ -758,14 +769,12 @@ def classify_adjustment_status(event_stats: dict, dsf_stats: dict) -> dict:
 
     3. ret_scale_status. Independent of whether `ret` is adjusted, is it
        even a plausible fractional daily return? Two checks: the fraction
-       of all `ret` values bigger than NAIVE_RET_BIG_MOVE_THRESHOLD in
-       absolute value must sit in a plausible band (this pull: 0.38424%;
-       a percent-units column, e.g. 1.0 meaning +100%, would put nearly
-       every value above that band's ceiling, and an all-zero or constant
-       column would sit below its floor); and, when split_status is
-       judgeable, the event-day |ret| median must not be absurdly large
-       (this pull's real event-day median: 2.17%; a percent-units column's
-       event-day |ret| values are themselves ~100x too big).
+       of all `ret` values bigger than NAIVE_RET_BIG_MOVE_THRESHOLD must
+       sit in a plausible band (this pull: 0.384%; a percent-units column
+       would blow past the ceiling, an all-zero column below the floor);
+       and, when split_status is judgeable, the event-day |ret| median
+       must not be absurdly large (this pull: 2.22%; percent-units would
+       be ~100x too big).
     """
     reasons = []
 
@@ -1709,7 +1718,7 @@ def build_findings_markdown(ctx: dict) -> str:
         f"documents four special codes (-66, -77, -88, -99) that sometimes appear in place "
         f"of a return to mean \"we don't have this,\" for various reasons (no valid prior "
         f"price, the security wasn't trading, etc.) -- not a literal -6,600% return. We "
-        f"scanned every one of the {_fmt_int(dsf['input_rows'])} rows for these codes and "
+        f"scanned every one of the {_fmt_int(dsf['output_rows'])} cleaned rows for these codes and "
         f"found **{_fmt_int(dsf['ret_sentinel_rows_mapped_to_null'])}** in the return column "
         f"and **{_fmt_int(dsf['retx_sentinel_rows_mapped_to_null'])}** in the dividend-"
         f"excluded return column. The cleaning code still maps them to a proper blank value "
@@ -1776,7 +1785,11 @@ def build_findings_markdown(ctx: dict) -> str:
     # --- Check 1: splits and distributions (see classify_adjustment_status) --
     n_events = events.get("n_events", 0)
     n_big = events.get("n_events_with_big_naive_move", 0)
-    if n_events and n_big:
+    # Gate on the verdict's own split_status, not a separate n_events/n_big
+    # re-check -- a second, looser gate here previously let the report
+    # sound conclusive on as few as 1 event while the verdict (needs 30)
+    # called it inconclusive two paragraphs later.
+    if adjustment["split_status"] != "inconclusive":
         actual_median = events.get("actual_ret_abs_median", 0.0)
         if actual_median <= RET_PLAUSIBLE_MAX_EVENT_ABS_MEDIAN:
             scale_clause = "ordinary daily return territory, consistent with a plausible fractional return"
@@ -1788,10 +1801,12 @@ def build_findings_markdown(ctx: dict) -> str:
             )
         lines.append(
             f"- **Splits and distributions.** Every time CRSP's own adjustment factor "
-            f"(`cfacpr`) changed for a stock -- a signal that a split or similar event "
-            f"happened -- we compared two numbers for that day: the \"naive\" return you'd "
-            f"get from just dividing the raw price by the previous day's raw price, and "
-            f"CRSP's actual reported return. {_fmt_int(n_events)} such adjustment events "
+            f"(`cfacpr`) moved by more than {_fmt_pct(CFACPR_EVENT_MIN_CHANGE, 0)} from a "
+            f"stock's previous trading day (with a usable prior price and a reported return) "
+            f"-- a signal that a split or similar event happened -- we compared two numbers "
+            f"for that day: the \"naive\" return you'd get from just dividing the raw price "
+            f"by the previous day's raw price, and CRSP's actual reported return. "
+            f"{_fmt_int(n_events)} such adjustment events "
             f"happened across the whole universe and window; {_fmt_int(n_big)} of them had a "
             f"naive move bigger than {_fmt_pct(NAIVE_RET_BIG_MOVE_THRESHOLD, 0)} -- consistent "
             f"with a real split or distribution, not day-to-day noise (median naive move size "
@@ -1800,9 +1815,11 @@ def build_findings_markdown(ctx: dict) -> str:
             f"{_fmt_pct(UNADJUSTED_RET_MATCH_TOL, 0)} of that same naive move "
             f"{_fmt_pct(events.get('frac_big_naive_events_ret_equals_naive', 0.0))} of the "
             f"time -- a fully unadjusted return column would measure close to 100% here. "
-            f"This pull's actual `ret` has its own median size of {_fmt_pct(actual_median)} "
-            f"on those same days ({_fmt_pct(events.get('frac_actual_ret_gt_big_move', 0.0))} "
-            f"still exceed {_fmt_pct(NAIVE_RET_BIG_MOVE_THRESHOLD, 0)}) -- {scale_clause}."
+            f"This pull's actual `ret` has its own median size of "
+            f"{_fmt_pct(actual_median, 3)} on those same days, and "
+            f"{_fmt_pct(events.get('frac_actual_ret_gt_big_move', 0.0), 3)} of those same days "
+            f"have an actual `ret` bigger than {_fmt_pct(NAIVE_RET_BIG_MOVE_THRESHOLD, 0)} in "
+            f"size -- {scale_clause}."
         )
     else:
         lines.append(
@@ -1892,12 +1909,12 @@ def build_findings_markdown(ctx: dict) -> str:
     if ctx.get("aapl_last_cfacpr") is not None and ctx["aapl_last_cfacpr"] != 1:
         aapl_cfacpr_example = (
             f"Apple, for example, has `cfacpr` = {ctx['aapl_last_cfacpr']:.1f} on our last "
-            f"pulled date, {_fmt_date(ctx['aapl_last_date'])} -- but that's because of a "
-            f"4-for-1 split in **August 2020**, an external fact from well after this "
-            f"pull's own last date. Dividing an early Apple price by that same "
-            f"{ctx['aapl_last_cfacpr']:.1f} would misrepresent that early history in terms "
-            f"of a stock split that hadn't happened yet, and wasn't knowable, at any point "
-            f"in this project's window."
+            f"pulled date, {_fmt_date(ctx['aapl_last_date'])} -- but that's because of at "
+            f"least one split after this pull's own last date (for Apple, a 4-for-1 in "
+            f"**August 2020**), an external fact this pull cannot see from its own rows. "
+            f"Dividing an early Apple price by that same {ctx['aapl_last_cfacpr']:.1f} would "
+            f"misrepresent that early history in terms of a stock split that hadn't happened "
+            f"yet, and wasn't knowable, at any point in this project's window."
         )
     else:
         aapl_cfacpr_example = (
@@ -2157,11 +2174,10 @@ def build_findings_markdown(ctx: dict) -> str:
         f"{_fmt_int(master_full['blank_ticker_mdy_rows'])} of them use "
         f"`mm/dd/yyyy`-formatted dates and the remaining "
         f"{_fmt_int(master_full['blank_ticker_iso_rows'])} use ISO dates, with prices whose "
-        f"scale (a handful of cents in 2011 rising into the tens of thousands of dollars by "
-        f"the 2020s) doesn't resemble any single stock -- it looks like a stray, unrelated "
-        f"price series (an index or similar) was accidentally appended to a single-stock "
-        f"file. Dropping every blank-ticker row removes this entire block cleanly, with "
-        f"nothing left over to special-case."
+        f"scale doesn't resemble any single stock -- it looks like at least one stray, "
+        f"unrelated price series (an index or similar) was accidentally appended to a "
+        f"single-stock file. Dropping every blank-ticker row removes this entire block "
+        f"cleanly, with nothing left over to special-case."
     )
     lines.append(
         f"Among the real, non-blank-ticker rows, across the whole file, "
@@ -2230,7 +2246,7 @@ def build_findings_markdown(ctx: dict) -> str:
         "- `permno`, `date` (a real date now), `ticker` (CRSP's ticker on record for that "
         "permno as of that specific date, not today's ticker -- tickers change over a "
         "company's life, so this avoids mislabeling old history with a later symbol)\n"
-        "- `prc` (cleaned raw price, always positive), `prc_is_bidask_avg` (flag for CRSP's "
+        "- `prc` (cleaned raw price, never negative), `prc_is_bidask_avg` (flag for CRSP's "
         "no-trade convention)\n"
         f"- `ret`, `retx` (total and price-only returns; {ret_retx_output_desc})\n"
         "- `shrout` (shares outstanding, in thousands -- CRSP's convention), `vol` (shares "
@@ -2290,11 +2306,11 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
         f"(not uniformly \"exactly two,\" and mostly multi-share-class tickers recording more "
         f"than one class's price under one symbol). Among the "
         f"{_fmt_int(crossval.get('master_collision_two_valid_price_groups', 0))} groups with "
-        f"exactly two individually-valid prices, they're typically not close -- a median "
+        f"exactly two individually-valid prices, the two prices are a median "
         f"{_fmt_pct(crossval.get('master_collision_two_valid_price_groups_median_rel_diff'), 1)} "
-        f"apart -- but "
+        f"apart, and "
         f"{_fmt_int(crossval.get('master_collision_two_valid_price_groups_within_1pct', 0))} of "
-        f"those pairs do sit within 1% of each other, so \"two unrelated price levels\" "
+        f"those pairs sit within 1% of each other, so \"two unrelated price levels\" "
         f"doesn't describe every one of them either. Either way, master_stock.csv itself gives "
         f"no signal for which candidate (if either) is the real one, so every row in a "
         f"colliding group is dropped rather than guessed at -- including "
@@ -2316,7 +2332,8 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
         f"{_fmt_int(crossval['matched_distinct_tickers'])} tickers, out of "
         f"{_fmt_int(crossval['crsp_distinct_tickers_in_window'])} CRSP tickers and "
         f"{_fmt_int(crossval['master_distinct_tickers_in_window'])} master_stock tickers "
-        f"active in the window -- only "
+        f"with usable rows in the window (both counted after the colliding rows above were "
+        f"dropped) -- only "
         f"{_fmt_pct(_safe_div(crossval['matched_distinct_tickers'], crossval['crsp_distinct_tickers_in_window']))} "
         f"of CRSP's tickers found a match. Some of that is real ticker churn (renames, "
         f"reused symbols), but there's a structural reason to expect an undercount too: "
@@ -2345,12 +2362,22 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
     rows_too_few = crossval.get("rows_quarantined_too_few_prices", 0)
     worst_retained = crossval.get("ticker_gate_worst_retained_median_diff")
     closest_quarantined = crossval.get("ticker_gate_closest_quarantined_median_diff")
+    # Not "the two groups are cleanly separated" -- that's unfalsifiable
+    # (retained/misaligned are complementary masks on the same threshold,
+    # so a kept segment is always <= it and a set-aside one always >, for
+    # ANY data). What's actually informative is the ratio between them.
     if worst_retained is not None and closest_quarantined is not None:
-        margin_clause = (
-            f" (the most disagreement tolerated in a kept segment on this run is "
-            f"{worst_retained:.2e}; the least disagreement in a set-aside one is "
-            f"{closest_quarantined:.2e})"
-        )
+        if worst_retained > 0:
+            margin_clause = (
+                f" How much room the threshold has here: the worst kept segment measures "
+                f"{worst_retained:.2e}, the closest set-aside one {closest_quarantined:.2e} "
+                f"-- {closest_quarantined / worst_retained:.1f}x apart."
+            )
+        else:
+            margin_clause = (
+                f" Every kept segment on this run measured exactly 0; the closest "
+                f"set-aside one measures {closest_quarantined:.2e}."
+            )
     else:
         margin_clause = ""
     lines.append(
@@ -2366,14 +2393,15 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
         f"a ticker's matched rows, since CRSP's own identity for a security is the permno, "
         f"not the mutable ticker label. A segment that really is the same company moves "
         f"the same amount, in the same direction, on both sides, almost every time; one "
-        f"pointing at a different company does not. On this data the two groups are "
-        f"cleanly separated with a gap between them{margin_clause}, so any segment whose "
-        f"typical disagreement exceeds "
-        f"{_fmt_pct(TICKER_ALIGNMENT_MAX_MEDIAN_PRICE_STEP_DIFF, 2)} is set aside as not "
-        f"comparable: **{_fmt_int(n_misaligned)} segments ({_fmt_int(rows_misaligned)} "
-        f"rows)**. A further **{_fmt_int(n_too_few)} segments ({_fmt_int(rows_too_few)} rows)** "
-        f"don't have enough overlapping days to judge one way or the other and are set aside "
-        f"separately, not counted as evidence of either problem."
+        f"pointing at a different company does not. Any segment whose typical disagreement "
+        f"exceeds {_fmt_pct(TICKER_ALIGNMENT_MAX_MEDIAN_PRICE_STEP_DIFF, 2)} is set aside as "
+        f"not comparable: **{_fmt_int(n_misaligned)} segments ({_fmt_int(rows_misaligned)} "
+        f"rows)**.{margin_clause} A further **{_fmt_int(n_too_few)} segments "
+        f"({_fmt_int(rows_too_few)} rows)** don't have enough usable price PAIRS to judge -- "
+        f"too few overlapping days, or too few days where both sides actually have a price "
+        f"(a missing/infinite/negative master_stock.csv price, already counted above, lands "
+        f"here even with perfect date overlap) -- and are set aside separately, not counted "
+        f"as evidence of either problem."
     )
     n_spanning = crossval.get("tickers_spanning_multiple_permnos", 0)
     n_boundary = crossval.get("segment_boundary_rows_excluded", 0)
@@ -2432,12 +2460,11 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
                 f"{crossval['ex_dividend_median_abs_diff_retx']:.2e} using `retx` -- itself "
                 f"further evidence that master_stock.csv's series is price-only."
             )
-        if crossval["return_median_abs_diff"] < 1e-4:
+        if crossval["return_median_abs_diff"] < CROSSVAL_SUSPICIOUSLY_CLOSE_MEDIAN_DIFF:
             lines.append(
-                "That difference is small enough (a few hundred-thousandths of a "
-                "percentage point or less) to be worth a second thought: two genuinely "
-                "independent data vendors measuring the same real-world price rarely agree "
-                "to that many decimal places purely by chance. It's plausible that "
+                "That difference is small enough to be worth a second thought: two "
+                "genuinely independent data vendors measuring the same real-world price "
+                "rarely agree to that many decimal places purely by chance. It's plausible that "
                 "master_stock.csv was itself built from CRSP or a common upstream source at "
                 "some point, rather than being fully independent -- which would make this "
                 "check better evidence of \"these two files consistently apply the same "
@@ -2491,10 +2518,24 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
         )
     lines.append("")
 
+    # frac-within-1pct alone can't rule out a degenerate case (high
+    # agreement-within-1pt alongside near-zero correlation) -- the
+    # correlation floor is a sanity check, not a precision target, so it
+    # only fires when correlation is None (couldn't be computed at all).
+    corr = crossval.get("return_correlation")
     positive_verdict = (
         retained_rows >= CROSSVAL_VERDICT_MIN_RETAINED_ROWS
         and crossval.get("return_frac_within_1pct") is not None
         and crossval["return_frac_within_1pct"] >= 0.95
+        and (corr is None or corr >= CROSSVAL_VERDICT_MIN_CORRELATION)
+    )
+    pre_window_end = CROSSVAL_YEARS[0] - 1
+    coverage_gap_clause = (
+        f" It cannot say anything about {archive_start_year}-{pre_window_end}, which is "
+        f"most of this project's window -- CRSP remains the primary, and only full-window, "
+        f"source."
+        if pre_window_end >= archive_start_year
+        else " CRSP remains the primary, and only full-window, source."
     )
     if positive_verdict:
         lines.append(
@@ -2502,9 +2543,7 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
             f"tickers and master_stock.csv's own row-level data-quality problems (both "
             f"documented above) are set aside, it holds up well for the years it can "
             f"actually test** ({_fmt_pct(crossval['return_frac_within_1pct'])} of retained "
-            f"days agree within 1 percentage point). It cannot say anything about "
-            f"{archive_start_year}-2010, which is most of this project's window -- CRSP "
-            f"remains the primary, and only full-window, source."
+            f"days agree within 1 percentage point).{coverage_gap_clause}"
         )
     else:
         lines.append(
