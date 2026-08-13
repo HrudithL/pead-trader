@@ -24,6 +24,7 @@ import weasyprint
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import build_equity_data_report as ber  # noqa: E402
+import normalize_equity_data as ned  # noqa: E402
 
 PDF_MAGIC = b"%PDF"
 
@@ -248,7 +249,8 @@ def test_build_equity_data_report_skips_crossval_when_master_stock_has_no_overla
     # agreement/correlation result or reference the crossval chart (which
     # was never built this run).
     heading, body = ber._build_crossval_section(
-        {"skipped": True}, {}, crossval_ran=False, chart_numbers={"split": 1, "crossval": None, "coverage": 2},
+        {"skipped": True}, {}, crossval_has_comparison=False,
+        chart_numbers={"split": 1, "crossval": None, "coverage": 2},
     )
     assert "did not run" in body
     assert "correlation" not in body
@@ -257,12 +259,70 @@ def test_build_equity_data_report_skips_crossval_when_master_stock_has_no_overla
 
     closing_heading, closing_body = ber._build_closing_section(
         {"overall": "inconclusive", "reasons": ["not enough evidence"]},
-        crossval_ran=False,
+        crossval_has_comparison=False,
+        crossval_stats={"skipped": True},
         chart_numbers={"split": 1, "crossval": None, "coverage": 2},
     )
     # The closing note's cross-check sentence must be entirely omitted --
     # not merely softened -- when the cross-check didn't run this build.
     assert "cross-check" not in closing_body.lower()
+
+
+def test_build_equity_data_report_crossval_zero_overlap_with_nonempty_inputs(tmp_path):
+    """Round-2 fix 3: a DISTINCT gap from the {"skipped": True} case above
+    -- here both CRSP and master_stock.csv have real, non-empty, in-window
+    rows (so _run_master_stock_crossval does NOT short-circuit to
+    {"skipped": True}), but they share zero overlapping (ticker, date)
+    keys, so cross_validate_master_stock's join produces matched_rows == 0
+    and never sets return_comparison_rows_retained/return_correlation at
+    all. Before this fix, the section-building code gated its "these two
+    sources agree closely" narrative on whether the crossval merely ran
+    (inputs non-empty), not on whether it produced anything to report --
+    so it would print an agreement claim here beside no statistic
+    whatsoever. This test drives the real report-building path (not just
+    the section-building helpers) to confirm the PDF still builds and that
+    claim no longer appears."""
+    fixture = _build_fixture_tree(tmp_path)
+    # master_stock.csv: ticker "QQQ", squarely inside the 1995 crossval
+    # window -- non-empty and in-window, but a ticker the CRSP fixture
+    # (ZZZ/YYY only) never has, so there are zero overlapping (ticker,
+    # date) keys to join on.
+    dates = [f"1995-06-{d:02d}" for d in range(1, 9)]
+    _write_master_stock_csv(fixture["master_stock_path"], [("QQQ", d, "100.00") for d in dates])
+
+    out = ber.build_equity_data_report(tmp_path / "report_zero_overlap.pdf", **fixture)
+    assert out.exists()
+    assert out.read_bytes()[:4] == PDF_MAGIC
+
+    # Reproduce the same stats dict build_equity_data_report() computes
+    # internally, to check directly that this is really the zero-matched-
+    # rows path (not the empty-inputs skip path) and that the crossval
+    # section's narrative text has no agreement/correlation/chart claim.
+    crsp_crossval = ber._load_crossval_crsp_frame(fixture["data_dir"], fixture["crossval_years"])
+    master_raw = ned.read_master_stock_raw(fixture["master_stock_path"], end_date=fixture["archive_end_date"])
+    master_clean, master_clean_stats = ned.clean_master_stock_frame(master_raw, end_date=fixture["archive_end_date"])
+    assert not crsp_crossval.empty
+    assert not master_clean.empty  # confirms this is NOT the {"skipped": True} path
+
+    window_start = max(pd.Timestamp(master_clean["date"].min()), pd.Timestamp(crsp_crossval["date"].min()))
+    window_end = min(pd.Timestamp(fixture["archive_end_date"]), pd.Timestamp(crsp_crossval["date"].max()))
+    crossval_stats, _ = ned.cross_validate_master_stock(crsp_crossval, master_clean, window_start, window_end)
+
+    assert crossval_stats.get("matched_rows") == 0
+    assert "return_comparison_rows_retained" not in crossval_stats
+    assert "return_correlation" not in crossval_stats
+
+    crossval_has_comparison = crossval_stats.get("return_comparison_rows_retained", 0) > 0
+    assert crossval_has_comparison is False
+
+    heading, body = ber._build_crossval_section(
+        crossval_stats, master_clean_stats, crossval_has_comparison=crossval_has_comparison,
+        chart_numbers={"split": 1, "crossval": None, "coverage": 2},
+    )
+    assert "did not run" in body
+    assert "correlation" not in body
+    assert "agree" not in body
+    assert "Chart" not in body
 
 
 def test_load_ticker_window_resolves_ticker_reassignment_to_center_date_permno(tmp_path):
@@ -307,6 +367,27 @@ def test_split_caption_reports_real_computed_numbers(tmp_path):
     assert "ZZZ" in caption
     assert "0.49%" in caption
     assert "fell" in caption
+
+
+# ---------------------------------------------------------------------------
+# _is_partial_final_year (Round-2 fix 6)
+# ---------------------------------------------------------------------------
+
+
+def test_is_partial_final_year_real_2011_is_not_partial():
+    """The real data's 2011 is a genuinely COMPLETE year whose actual last
+    trading day is 2011-12-30 (Dec 31 fell on a Saturday) -- only 1 day
+    short of Dec 31st. A strict exact-Dec-31 comparison would misclassify
+    this as partial; the calendar-slack tolerance must not."""
+    assert ber._is_partial_final_year("2011-12-30", 2011) is False
+
+
+def test_is_partial_final_year_real_2014_is_partial():
+    """The real data's final year, 2014, genuinely ends 2014-06-30 -- a
+    real truncation, nowhere close to Dec 31, and must still be flagged as
+    partial despite the calendar-slack tolerance added for the 2011 case
+    above."""
+    assert ber._is_partial_final_year("2014-06-30", 2014) is True
 
 
 if __name__ == "__main__":

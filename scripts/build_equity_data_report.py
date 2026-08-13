@@ -124,6 +124,13 @@ def _compute_coverage_and_cleaning_stats(data_dir: Path) -> tuple[pd.DataFrame, 
     ret_ne_retx_rows = 0
     ret_lt_retx_rows = 0
     ret_abs_gt_big_move_rows = 0
+    # Round-2 fix 8b: `cfacpr` is already in this loop's column projection
+    # (needed for first_year_prc_cfacpr/prc_adj_stats below), so this is
+    # one more accumulator riding along the same per-year read, not a new
+    # data pass -- rows where cfacpr is exactly 0 make `prc / cfacpr`
+    # undefined (not just look-ahead-tainted), a real, disclosed caveat on
+    # top of the look-ahead one.
+    cfacpr_zero_rows = 0
 
     event_frames = []
     event_carryover = None  # see normalize_equity_data.last_row_per_permno's docstring
@@ -160,6 +167,7 @@ def _compute_coverage_and_cleaning_stats(data_dir: Path) -> tuple[pd.DataFrame, 
         ret_ne_retx_rows += int((both_nonnull & (ret_minus_retx.abs() > ned.DIVIDEND_EVIDENCE_MIN_DIFF)).sum())
         ret_lt_retx_rows += int((both_nonnull & (-ret_minus_retx > ned.DIVIDEND_EVIDENCE_MIN_DIFF)).sum())
         ret_abs_gt_big_move_rows += int((ret_nonnull & (df["ret"].abs() > ned.NAIVE_RET_BIG_MOVE_THRESHOLD)).sum())
+        cfacpr_zero_rows += int((df["cfacpr"] == 0).sum())
 
         if year == years[0]:
             first_year_prc_cfacpr = df[["permno", "prc", "cfacpr"]].copy()
@@ -218,6 +226,7 @@ def _compute_coverage_and_cleaning_stats(data_dir: Path) -> tuple[pd.DataFrame, 
         **dsf_like_stats,
         "event_stats": event_stats,
         "prc_adj_stats": prc_adj_stats,
+        "cfacpr_zero_rows": cfacpr_zero_rows,
         "verdict": verdict,
     }
     return coverage, stats
@@ -239,6 +248,22 @@ def _load_ticker_window(
     while a permno, CRSP's permanent per-company ID, never is). Without
     this, a window spanning a reassignment could silently plot two
     unrelated companies' prices/returns as one continuous series.
+
+    Known, accepted limitation (round-2 review, declined as out of scope
+    for a final mechanical fix pass): this function only ever reads a
+    single year's equity_<year>.parquet file. A `center_date` near a
+    calendar-year boundary (early January or late December) can therefore
+    get a one-sided window -- e.g. a window that should extend 15 days
+    into the prior December instead starts at January 1st, because the
+    prior year's rows live in a different file this function never opens.
+    This produces no wrong number: _format_split_caption's numeric branch
+    already requires a same-year row immediately before the split date to
+    report a computed price move at all, and gracefully falls back to its
+    vaguer, number-free wording when that row isn't present in the window
+    -- so a one-sided window degrades the caption's specificity, not its
+    correctness. Fixing this properly would mean reading two adjacent
+    years' files whenever a window straddles a boundary, a real design
+    change out of scope here.
     """
     path = Path(data_dir) / f"equity_{year}.parquet"
     df = pd.read_parquet(path, columns=["date", "ticker", "permno", "prc", "ret", "retx"])
@@ -315,6 +340,27 @@ def _run_master_stock_crossval(
 # ---------------------------------------------------------------------------
 
 
+def _is_partial_final_year(date_max, year: int, slack_days: int = 7) -> bool:
+    """Round-2 fix 6: single-sourced "is this year partial" check, used by
+    both _make_coverage_chart (the annotation) and _build_coverage_section
+    (the prose) so the two can't disagree. `date_max` is that year's
+    actual last observed date; a straight `date_max == December 31st`
+    comparison breaks for a genuinely complete year whose real last
+    trading day isn't Dec 31 (a weekend/holiday) -- verified live on the
+    real data: 2011's last trading day is 2011-12-30, a fully complete
+    year only 1 day short of Dec 31. `slack_days` (default one calendar
+    week) absorbs that without also absorbing a real truncation -- the
+    real data's actual partial final year, 2014, ends 2014-06-30, nowhere
+    close to Dec 31 either way."""
+    # dt.timedelta rather than pd.Timedelta: under this project's pinned
+    # pandas/numpy versions, pd.Timedelta(days=int) on its own triggers a
+    # spurious "generic unit" DeprecationWarning from NumPy's timedelta64
+    # handling (see _load_ticker_window's identical comment above); a
+    # plain stdlib timedelta sidesteps it entirely.
+    year_end = pd.Timestamp(year=year, month=12, day=31)
+    return pd.Timestamp(date_max) < year_end - dt.timedelta(days=slack_days)
+
+
 def _make_coverage_chart(coverage: pd.DataFrame) -> plt.Figure:
     fig, axes = plt.subplots(2, 1, figsize=(7, 6), sharex=True)
 
@@ -337,26 +383,33 @@ def _make_coverage_chart(coverage: pd.DataFrame) -> plt.Figure:
     axes[1].set_xticks(ticks)
     plt.setp(axes[1].get_xticklabels(), rotation=45, ha="right")
 
-    # Fix 11: if the final year's own last observed date isn't December
-    # 31st, its bar covers only part of a year and isn't directly
+    # Fix 11 / round-2 fix 5: if the final year's own last observed date
+    # isn't December 31st (checked with several days' slack -- see
+    # _is_partial_final_year -- so a weekend-adjacent complete year isn't
+    # misflagged), its bar covers only part of a year and isn't directly
     # comparable to the full-year bars beside it -- annotate that
     # concretely rather than leaving a reader to assume every bar is a
     # full year.
     final_year = years_list[-1]
     final_date_max = pd.Timestamp(coverage["date_max"].iloc[-1])
-    if final_date_max < pd.Timestamp(year=final_year, month=12, day=31):
-        # Anchored near the top of the axes (in axes-fraction Y) rather
-        # than right above the bar's own height, with a thin connecting
-        # line down to the bar top and a white background box -- a tall
-        # final bar would otherwise put this text ON TOP of the bar
-        # itself, in low-contrast gray-on-blue.
+    if _is_partial_final_year(final_date_max, final_year):
+        # The row-count data across years is essentially flat -- there is
+        # no genuinely empty region to anchor into, so this needs real
+        # headroom, not just a corner of the existing axes: widen the
+        # y-axis well above the tallest bar first, then anchor the label
+        # in axes-fraction coordinates at the top-right corner (not a
+        # data-coordinate x position, which pushed the box past the right
+        # edge for a final year) with a thin connector back down to the
+        # final bar's own top. Single-line text keeps the box small.
+        top_rows_k = float(coverage["rows"].max()) / 1000.0
+        axes[0].set_ylim(0, top_rows_k * 1.35)
         axes[0].annotate(
-            f"Partial year:\nthrough {final_date_max.date()}",
+            f"Partial year: through {final_date_max.date()}",
             xy=(final_year, float(coverage["rows"].iloc[-1]) / 1000.0),
             xycoords=("data", "data"),
-            xytext=(final_year, 0.92),
-            textcoords=("data", "axes fraction"),
-            ha="center",
+            xytext=(0.98, 0.98),
+            textcoords="axes fraction",
+            ha="right",
             va="top",
             fontsize=8,
             color=_MUTED,
@@ -448,11 +501,17 @@ def _make_crossval_chart(full_ret_cmp: pd.DataFrame) -> tuple[plt.Figure, int, i
     encodes point density; the dashed line marks perfect agreement.
 
     Returns (figure, n_plotted, n_excluded): n_plotted is how many of
-    full_ret_cmp's rows fall within the plotted axis range (the 99.5th-
-    percentile-based `lim` below); n_excluded is how many of the largest
-    disagreements fall OUTSIDE that range and are therefore invisible on
-    the chart, not merely compressed into an edge bin -- the caption must
-    report both rather than implying every row is shown.
+    full_ret_cmp's rows actually got binned/plotted by matplotlib's own
+    hexbin call -- read back from the returned collection's per-hexagon
+    counts (Round-2 fix 7), not from a separate `|x| <= lim & |y| <= lim`
+    square-boundary inequality test. That separate test undercounts: a
+    hexagon's own boundary extends slightly past the nominal `extent`
+    passed below, so some near-boundary points the square test calls
+    "excluded" are, in fact, plotted (verified: a couple hundred rows'
+    worth on the real data). n_excluded is `len(full_ret_cmp) - n_plotted`,
+    i.e. how many of the largest disagreements are genuinely invisible on
+    the chart -- the caption must report both rather than implying every
+    row is shown.
     """
     x = full_ret_cmp["retx"].to_numpy(dtype="float64")
     y = full_ret_cmp["master_ret"].to_numpy(dtype="float64")
@@ -460,16 +519,16 @@ def _make_crossval_chart(full_ret_cmp: pd.DataFrame) -> tuple[plt.Figure, int, i
     lim = float(np.nanpercentile(np.abs(np.concatenate([x, y])), 99.5))
     lim = max(lim, 1e-4)  # guard against a degenerate all-zero fixture in tests
 
-    in_range = (np.abs(x) <= lim) & (np.abs(y) <= lim)
-    n_plotted = int(in_range.sum())
-    n_excluded = int(len(x) - n_plotted)
-
     fig, ax = plt.subplots(figsize=(6.5, 6))
     hb = ax.hexbin(
         x, y, gridsize=50, cmap="Blues", mincnt=1,
         norm=matplotlib.colors.LogNorm(),
         extent=(-lim, lim, -lim, lim),
     )
+    # What matplotlib actually drew, not a geometric range test -- see the
+    # docstring above.
+    n_plotted = int(hb.get_array().sum())
+    n_excluded = int(len(x) - n_plotted)
     ax.plot([-lim, lim], [-lim, lim], color=_ORANGE, linestyle="--", linewidth=1.5, label="Perfect agreement (y = x)")
     ax.set_xlim(-lim, lim)
     ax.set_ylim(-lim, lim)
@@ -511,12 +570,24 @@ def _pct_or_na(numerator, denominator) -> str:
     return f"{numerator / denominator:.2%}"
 
 
+def _crossval_agreement_caveat_applies(crossval_stats: dict) -> bool:
+    """Fix 3: single-sourced so the crossval section's caveat paragraph and
+    the closing section's "though see the caveat above" back-reference
+    can't drift apart -- both call this instead of each computing (or, in
+    the closing section's former case, silently assuming) the same
+    condition independently. True when the two files' median return
+    difference is small enough to be worth flagging as suspiciously close
+    (see ned.CROSSVAL_SUSPICIOUSLY_CLOSE_MEDIAN_DIFF's own docstring)."""
+    median_diff = crossval_stats.get("return_median_abs_diff")
+    return median_diff is not None and median_diff < ned.CROSSVAL_SUSPICIOUSLY_CLOSE_MEDIAN_DIFF
+
+
 def _build_sections(
     cov_stats: dict,
     coverage: pd.DataFrame,
     crossval_stats: dict,
     master_clean_stats: dict,
-    crossval_ran: bool,
+    crossval_has_comparison: bool,
     chart_numbers: dict,
 ) -> list[tuple[str, str]]:
     """chart_numbers: {"split": int, "crossval": int | None, "coverage":
@@ -545,6 +616,7 @@ def _build_sections(
     wrongly_included = prc_adj.get("wrongly_included_rows", 0)
     permnos_affected = prc_adj.get("permnos_affected", 0)
     price_threshold = prc_adj.get("price_threshold", 5.0)
+    n_cfacpr_zero = cov_stats.get("cfacpr_zero_rows", 0)
 
     sections = [
         (
@@ -595,18 +667,20 @@ def _build_sections(
             f"with real, sporadic dividend payments, not a mislabeled column -- and only "
             f"{n_wrong_dir:,} of those disagreements run in the direction a real dividend (a "
             f"cash inflow) essentially never should. Return scale: across {n_ret_nonnull:,} "
-            f"non-null `ret` values, {n_big_ret:,} ({_pct_or_na(n_big_ret, n_ret_nonnull)}) "
-            f"exceed {threshold:.0%} in size -- the range a plausible fractional daily "
-            "return column should fall in, not what a percent-units or otherwise "
-            "mis-scaled column would produce.\n\n"
+            f"non-null `ret` values, only {n_big_ret:,} ({_pct_or_na(n_big_ret, n_ret_nonnull)}) "
+            f"exceed {threshold:.0%} in size -- a small share is what a correctly-scaled "
+            "fractional daily return column (e.g. 0.05 meaning 5%) should look like; a "
+            "column mistakenly left in percent units (e.g. 5 meaning 5%) would instead put "
+            "nearly all of its values above that same threshold.\n\n"
             f"Chart {chart_numbers['split']} shows one specific, named example ON TOP OF "
             "these population-level figures, not the basis for the verdict above: a "
             "specific stock's actual traded price around one of its stock splits, next to "
             "what an investor's money would have looked like over that same stretch if you "
             "build it up purely from the day-by-day return column instead of the price "
             "column. If the return column already accounts for the split, the price line "
-            "should show an abrupt drop on the split date while the return-built line stays "
-            f"smooth straight through it -- and that is exactly what Chart {chart_numbers['split']} "
+            "should show an abrupt, split-sized drop on the split date while the return-built "
+            "line shows no such split-sized break -- just the ordinary day's return, the same "
+            f"size as any other day's -- and that is exactly what Chart {chart_numbers['split']} "
             "shows.",
         ),
         (
@@ -632,31 +706,42 @@ def _build_sections(
             "screen to the first year's data: using the actual traded price versus using "
             f"`prc / cfacpr` for the same rows, {wrongly_excluded:,} rows would be wrongly "
             f"excluded and {wrongly_included:,} would be wrongly included -- "
-            f"{permnos_affected:,} different stocks affected. `prc` and `cfacpr` are both "
-            "still in the output for anyone who explicitly wants `prc / cfacpr` with that "
-            "caveat in view; for comparing returns across a split safely, use `ret`/`retx` "
-            "instead (see the evidence above), which don't have this particular problem.",
+            f"{permnos_affected:,} different stocks affected. One more real caveat on top of "
+            f"the look-ahead one above: {n_cfacpr_zero:,} rows have `cfacpr` exactly equal to "
+            "0, where `prc / cfacpr` is mathematically undefined (a division by zero), not "
+            "just look-ahead-tainted -- another reason not to divide by it without guarding "
+            "first. `prc` and `cfacpr` are both still in the output for anyone who explicitly "
+            "wants `prc / cfacpr` with these caveats in view; for comparing returns across a "
+            "split safely, use `ret`/`retx` instead (see the evidence above), which don't "
+            "have this particular problem.",
         ),
-        _build_crossval_section(crossval_stats, master_clean_stats, crossval_ran, chart_numbers),
+        _build_crossval_section(crossval_stats, master_clean_stats, crossval_has_comparison, chart_numbers),
         _build_coverage_section(coverage, chart_numbers),
-        _build_closing_section(verdict, crossval_ran, chart_numbers),
+        _build_closing_section(verdict, crossval_has_comparison, crossval_stats, chart_numbers),
     ]
     return sections
 
 
 def _build_crossval_section(
-    crossval_stats: dict, master_clean_stats: dict, crossval_ran: bool, chart_numbers: dict
+    crossval_stats: dict, master_clean_stats: dict, crossval_has_comparison: bool, chart_numbers: dict
 ) -> tuple[str, str]:
     """Fix 3: no "independent" -- reworded to "a second price file" /
     "a cross-check" throughout, plus the caveat that the two files agree
     to far more decimal places than genuinely independent vendors
     plausibly would. Fix 9: discloses the second file's own cleaning-stage
     data-quality problems (previously computed and discarded) and why the
-    chart compares retx rather than ret. Fix 10: when the cross-check
-    didn't run this build, this becomes a short paragraph saying so --
-    no chart reference, no agreement claim, none of Fix 9's content."""
+    chart compares retx rather than ret. Fix 10/round-2 fix 3: when there's
+    no actual comparison to report this build, this becomes a short
+    paragraph saying so -- no chart reference, no agreement claim, none of
+    Fix 9's content. Gated on `crossval_has_comparison` (whether
+    `return_comparison_rows_retained` is actually present and positive in
+    crossval_stats), NOT on whether the CRSP/master_stock.csv input frames
+    were merely non-empty -- non-empty inputs that share zero (ticker,
+    date) keys still produce no usable comparison, and must land on this
+    same fallback rather than falsely claiming agreement beside no
+    statistic at all."""
     heading = "Cross-checking against a second price file"
-    if not crossval_ran:
+    if not crossval_has_comparison:
         return (
             heading,
             "The cross-check against a second price file did not run in this build: no "
@@ -683,18 +768,52 @@ def _build_crossval_section(
     matched_tickers = crossval_stats.get("matched_distinct_tickers", 0)
     crsp_tickers_window = crossval_stats.get("crsp_distinct_tickers_in_window", 0)
 
+    # Round-2 fix 4a: read_master_stock_raw's own SQL already filters
+    # blank-ticker rows before clean_master_stock_frame (and this report)
+    # ever sees them, so blank_dropped is structurally always 0 on real
+    # data here -- narrating "after dropping 0 blank-ticker rows" every
+    # run would describe a non-event as if it were a finding. Only
+    # mention it when there's actually something to disclose.
+    if blank_dropped:
+        lead_in = (
+            "The second file has real data-quality problems of its own, disclosed here "
+            f"rather than glossed over: after dropping {blank_dropped:,} blank-ticker rows "
+            "(a non-stock series that turned out to be appended to the file, not a "
+            "per-ticker problem), it separately has"
+        )
+    else:
+        lead_in = (
+            "The second file has real data-quality problems of its own, disclosed here "
+            "rather than glossed over: it has"
+        )
+
+    # Round-2 fix 4b: missing_price/infinite_price/negative_price are
+    # counted only through this same windowed clean_master_stock_frame
+    # call (bounded above by archive_end_date), not over the whole file --
+    # data/normalized_equity/FINDINGS.md separately reports a whole-file
+    # count for the same three fields (the file itself runs years past
+    # this project's sample window), so leaving the date range unstated
+    # would make it impossible for a reader to tell which count this is.
+    quality_date_min = master_clean_stats.get("date_min")
+    quality_date_max = master_clean_stats.get("date_max")
+    if quality_date_min is not None and quality_date_max is not None:
+        window_note = (
+            f" (counted from {pd.Timestamp(quality_date_min).date()} to "
+            f"{pd.Timestamp(quality_date_max).date()}, not the whole file, which runs "
+            "years further)"
+        )
+    else:
+        window_note = ""
+
     quality_para = (
-        "The second file has real data-quality problems of its own, disclosed here rather "
-        f"than glossed over: after dropping {blank_dropped:,} blank-ticker rows (a "
-        "non-stock series that turned out to be appended to the file, not a per-ticker "
-        f"problem), it separately has {missing_price:,} rows with a genuinely empty price "
+        f"{lead_in} {missing_price:,} rows with a genuinely empty price "
         f"field, {infinite_price:,} with an infinite (`inf`/`-inf`) price, and "
         f"{negative_price:,} with a negative price with no documented convention behind it "
-        "(unlike CRSP's own bid/ask-average convention) -- all treated as invalid and left "
-        f"blank rather than guessed at. Ticker-date price collisions (more than one price "
-        f"recorded for the same ticker on the same day) drop a further {master_collisions:,} "
-        f"rows on the second file's side and {crsp_collisions:,} rows on CRSP's side. Only "
-        f"{_pct_or_na(matched_tickers, crsp_tickers_window)} of CRSP's "
+        f"(unlike CRSP's own bid/ask-average convention){window_note} -- all treated as "
+        f"invalid and left blank rather than guessed at. Ticker-date price collisions (more "
+        f"than one price recorded for the same ticker on the same day) drop a further "
+        f"{master_collisions:,} rows on the second file's side and {crsp_collisions:,} rows "
+        f"on CRSP's side. Only {_pct_or_na(matched_tickers, crsp_tickers_window)} of CRSP's "
         f"{crsp_tickers_window:,} in-window tickers found any match at all in the second "
         "file -- the second file only contains tickers that still existed when it was "
         "downloaded, so this whole check skews toward companies that survived, and says "
@@ -715,20 +834,19 @@ def _build_crossval_section(
         "much larger specifically on ex-dividend days"
     )
     n_ex_div = crossval_stats.get("n_ex_dividend_days")
-    ret_mean = crossval_stats.get("return_mean_abs_diff_total_ret")
-    retx_mean = crossval_stats.get("return_mean_abs_diff")
-    if n_ex_div and ret_mean is not None and retx_mean is not None:
+    ex_div_ret_diff = crossval_stats.get("ex_dividend_median_abs_diff_ret")
+    ex_div_retx_diff = crossval_stats.get("ex_dividend_median_abs_diff_retx")
+    if n_ex_div and ex_div_ret_diff is not None and ex_div_retx_diff is not None:
         ret_vs_retx_para += (
-            f" (on this run's {n_ex_div:,} ex-dividend days for retained segments, mean "
-            f"absolute difference against the second file is {ret_mean:.2e} using `ret` "
-            f"versus {retx_mean:.2e} using `retx`)."
+            f" (on this run's {n_ex_div:,} ex-dividend days for retained segments, median "
+            f"absolute difference against the second file is {ex_div_ret_diff:.2e} using `ret` "
+            f"versus {ex_div_retx_diff:.2e} using `retx`)."
         )
     else:
         ret_vs_retx_para += "."
 
-    median_diff = crossval_stats.get("return_median_abs_diff")
     caveat = ""
-    if median_diff is not None and median_diff < ned.CROSSVAL_SUSPICIOUSLY_CLOSE_MEDIAN_DIFF:
+    if _crossval_agreement_caveat_applies(crossval_stats):
         caveat = (
             " Worth flagging: the two files agree to far more decimal places than two "
             "genuinely independent, unrelated vendors plausibly would on separate "
@@ -763,7 +881,7 @@ def _build_coverage_section(coverage: pd.DataFrame, chart_numbers: dict) -> tupl
     max_permnos = int(coverage["permnos"].max())
     final_year = int(coverage["year"].iloc[-1])
     final_date_max = pd.Timestamp(coverage["date_max"].iloc[-1])
-    is_partial_final_year = final_date_max < pd.Timestamp(year=final_year, month=12, day=31)
+    is_partial_final_year = _is_partial_final_year(final_date_max, final_year)
 
     body = (
         f"Chart {chart_numbers['coverage']} shows, for every year in the cleaned dataset, "
@@ -782,12 +900,21 @@ def _build_coverage_section(coverage: pd.DataFrame, chart_numbers: dict) -> tupl
     return "Coverage: how much data do we actually have?", body
 
 
-def _build_closing_section(verdict: dict, crossval_ran: bool, chart_numbers: dict) -> tuple[str, str]:
+def _build_closing_section(
+    verdict: dict, crossval_has_comparison: bool, crossval_stats: dict, chart_numbers: dict
+) -> tuple[str, str]:
     """Fix 1: the "None of the checks..." sentence is only emitted when
     `verdict["overall"]` actually says "adjusted" -- otherwise this states
     verdict["reasons"] directly rather than a hardcoded alternate claim.
-    Fix 10: the cross-check sentence is entirely omitted when the
-    cross-check didn't run. Fix 2: names the three real limitations
+    Fix 10 / round-2 fix 3: the cross-check sentence is entirely omitted
+    when there's no actual comparison to report (gated on the same
+    `crossval_has_comparison` signal _build_crossval_section uses, not
+    merely on whether the input frames were non-empty), and its "see the
+    caveat above" back-reference only appears when
+    _crossval_agreement_caveat_applies(crossval_stats) says that caveat
+    was actually emitted in that section -- rather than assuming it always
+    was, which is how this sentence and that section's caveat could
+    previously drift apart. Fix 2: names the three real limitations
     (coverage, delisting returns, the cfacpr look-ahead trap) instead of
     the old "the main limitation is coverage-related" claim."""
     if verdict["overall"] == "adjusted":
@@ -809,13 +936,19 @@ def _build_closing_section(verdict: dict, crossval_ran: bool, chart_numbers: dic
             "revisited in that light."
         )
 
-    if crossval_ran:
+    if crossval_has_comparison:
+        caveat_back_reference = (
+            " -- though see the caveat above about just how closely, which is itself "
+            "informative about how independent the two files really are"
+            if _crossval_agreement_caveat_applies(crossval_stats)
+            else ""
+        )
         crossval_clause = (
             " The cross-check against a second price file, while it can only speak to a "
             "few of this project's years, adds further confidence where it applies: the "
-            "two sources agree closely almost everywhere they overlap -- though see the "
-            "caveat above about just how closely, which is itself informative about how "
-            "independent the two files really are."
+            "two sources agree closely almost everywhere they overlap"
+            + caveat_back_reference
+            + "."
         )
     else:
         crossval_clause = ""
@@ -938,10 +1071,12 @@ def _format_split_caption(window_df: pd.DataFrame, ticker: str, split_date: str)
         )
     return (
         f"{price_move}, while the return column recorded {float(actual_ret):+.2%} that same "
-        "day -- a much smaller-magnitude number reflecting the stock's actual return, not the "
+        "day -- a much smaller-magnitude number reflecting the stock's real return, not the "
         "raw price change. The stock split accounts for the gap between the two: reading the "
-        f"price column alone would look like a one-day {shape} that didn't really happen, but "
-        "the bottom panel's return-built value of $1 invested shows no break at all."
+        f"price column alone would look like a one-day {shape} that didn't really happen. The "
+        "bottom panel's return-built value of $1 invested has no split-sized break in it -- it "
+        f"still steps by that same ordinary {float(actual_ret):+.2%}, it just isn't distorted "
+        "by the split itself the way the price panel is."
     )
 
 
@@ -973,13 +1108,24 @@ def build_equity_data_report(
     crossval_stats, crossval_merged, master_clean_stats = _run_master_stock_crossval(
         data_dir, master_stock_path, crossval_years, archive_end_date
     )
-    # Fix 10: whether the cross-check actually ran and produced real stats
-    # this build -- as opposed to short-circuiting to {"skipped": True}
-    # (no overlapping CRSP/master_stock.csv rows in the configured
-    # crossval years). Every crossval-dependent narrative sentence below
-    # (Fix 9's disclosure paragraph, the closing note's cross-check
-    # sentence) is gated on this same signal.
-    crossval_ran = not crossval_stats.get("skipped", False)
+    # Whether _run_master_stock_crossval even attempted a real comparison
+    # this build -- False only on its {"skipped": True} short-circuit (no
+    # usable rows in the configured crossval years on one side or the
+    # other). Used purely to gate whether it's safe to index into
+    # crossval_merged below; it does NOT by itself mean there's anything
+    # to report -- see crossval_has_comparison just below for that.
+    crossval_inputs_present = not crossval_stats.get("skipped", False)
+    # Round-2 fix 3: whether the cross-check actually produced a usable
+    # comparison this build, not merely whether its input frames were
+    # non-empty -- non-empty CRSP and master_stock.csv frames that share
+    # zero (ticker, date) keys still leave crossval_stats with no
+    # `return_comparison_rows_retained` (and none of the mean/median-diff
+    # or frac-within-1pct stats that key's presence guarantees; see
+    # cross_validate_master_stock's early returns). Every crossval-
+    # dependent narrative sentence below (Fix 9's disclosure paragraph,
+    # the closing note's cross-check sentence) is gated on this signal,
+    # not on crossval_inputs_present.
+    crossval_has_comparison = crossval_stats.get("return_comparison_rows_retained", 0) > 0
 
     figs = []
     try:
@@ -993,7 +1139,7 @@ def build_equity_data_report(
         charts = [(split_fig, split_caption)]
 
         crossval_chart_num = None
-        if crossval_ran:
+        if crossval_inputs_present:
             # Fix 8: the plotted/compared set is the gated (ticker, permno)
             # comparison set cross_validate_master_stock's own pooled
             # statistics use -- is_retained_segment (additive column) and
@@ -1038,7 +1184,9 @@ def build_equity_data_report(
         # the crossval chart was included above.
         chart_numbers = {"split": 1, "crossval": crossval_chart_num, "coverage": coverage_chart_num}
 
-        sections = _build_sections(cov_stats, coverage, crossval_stats, master_clean_stats, crossval_ran, chart_numbers)
+        sections = _build_sections(
+            cov_stats, coverage, crossval_stats, master_clean_stats, crossval_has_comparison, chart_numbers
+        )
 
         return report_builder.build_pdf_report(
             title="Equity Data Audit: Cleaning, Adjustment Status, and Cross-Validation",
