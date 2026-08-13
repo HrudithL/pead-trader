@@ -26,13 +26,13 @@ The agent's north star: **ship small, reviewable, reversible slices; keep it sim
 
 ## 1. Core Principles
 
-- **Keep it simple and linear.** Build the smallest thing that satisfies the spec. Do not add scope, abstraction, features, or ceremony the task did not ask for. Do not make the project more than it is. When two paths both work, take the simpler one. When in doubt, do less.
+- **Keep it simple and linear.** Build the smallest thing that satisfies the spec. Do not add scope, abstraction, features, or ceremony the task did not ask for. Do not make the project more than it is. When two paths both work, take the simpler one. When in doubt, do less. This applies to writing, not just code: comments, PR descriptions, and report prose should be terse and plain — a comment earns its place only by explaining a non-obvious *why*, not by narrating what the code already says. A verbose codebase and verbose PRs are their own kind of complexity, and cost real time and tokens to write, read, and review.
 - **Use senior-developer discretion.** Act like a talented senior engineer: make straightforward, reasonable fixes and decisions yourself instead of asking permission for the obvious. Don't make silly mistakes, and know where the boundaries are (§11). The bar for interrupting the human is high — see [§11.1](#111-when-to-decide-vs-ask).
 - **Plan, then read your plan, then execute.** Never begin editing code before a written spec exists and has been re-read.
 - **One small feature per branch.** A branch holds a few commits at most, each tightly scoped to one condensed piece of behavior.
 - **Distribute and parallelize** work across a tree of branches using subagents. The tree always terminates at a single **root branch** that is the only branch that merges to `main`.
 - **The agent does not make *genuine-fork* calls alone.** Product/UX, public API shape, naming, dependencies, architecture, security posture — the categories in [§11](#11-subjective-vs-objective-decisions) — are escalated. Straightforward, obviously-right fixes are made at the agent's discretion, not escalated (see [§11.1](#111-when-to-decide-vs-ask)).
-- **The internal review agent is triaged each round, not chased to zero.** Wait for the review subagent's pass ([§7](#7-phase-5--review-agent)), decide at the Opus tier which of its findings actually warrant a change (§11.1), make only those, and re-review if warranted. More than one review-fix round is normal — but each round must be earning its keep. Stop once a round's findings stop being substantive (§7); do not keep looping in pursuit of a perfectly silent report.
+- **The internal review agent is triaged each round, not chased to zero.** Wait for the review subagent's pass ([§7](#7-phase-5--review-agent)), decide at the Opus tier which of its findings actually warrant a change (§11.1), make only those, and re-review if warranted. **Two rounds, hard cap** — see [§7](#7-phase-5--review-agent). A finding that repeats a pattern from an earlier round gets fixed as a class, not chased instance-by-instance across further rounds; do not keep looping in pursuit of a perfectly silent report.
 - **`main` is sacred.** No direct pushes, no force pushes, no auto-merge, no shortcuts.
 
 ---
@@ -173,6 +173,11 @@ Every branch (sub → feature, feature → root) is integrated via a PR. No exce
   - Test evidence (commands run, output summary).
   - Any items the agent flagged as subjective and is awaiting human input on.
 - **Size:** small. If a PR's diff is sprawling, split it into more sub-branches.
+- **Keep the description short.** The five required items above, each a few lines — not a running
+  log of every review round. When a review round changes something, edit the relevant bullet in
+  place (e.g. update "Test evidence" with the new pass count) rather than appending an "Update N"
+  section on top of the last one. A reader should be able to understand the PR in under a minute;
+  a PR description that takes longer to read than the diff has failed at its job.
 - **Draft first** if the agent is still iterating; mark ready for review only when it believes the slice is complete.
 - **Request the review agent immediately.** As soon as the PR is opened (or marked ready), spawn the review subagent. See [§7](#7-phase-5--review-agent) for the full context-contract and triage protocol.
 
@@ -184,9 +189,14 @@ There is no external Codex/ChatGPT review available to this project (Codex revie
 exhausted). The agent MUST NOT wait for, poll for, or otherwise depend on an external
 `chatgpt-codex-connector[bot]` review — none is coming. Instead, the orchestrating agent runs its
 **own internal review subagent** for every PR, and that self-hosted review is the mandatory gate
-before any PR merges up the tree. More than one review-fix round is normal and expected for a PR
-with real findings — but the loop still has a **stopping condition** (see "When to stop reviewing"
-below): it isn't "re-review forever until there is literally nothing left to say."
+before any PR merges up the tree.
+
+**Hard cap: 2 review-fix rounds per PR, no exceptions.** Round 1 catches real findings; fix them.
+Round 2 confirms the fix and catches anything round 1 missed; fix that too. After round 2, merge —
+regardless of whether the report is spotless. This is not a soft guideline to be argued past when a
+round 2 finding feels substantive; it is a hard stop. See "When to stop reviewing" below for what to
+do when round 2 still finds something real, especially a *repeat* of a pattern from round 1 — the
+answer is never "run round 3," it's "fix the class of problem, not the instance, then stop."
 
 ### The review agent's context contract — PR only, nothing more
 
@@ -236,6 +246,15 @@ Findings must be reported **ordered most-severe-first**, each with a concrete fa
 scenario (specific input/state → specific wrong output or crash) — not vague style commentary.
 End with a short verdict on whether the PR is safe to merge up as-is.
 
+**Keep the report short.** One tight paragraph per finding — what's wrong, the concrete failure
+case, the fix. Not a forensic essay: no multi-table statistical breakdowns, no embedded
+verification-script transcripts, no restating every number in the diff back at the author. If a
+claim needs checking, check it and state the one-line result ("verified: X reproduces exactly") —
+don't show the work. A review this size should read like a sharp colleague's PR comment, not a
+research paper. This matters as much as thoroughness: a 3,000-word review costs as much time and
+context to write, relay, and triage as it saves, and a terse list of real problems gets fixed faster
+than an exhaustive one.
+
 ### When the review agent runs
 
 - **On every PR open (or draft → ready transition)** — spawn the review subagent against the
@@ -267,35 +286,49 @@ delegated to the Sonnet coding subagent and never done by skimming. For each fin
    beyond what the spec needs may be declined or deferred — note why on the PR. Simplicity (§1)
    outranks satisfying every finding.
 4. **Push a follow-up commit with the decided fixes and spawn a fresh review subagent** against
-   the new diff. If that round surfaces more substantive findings, repeat the same Opus-tier
-   triage. If it doesn't (see below), stop.
+   the new diff. Per the 2-round cap below, this second round's findings get the same triage and
+   get fixed (including a class-fix per "When to stop reviewing" if the finding repeats a pattern)
+   — then merge. Do not spawn a third round.
 
 ### When to stop reviewing
 
-The goal is never a literally empty report — it's a round whose findings stop being worth acting
-on. After each round, ask (at the Opus tier) whether it raised anything substantive: a real
-defect, a security issue, a data-integrity problem, a genuine fork. If yes, fix or escalate it and
-go again. Stop the loop once a round's remaining findings are:
+The goal is never a spotless report — it's two rounds, triaged properly, then merge. After round 1,
+fix what's real. After round 2, fix what's real **and then stop, unconditionally** — do not spawn a
+round 3 to re-verify the round-2 fix or to chase a fully clean report. If round 2 turns up something
+so serious it feels unsafe to ship without a fresh look, that is itself a signal the underlying code
+is too complex for its own good — simplify it (see below) rather than adding a review round.
+
+**If a round's finding is the same *class* of problem as an earlier round's (not the same instance —
+the same shape: e.g. two different unconditional claims in report-generation prose, two different
+missing null-checks, two different off-by-one date joins), do not fix the one instance and move on.**
+Find every other instance of that class in the affected file (a `grep` for the shape of the pattern
+is usually enough) and fix them all in the same pass. A pattern that recurs across rounds means the
+code has a structural weak spot, not a series of unrelated typos — the fix is to close the weak spot
+once, not to let each round discover one more example of it. This is the mechanism that keeps the
+2-round cap real: rounds don't need to extend to catch "just one more instance" if the triage already
+swept the class the first time it appeared.
+
+**If, after a class-fix, the honest conclusion is that a whole area of the code is too fragile or too
+elaborate to keep patching, simplify or cut it** rather than layering on more defensive checks.
+Fewer report claims, a narrower feature, or a plainer implementation that has less surface for this
+class of bug is a legitimate outcome of triage — not a failure to fully satisfy the review. Note the
+simplification on the PR the same way a fix would be noted.
+
+Stop the loop (after round 2 at the absolute latest) once remaining findings are:
 
 - restating something already declined or deferred with a reason on the PR,
 - purely stylistic/cosmetic with no behavior, security, or data-integrity impact,
 - scope the PR deliberately doesn't cover, or
 - otherwise not clearing the [§11.1](#111-when-to-decide-vs-ask) bar for "worth changing."
 
-Note the outcome briefly on the PR ("remaining findings are stylistic nits / already addressed —
-stopping here") and move on. This is an Opus-tier judgment call the agent makes itself, not a
-genuine fork to escalate to the human.
-
-**Repeated out-of-scope findings cap the loop at 2–3 rounds.** If a round's findings are
-out-of-scope and the next fresh-diff round comes back with the same or other out-of-scope content
-anyway, that is evidence the loop has stopped being productive, not a reason to keep spawning
-review subagents hoping for a cleaner pass. Note this on the PR ("review agent kept raising
-out-of-scope items after being scoped down — stopping after round N") and move on.
+Note the outcome briefly on the PR ("round 2 fixed the remaining findings, including a class-fix for
+X — merging") and move on. This is an Opus-tier judgment call the agent makes itself, not a genuine
+fork to escalate to the human.
 
 The PR is eligible to merge up once **both** are true: the review has reached its stopping point
-per the criteria above, and any escalated forks are resolved by the human. None of this requires a
-spotless report — it requires that every round's findings were actually triaged at the Opus tier
-and acted on where it mattered.
+(round 2, or earlier if round 1 comes back clean), and any escalated forks are resolved by the
+human. None of this requires a spotless report — it requires that every round's findings were
+actually triaged at the Opus tier and acted on where it mattered.
 
 ### Posting the review for auditability
 
@@ -423,7 +456,7 @@ Per PR:
 - [ ] Posted the review subagent's findings (or a summary) as a PR comment, labelled as the internal review agent's pass.
 - [ ] Made the reasonable fixes at own discretion each round; declined/deferred anything that would overcomplicate (noted why).
 - [ ] Escalated only genuine forks (multiple reasonable implementations, or a §11 decision); recorded the human's answer.
-- [ ] Repeated review-fix rounds only while findings stayed substantive; stopped once remaining comments were nits/already-addressed/out-of-scope, and noted that on the PR.
+- [ ] Stopped at 2 review-fix rounds, hard cap; fixed any repeated-pattern finding as a class, not instance-by-instance; noted the stop reason on the PR.
 - [ ] Merged up with a **merge commit** (not squash, not rebase).
 - [ ] Proposed branch deletion to the human.
 
