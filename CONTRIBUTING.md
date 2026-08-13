@@ -29,7 +29,17 @@ The agent's north star: **ship small, reviewable, reversible slices; keep it sim
 - **Keep it simple and linear.** Build the smallest thing that satisfies the spec. Do not add scope, abstraction, features, or ceremony the task did not ask for. Do not make the project more than it is. When two paths both work, take the simpler one. When in doubt, do less. This applies to writing, not just code: comments, PR descriptions, and report prose should be terse and plain — a comment earns its place only by explaining a non-obvious *why*, not by narrating what the code already says. A verbose codebase and verbose PRs are their own kind of complexity, and cost real time and tokens to write, read, and review.
 - **Use senior-developer discretion.** Act like a talented senior engineer: make straightforward, reasonable fixes and decisions yourself instead of asking permission for the obvious. Don't make silly mistakes, and know where the boundaries are (§11). The bar for interrupting the human is high — see [§11.1](#111-when-to-decide-vs-ask).
 - **Plan, then read your plan, then execute.** Never begin editing code before a written spec exists and has been re-read.
-- **One small feature per branch.** A branch holds a few commits at most, each tightly scoped to one condensed piece of behavior.
+- **One small feature per branch — err toward smaller, always.** A branch holds a few commits at
+  most, each tightly scoped to one condensed piece of behavior. When a slice from the plan turns
+  out to bundle more than one natural sub-behavior (e.g. "clean the data," "compute a derived
+  finding," and "cross-validate against a second source" are three, not one), split it into
+  separate sub-branches *before* writing code, not after the diff turns out large. Smaller PRs are
+  not just tidier — they are the mechanism that makes review actually work: a reviewer (human or
+  agent) reliably catches everything in a diff it can hold in its head at once, and reliably misses
+  things in a diff it can't. A large diff is what turns one review round into four or five, each
+  catching one more thing the last one missed. Many small, cleanly-reviewed PRs land faster in
+  total than a few large ones that each need repeated review rounds to get right — see [§6](#6-phase-4--pull-requests)
+  for the concrete sizing guideline.
 - **Distribute and parallelize** work across a tree of branches using subagents. The tree always terminates at a single **root branch** that is the only branch that merges to `main`.
 - **The agent does not make *genuine-fork* calls alone.** Product/UX, public API shape, naming, dependencies, architecture, security posture — the categories in [§11](#11-subjective-vs-objective-decisions) — are escalated. Straightforward, obviously-right fixes are made at the agent's discretion, not escalated (see [§11.1](#111-when-to-decide-vs-ask)).
 - **The internal review agent is triaged each round, not chased to zero.** Wait for the review subagent's pass ([§7](#7-phase-5--review-agent)), decide at the Opus tier which of its findings actually warrant a change (§11.1), make only those, and re-review if warranted. **Two rounds, hard cap** — see [§7](#7-phase-5--review-agent). A finding that repeats a pattern from an earlier round gets fixed as a class, not chased instance-by-instance across further rounds; do not keep looping in pursuit of a perfectly silent report.
@@ -86,6 +96,10 @@ For every task, spec, or feature request:
    - **Assumptions** — anything the agent inferred.
    - **Subjective items to escalate** — list every decision the agent identifies as opinion-shaped (see [§11](#11-subjective-vs-objective-decisions)). Ask the human before proceeding on any of these.
    - **Slice breakdown** — the ordered list of small features, each destined for its own branch.
+     Break each slice down to sub-slice grain up front: if describing a slice needs "and" ("cleans
+     the data **and** computes a finding **and** cross-validates it"), it's more than one slice.
+     Default to more, smaller entries here rather than fewer, larger ones — see [§1](#1-core-principles)
+     and [§6](#6-phase-4--pull-requests).
    - **Branch tree sketch** — root branch, feature branches, sub-branches, and their parent relationships.
    - **Acceptance criteria** — per slice, measurable and testable.
    - **Risks / rollback notes**.
@@ -172,7 +186,18 @@ Every branch (sub → feature, feature → root) is integrated via a PR. No exce
   - Explicit list of what was **not** changed / left for later slices.
   - Test evidence (commands run, output summary).
   - Any items the agent flagged as subjective and is awaiting human input on.
-- **Size:** small. If a PR's diff is sprawling, split it into more sub-branches.
+- **Size: small, by default, not as a fallback.** Aim for one cohesive piece of behavior in one
+  new/changed file (or a couple of tightly related ones) — roughly, a diff a reviewer can hold in
+  their head in one pass, not one that needs a table of contents. If a slice's natural output is
+  "a pipeline stage with five sub-steps and a report," that's five-plus PRs, not one: e.g. split
+  "clean the raw data," "derive a finding from it," "cross-validate it against a second source,"
+  and "render the findings as a report" into separate branches even though they're all part of the
+  same slice. Don't wait for a diff to turn out sprawling and split it after the fact — decide the
+  split at planning time (see [§3](#3-phase-1--plan-before-you-touch-code)'s slice breakdown) and
+  cut the branches small from the start. This is a direct lesson from this project's own history:
+  large PRs needed 4-5 review-fix rounds to get right, while small ones tend to clear in 1-2 — many
+  small, cleanly-reviewed iterations compound into the big change faster than a few large ones that
+  each drag through repeated rounds.
 - **Keep the description short.** The five required items above, each a few lines — not a running
   log of every review round. When a review round changes something, edit the relevant bullet in
   place (e.g. update "Test evidence" with the new pass count) rather than appending an "Update N"
