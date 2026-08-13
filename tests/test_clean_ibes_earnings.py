@@ -45,10 +45,21 @@ def _step_table(rows) -> pd.DataFrame:
     """rows: iterable of (permno, date_str, cfacshr). Builds an already-
     compressed step table directly (bypassing _build_cfacshr_step_table)
     for tests that just need a specific set of (permno, date, cfacshr)
-    anchors to resolve against."""
-    return pd.DataFrame(
+    anchors to resolve against.
+
+    Also derives `prev_cfacshr`/`is_change` the same way
+    _build_cfacshr_step_table() would (per-permno shift, sorted by date) --
+    resolve_eps_basis() requires both columns on any step_table it's given,
+    and since this helper bypasses the real compression function, it has to
+    compute them itself rather than relying on that function's own logic.
+    """
+    df = pd.DataFrame(
         [{"permno": float(p), "date": pd.Timestamp(d), "cfacshr": c} for p, d, c in rows]
-    ).sort_values("date").reset_index(drop=True)
+    ).sort_values(["permno", "date"]).reset_index(drop=True)
+    prev_cfacshr = df.groupby("permno")["cfacshr"].shift(1)
+    df["prev_cfacshr"] = prev_cfacshr
+    df["is_change"] = prev_cfacshr.notna() & (df["cfacshr"] != prev_cfacshr)
+    return df.sort_values("date").reset_index(drop=True)
 
 
 def _empty_step_table() -> pd.DataFrame:
@@ -56,7 +67,50 @@ def _empty_step_table() -> pd.DataFrame:
         "permno": pd.Series(dtype="float64"),
         "date": pd.Series(dtype="datetime64[ns]"),
         "cfacshr": pd.Series(dtype="float64"),
+        "prev_cfacshr": pd.Series(dtype="float64"),
+        "is_change": pd.Series(dtype="bool"),
     })
+
+
+def _real_data_available() -> bool:
+    return (
+        clean.ACTU_EPSUS_PATH.exists()
+        and clean.STATSUMU_EPSUS_PATH.exists()
+        and clean.RESOLVED_UNIVERSE_PATH.exists()
+        and clean.RAW_CRSP_DIR.exists()
+        and any(clean.RAW_CRSP_DIR.glob("dsf_*.parquet"))
+    )
+
+
+def _load_real_raw_frames():
+    """Loads the same three raw input frames + step table build_event_table()
+    needs, exactly as main() does. Used by real-data regression tests that
+    need the FULL resolved panel rather than a hand-built mini-panel -- the
+    eps_basis discriminator needs each ticker's own PRIOR-quarter history,
+    which a mini-panel limited to just the rows under test would not have.
+    """
+    actu_raw = pd.read_parquet(clean.ACTU_EPSUS_PATH)
+    statsumu_raw = pd.read_parquet(
+        clean.STATSUMU_EPSUS_PATH,
+        columns=clean.STATSUMU_USECOLS,
+        filters=[("fpi", "==", "6")],
+    )
+    resolved_raw = pd.read_parquet(clean.RESOLVED_UNIVERSE_PATH)
+    cfacshr_step_table = clean.load_cfacshr_step_table()
+    return actu_raw, statsumu_raw, resolved_raw, cfacshr_step_table
+
+
+@pytest.fixture(scope="module")
+def real_event_table():
+    """The full real build_event_table() output + stats, shared across the
+    handful of tests that need it. Module-scoped so the real pipeline
+    (~7 seconds, dominated by reading CRSP's ~20M-row daily file set) runs
+    only once for the whole test module rather than once per test.
+    """
+    if not _real_data_available():
+        pytest.skip("real WRDS/CRSP data pull not present in this environment")
+    actu_raw, statsumu_raw, resolved_raw, step_table = _load_real_raw_frames()
+    return clean.build_event_table(actu_raw, statsumu_raw, resolved_raw, step_table)
 
 
 # ---------------------------------------------------------------------------
@@ -562,28 +616,26 @@ def test_validate_qtr_ann_consistency_real_data_confirms_pdicity_is_trustworthy(
     are validated non-circularly (no consensus or surprise measure
     involved) against the actual pulled data.
 
-    Measured on the real pull: 8,471 qualifying cases, an 86.2% pass rate
-    at the spec's literal $0.05 tolerance -- short of the spec's stated
-    ~90% expectation. Investigated rather than silently accepted or forced:
-    the pass rate is highly tolerance-sensitive (89.8% at $0.10, 91.6% at
-    $0.15, 99.7% at $2.00), and the residual population of genuinely large
-    mismatches (diff > $2, a magnitude consistent with a units/basis
-    artifact rather than rounding) is only ~0.27% of all cases. Real
-    seasonal businesses with sign-flipping quarters (e.g. tax-prep
-    companies with a huge Q1 and losses the rest of the year) pass this
-    check almost exactly, which is itself a strong sign pdicity is
-    labeling correctly. The most plausible explanation for the shortfall
-    from 90% is that quarterly EPS values do not always sum exactly to the
-    reported annual EPS even under correct labeling (weighted-average
-    share-count differences between quarterly and annual computations,
-    rounding, and one-time items land differently in Q4 alone vs. the full
-    year) -- a real accounting property, not a pdicity defect -- compounded
-    by a small tail of pre-adjustment split-basis contamination (this check
-    intentionally runs on raw eps_actual, before the Step 2 split fix, to
-    stay non-circular). This is reported honestly, not forced to 90%: the
-    threshold below is set to confirm labels are broadly trustworthy (far
-    above what mislabeled/random data would produce), not to reproduce a
-    specific hoped-for number.
+    An earlier version of this check found the "3 prior same-ticker fiscal
+    quarters" via `pd.DateOffset(months=3/6/9)`, which silently excluded
+    every December fiscal-year-end (73% of the eligible sample) due to a
+    day-of-month arithmetic mismatch -- see
+    test_real_validate_qtr_ann_consistency_december_fix_produces_expected_counts
+    for the exact before/after counts. That version measured 8,471
+    qualifying cases at an 86.2% pass rate (spec's literal $0.05
+    tolerance). The FIXED version (ordered prior-row lookups, gated by a
+    day-count window instead of day-of-month arithmetic) finds 7.78x more
+    cases at materially the same pass rate -- confirmatory evidence, not a
+    reason to second-guess the underlying QTR/ANN disambiguation. The
+    residual gap from 100% is itself informative, not a defect: quarterly
+    EPS does not always sum exactly to reported annual EPS even under
+    correct labeling (weighted-average share-count differences, rounding,
+    one-time items landing differently in Q4 alone vs. the full year), not
+    a pdicity mislabeling -- this check intentionally runs on raw
+    eps_actual, before the Step 2 split-adjustment fix, to stay
+    non-circular. This test only checks the pass rate is broadly high (far
+    above what mislabeled/random data would produce); the dedicated test
+    below checks the exact counts.
     """
     if not clean.ACTU_EPSUS_PATH.exists():
         pytest.skip("real WRDS data pull not present in this environment")
@@ -594,6 +646,47 @@ def test_validate_qtr_ann_consistency_real_data_confirms_pdicity_is_trustworthy(
 
     assert result["n_cases"] > 0
     assert result["pass_rate"] >= 0.80
+
+
+def test_real_validate_qtr_ann_consistency_december_fix_produces_expected_counts():
+    """Exact real-data before/after counts from the fix spec for the
+    date-arithmetic fix. A meaningful mismatch here is a stop-and-report
+    condition, not something to silently adjust to match."""
+    if not clean.ACTU_EPSUS_PATH.exists():
+        pytest.skip("real WRDS data pull not present in this environment")
+
+    raw = pd.read_parquet(clean.ACTU_EPSUS_PATH)
+    actuals, _ = clean.clean_actuals(raw)
+    result = clean.validate_qtr_ann_consistency(actuals)
+
+    assert result["n_cases"] == 65922
+    assert result["pass_rate"] == pytest.approx(0.8579, abs=0.001)
+    assert result["n_cases_december"] == 48340
+
+
+def test_validate_qtr_ann_consistency_december_synthetic_minimal_repro():
+    """Minimal synthetic reproduction of the DateOffset bug this function's
+    rewrite fixes: a December fiscal-year-end. The OLD (pre-fix)
+    implementation's `2000-09-30 + pd.DateOffset(months=3) == 2000-12-30`
+    would never match the real `2000-12-31` QTR row two lines below, so it
+    would find n_cases == 0 on this exact input -- silently excluding this
+    case from the check entirely, which is exactly the bug. The FIXED
+    implementation (ordered prior-row lookups, no day-of-month arithmetic)
+    must find it.
+    """
+    actuals = _cleaned_actuals([
+        ("DECQ", "2000-03-31", "2000-04-15", 1.00, "QTR"),
+        ("DECQ", "2000-06-30", "2000-07-15", 1.10, "QTR"),
+        ("DECQ", "2000-09-30", "2000-10-15", 1.20, "QTR"),
+        ("DECQ", "2000-12-31", "2001-01-15", 1.30, "QTR"),
+        ("DECQ", "2000-12-31", "2001-01-15", 4.60, "ANN"),  # exact sum of the 4 QTR values above
+    ])
+
+    result = clean.validate_qtr_ann_consistency(actuals)
+
+    assert result["n_cases"] == 1
+    assert result["n_passed"] == 1
+    assert result["n_cases_december"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -874,14 +967,22 @@ def test_resolve_share_basis_ambiguous_permno_one_covered_candidate_is_resolved(
 
 
 def test_resolve_share_basis_null_target_date_is_unavailable():
+    """permno IS present here -- only target_date is null -- so this must
+    land on the specific "unavailable_no_target_date" status, not the
+    "unavailable_no_permno" status reserved for a missing permno (see
+    test_resolve_share_basis_null_permno_is_unavailable for that case)."""
     step = _step_table([(100, "2000-01-01", 1.0)])
     value, status = clean.resolve_share_basis(step, pd.Series(["100"]), pd.Series([pd.NaT]))
 
     assert pd.isna(value.iloc[0])
-    assert status.iloc[0] == "unavailable_no_permno"
+    assert status.iloc[0] == "unavailable_no_target_date"
 
 
 def test_attach_share_basis_classifies_no_change_vs_adjusted():
+    """attach_share_basis() no longer sets eps_actual_adj (that moved to
+    resolve_eps_basis(), which needs cfacshr_eps_basis to exist first) --
+    see attach_share_basis's docstring. This test only checks the columns
+    attach_share_basis is still responsible for."""
     step = _step_table([
         (100, "1990-01-01", 1.0),  # never split
         # permno 200 splits 2:1 on 2000-06-01, going from 4.0 to 2.0 --
@@ -900,14 +1001,14 @@ def test_attach_share_basis_classifies_no_change_vs_adjusted():
 
     result, stats = clean.attach_share_basis(panel, step)
 
+    assert "eps_actual_adj" not in result.columns
+
     assert result.loc[0, "share_basis_status"] == "no_change"
     assert result.loc[0, "cfacshr_anndats"] == 1.0
-    assert result.loc[0, "eps_actual_adj"] == pytest.approx(1.00)
 
     assert result.loc[1, "share_basis_status"] == "adjusted"
     assert result.loc[1, "cfacshr_anndats"] == 2.0
     assert result.loc[1, "cfacshr_statpers"] == 4.0
-    assert result.loc[1, "eps_actual_adj"] == pytest.approx(0.25)
 
     assert stats["no_change"] == 1
     assert stats["adjusted"] == 1
@@ -926,115 +1027,360 @@ def test_attach_share_basis_unavailable_permno_leaves_derived_columns_null():
 
     assert result.loc[0, "share_basis_status"] == "unavailable_no_permno"
     assert pd.isna(result.loc[0, "cfacshr_anndats"])
-    assert pd.isna(result.loc[0, "eps_actual_adj"])
     assert stats["unavailable_no_permno"] == 1
 
 
-def test_real_femp_mbi_bgh_split_events_are_fixed_by_share_basis_adjustment():
-    """Regression test for the three real split-artifact events the review
-    identified: FEMP fpedats 2000-09-30 (a 10-for-1 forward split between
-    statpers and anndats), MBI fpedats 1997-09-30 (a 2-for-1 forward
-    split), and BGH fpedats 2009-09-30 (a 1-for-10 reverse split). Before
-    this fix these shipped sue_analyst around -105, -111, and +144
-    respectively -- pure units artifacts from comparing a consensus formed
-    on one CRSP share basis against an actual reported on a different one.
+def test_real_nine_named_split_events_confirm_eps_basis_discriminator(real_event_table):
+    """Regression test for the eps_basis discriminator fix (the follow-up
+    to the original split-adjustment fix): 9 real, independently-verified
+    split events, three of them different fiscal quarters of the SAME
+    ticker (TRH) -- proving the discriminator separates events on their own
+    evidence rather than keying off a ticker-level artifact. Five are
+    anndats_basis_confirmed (the original unconditional post-step
+    assumption was right); four are prestep_basis_confirmed (it was wrong,
+    and is now corrected). Replaces the old, weaker "shrank by at least 3x"
+    MBI/BGH assertions with exact expected values from the fix spec.
 
-    Pulls the REAL raw ingredients from the actual WRDS/CRSP pull (skips if
-    not present, e.g. in a CI environment without the local data pull) and
-    independently re-derives the expected adjusted sue_analyst from those
-    raw values by hand, rather than hardcoding the review's summary numbers
-    or calling the production formula twice.
+    Runs the FULL real pipeline (via the real_event_table fixture) rather
+    than a hand-built mini-panel, because the discriminator needs each
+    ticker's own PRIOR-quarter history to have anything to discriminate
+    against.
     """
-    if not clean.ACTU_EPSUS_PATH.exists() or not clean.STATSUMU_EPSUS_PATH.exists() or not clean.RAW_CRSP_DIR.exists():
-        pytest.skip("real WRDS/CRSP data pull not present in this environment")
+    panel, _stats = real_event_table
 
-    events = [("FEMP", "2000-09-30", 35554.0), ("MBI", "1997-09-30", 75175.0), ("BGH", "2009-09-30", 10890.0)]
-    tickers = [t for t, _, _ in events]
+    # ticker, fpedats, expected eps_basis_status, expected evidence ratio,
+    # expected cfacshr_eps_basis, expected sue_analyst BEFORE this fix (i.e.
+    # under commit 7dc0c83's unconditional-cfacshr_anndats formula -- not
+    # the fully-unadjusted raw value), expected sue_analyst AFTER.
+    events = [
+        ("FEMP", "2000-09-30", "anndats_basis_confirmed", 24.64, 1.0, 0.8750, 0.8750),
+        ("MBI", "1997-09-30", "anndats_basis_confirmed", 10.50, 1.5, -16.0000, -16.0000),
+        ("BGH", "2009-09-30", "anndats_basis_confirmed", 28.75, 1.0, 10.8000, 10.8000),
+        ("TRH", "2001-06-30", "anndats_basis_confirmed", float("inf"), 1.25, -1.0000, -1.0000),
+        ("TRH", "2004-06-30", "anndats_basis_confirmed", 5.60, 1.0, 0.1667, 0.1667),
+        ("FAMR", "1998-06-30", "prestep_basis_confirmed", 5.80, 3.0, 248.5000, 8.5000),
+        ("TRH", "1997-06-30", "prestep_basis_confirmed", 14.95, 2.8125, 92.2500, 4.5000),
+        ("IVCR", "1995-09-30", "prestep_basis_confirmed", 7.67, 2.0, 61.0000, 1.0000),
+        ("VRLN", "1997-10-31", "prestep_basis_confirmed", 4.25, 1.875, 48.0000, 9.0000),
+    ]
 
-    actu = pd.read_parquet(clean.ACTU_EPSUS_PATH, filters=[("ticker", "in", tickers)])
-    actu["anndats"] = clean._parse_date(actu["anndats"])
-    actu["pends"] = clean._parse_date(actu["pends"])
+    for ticker, fped, exp_status, exp_ratio, exp_basis, exp_before, exp_after in events:
+        mask = (panel["ibes_ticker"] == ticker) & (panel["fpedats"] == pd.Timestamp(fped))
+        assert mask.sum() == 1, f"expected exactly one real row for {ticker} {fped}"
+        row = panel.loc[mask].iloc[0]
 
-    statsumu = pd.read_parquet(
-        clean.STATSUMU_EPSUS_PATH,
-        columns=["ticker", "statpers", "fpedats", "fpi", "meanest", "medest", "stdev", "numest"],
-        filters=[("ticker", "in", tickers), ("fpi", "==", "6")],
+        assert row["eps_basis_status"] == exp_status, f"{ticker} {fped}: eps_basis_status"
+        if np.isinf(exp_ratio):
+            assert np.isinf(row["eps_basis_evidence_ratio"]), f"{ticker} {fped}: expected an inf evidence ratio"
+        else:
+            assert row["eps_basis_evidence_ratio"] == pytest.approx(exp_ratio, abs=0.01), f"{ticker} {fped}: evidence ratio"
+        assert row["cfacshr_eps_basis"] == pytest.approx(exp_basis, abs=0.001), f"{ticker} {fped}: cfacshr_eps_basis"
+
+        # "Before" = the immediately-prior code's sue_analyst (the
+        # unconditional cfacshr_anndats-basis assumption this fix corrects)
+        # -- independently re-derived from this row's own raw columns
+        # rather than hardcoded from the review's summary numbers.
+        if pd.notna(row["cfacshr_statpers"]) and pd.notna(row["cfacshr_anndats"]):
+            r_c_old = row["cfacshr_statpers"] / row["cfacshr_anndats"]
+        else:
+            r_c_old = 1.0
+        sue_before = clean.compute_sue_analyst(
+            pd.Series([row["eps_actual"] * r_c_old]), pd.Series([row["consensus_meanest"]]), pd.Series([row["consensus_stdev"]])
+        ).iloc[0]
+        assert sue_before == pytest.approx(exp_before, abs=0.01), f"{ticker} {fped}: sue_analyst before this fix"
+        assert row["sue_analyst"] == pytest.approx(exp_after, abs=0.01), f"{ticker} {fped}: sue_analyst after this fix"
+
+
+def test_real_step_in_report_window_structural_identity(real_event_table):
+    """Structural identity: the four in-window eps_basis_status counts
+    (anndats_basis_confirmed + prestep_basis_confirmed +
+    basis_undetermined_ambiguous + basis_undetermined_no_reference) must
+    sum to exactly the number of rows with a real cfacshr step inside their
+    own (fpedats, anndats] window -- there is no fifth in-window outcome
+    and no row double-counted. On the real pull this is 1,583, matching the
+    fix spec; independently recomputed here from the panel's own
+    eps_basis_status column, not merely re-reading the stats dict the
+    production code itself already reports this number from.
+    """
+    panel, stats = real_event_table
+    in_window_statuses = [
+        "anndats_basis_confirmed", "prestep_basis_confirmed",
+        "basis_undetermined_ambiguous", "basis_undetermined_no_reference",
+    ]
+    measured = int(panel["eps_basis_status"].isin(in_window_statuses).sum())
+    assert measured == stats["eps_basis"]["step_in_report_window_total"]
+    assert measured == 1583, (
+        f"measured step_in_report_window count is {measured}, expected 1583 per the fix spec -- "
+        "stop and report rather than silently adjusting this expectation."
     )
-    statsumu["statpers"] = clean._parse_date(statsumu["statpers"])
-    statsumu["fpedats"] = clean._parse_date(statsumu["fpedats"])
 
-    permnos = {p for _, _, p in events}
-    crsp_frames = []
-    for f in sorted(clean.RAW_CRSP_DIR.glob("dsf_*.parquet")):
-        chunk = pd.read_parquet(f, columns=["permno", "date", "cfacshr"])
-        chunk = chunk[chunk["permno"].astype("float64").isin(permnos)]
-        if len(chunk):
-            crsp_frames.append(chunk)
-    assert crsp_frames, "expected at least some CRSP coverage for the three named permnos"
-    crsp_raw = pd.concat(crsp_frames, ignore_index=True)
-    crsp_raw["date"] = clean._parse_date(crsp_raw["date"])
-    step_table = clean._build_cfacshr_step_table(crsp_raw)
 
+def test_real_eps_basis_status_counts_match_fix_spec(real_event_table):
+    """The exact six-value eps_basis_status count table from the fix spec.
+    A mismatch here (beyond the spec's own small-drift caveat for numbers
+    derived on top of a shipped parquet rather than a full pipeline run) is
+    a stop-and-report condition, not something to paper over.
+    """
+    _panel, stats = real_event_table
+    counts = stats["eps_basis"]
+    expected = {
+        "anndats_basis_assumed": 281066,
+        "basis_unverified_no_crsp": 5195,
+        "anndats_basis_confirmed": 679,
+        "basis_undetermined_ambiguous": 430,
+        "prestep_basis_confirmed": 268,
+        "basis_undetermined_no_reference": 206,
+    }
+    for status, expected_count in expected.items():
+        assert counts.get(status, 0) == expected_count, f"{status}: expected {expected_count}, got {counts.get(status, 0)}"
+    assert sum(expected.values()) == 287844
+
+
+# ---------------------------------------------------------------------------
+# resolve_eps_basis -- the eps_basis discriminator fix, synthetic cases.
+# ---------------------------------------------------------------------------
+
+
+def test_build_cfacshr_step_table_sets_is_change_and_prev_cfacshr():
+    """is_change is False (and prev_cfacshr null) on each permno's FIRST
+    observation -- there is no "before" to compare it to -- and True only
+    on a genuine change, with prev_cfacshr carrying the value in force
+    immediately before it."""
+    raw = pd.DataFrame({
+        "permno": [1, 1, 1, 1, 2, 2],
+        "date": pd.to_datetime([
+            "2000-01-01", "2000-01-02", "2000-01-03", "2000-01-04", "2000-01-01", "2000-01-02",
+        ]),
+        "cfacshr": [2.0, 2.0, 1.0, 1.0, 5.0, 5.0],
+    })
+
+    step = clean._build_cfacshr_step_table(raw)
+
+    p1 = step[step["permno"] == 1.0].sort_values("date").reset_index(drop=True)
+    assert pd.isna(p1.loc[0, "prev_cfacshr"])
+    assert p1.loc[0, "is_change"] == False  # noqa: E712
+    assert p1.loc[1, "prev_cfacshr"] == pytest.approx(2.0)
+    assert p1.loc[1, "is_change"] == True  # noqa: E712
+
+    p2 = step[step["permno"] == 2.0].reset_index(drop=True)
+    assert len(p2) == 1  # permno 2 never changes -- only its first-obs row survives
+    assert pd.isna(p2.loc[0, "prev_cfacshr"])
+    assert p2.loc[0, "is_change"] == False  # noqa: E712
+
+
+def test_resolve_eps_basis_decisiveness_gate_boundary():
+    """Ratio exactly 1.99 (just below EPS_BASIS_DECISIVE_MIN_RATIO=2.0)
+    must be basis_undetermined_ambiguous; 2.01 (just above) must be a
+    confirmed status -- the >= boundary in step 4.6 is inclusive on the
+    confirmed side."""
+    prestep_199 = 1.0 / 1.99
+    prestep_201 = 1.0 / 2.01
+    panel = pd.DataFrame({
+        "ibes_ticker": ["R199", "R199", "R201", "R201"],
+        "permno": ["500", "500", "501", "501"],
+        "fpedats": [pd.Timestamp("2000-01-01"), pd.Timestamp("2000-04-01"),
+                    pd.Timestamp("2000-01-01"), pd.Timestamp("2000-04-01")],
+        "anndats": [pd.Timestamp("2000-01-20"), pd.Timestamp("2000-04-20"),
+                    pd.Timestamp("2000-01-20"), pd.Timestamp("2000-04-20")],
+        "eps_actual": [0.0, 1.0, 0.0, 1.0],
+        "cfacshr_anndats": [1.0, 1.0, 1.0, 1.0],
+        "share_basis_status": ["no_change"] * 4,
+    })
+    step = _step_table([
+        (500, "1990-01-01", prestep_199), (500, "2000-04-10", 1.0),
+        (501, "1990-01-01", prestep_201), (501, "2000-04-10", 1.0),
+    ])
+
+    result, _stats = clean.resolve_eps_basis(panel, step)
+
+    # Each ticker has two rows (a prior quarter plus the in-window test
+    # quarter) sharing the same ibes_ticker value -- select the in-window
+    # (second, 2000-04-01) row explicitly rather than relying on row order.
+    r199_row = result[(result["ibes_ticker"] == "R199") & (result["fpedats"] == pd.Timestamp("2000-04-01"))].iloc[0]
+    r201_row = result[(result["ibes_ticker"] == "R201") & (result["fpedats"] == pd.Timestamp("2000-04-01"))].iloc[0]
+
+    assert r199_row["eps_basis_evidence_ratio"] == pytest.approx(1.99)
+    assert r199_row["eps_basis_status"] == "basis_undetermined_ambiguous"
+
+    assert r201_row["eps_basis_evidence_ratio"] == pytest.approx(2.01)
+    assert r201_row["eps_basis_status"] == "anndats_basis_confirmed"
+
+
+def test_resolve_eps_basis_exact_match_gives_infinite_ratio_and_confirmed_status():
+    """dmin == 0 (an exact match on one hypothesis) must give ratio == inf
+    and a confirmed status -- not a crash, and not a null ratio. This is
+    the mechanism behind the real TRH 2001-06-30 case."""
+    panel = pd.DataFrame({
+        "ibes_ticker": ["INFQ", "INFQ"],
+        "permno": ["600", "600"],
+        "fpedats": [pd.Timestamp("2000-01-01"), pd.Timestamp("2000-04-01")],
+        "anndats": [pd.Timestamp("2000-01-20"), pd.Timestamp("2000-04-20")],
+        "eps_actual": [1.0, 1.0],
+        "cfacshr_anndats": [1.0, 1.0],
+        "share_basis_status": ["no_change", "no_change"],
+    })
+    step = _step_table([(600, "1990-01-01", 2.0), (600, "2000-04-10", 1.0)])
+
+    result, _stats = clean.resolve_eps_basis(panel, step)
+    row = result.iloc[1]
+
+    assert np.isinf(row["eps_basis_evidence_ratio"])
+    assert row["eps_basis_status"] == "anndats_basis_confirmed"
+
+
+def test_resolve_eps_basis_step_at_fpedats_out_of_scope_step_at_anndats_in_scope():
+    """A step landing exactly AT fpedats is out of scope (the condition is
+    strictly > fpedats: financials prepared entirely post-step have no
+    ambiguity to resolve). A step landing exactly AT anndats IS in scope
+    (the condition is <= anndats, inclusive)."""
+    panel = pd.DataFrame({
+        "ibes_ticker": ["ATFP", "ATAN"],
+        "permno": ["700", "701"],
+        "fpedats": [pd.Timestamp("2000-04-01"), pd.Timestamp("2000-04-01")],
+        "anndats": [pd.Timestamp("2000-04-20"), pd.Timestamp("2000-04-20")],
+        "eps_actual": [1.0, 1.0],
+        "cfacshr_anndats": [1.0, 1.0],
+        "share_basis_status": ["no_change", "no_change"],
+    })
+    step = _step_table([
+        (700, "1990-01-01", 2.0), (700, "2000-04-01", 1.0),   # step exactly AT fpedats
+        (701, "1990-01-01", 2.0), (701, "2000-04-20", 1.0),   # step exactly AT anndats
+    ])
+
+    result, _stats = clean.resolve_eps_basis(panel, step)
+    by_ticker = result.set_index("ibes_ticker")
+
+    assert by_ticker.loc["ATFP", "eps_basis_status"] == "anndats_basis_assumed"
+    # In scope, but with no prior-quarter row at all to reference -- lands
+    # in basis_undetermined_no_reference rather than being silently
+    # dropped back to "assumed".
+    assert by_ticker.loc["ATAN", "eps_basis_status"] == "basis_undetermined_no_reference"
+
+
+def test_resolve_eps_basis_prior_row_itself_in_window_excludes_reference():
+    """If the immediately-preceding row is ITSELF basis-ambiguous (its own
+    step_in_report_window is True), it cannot be trusted as a reference for
+    the current row -- the current row must land in
+    basis_undetermined_no_reference even though a numeric prior eps/basis
+    value technically exists."""
+    step = _step_table([
+        (710, "1990-01-01", 2.0), (710, "2000-01-15", 5.0), (710, "2000-04-10", 1.0),
+    ])
+    panel = pd.DataFrame({
+        "ibes_ticker": ["PRVW", "PRVW"],
+        "permno": ["710", "710"],
+        "fpedats": [pd.Timestamp("2000-01-01"), pd.Timestamp("2000-04-01")],
+        "anndats": [pd.Timestamp("2000-01-20"), pd.Timestamp("2000-04-20")],
+        "eps_actual": [1.0, 1.0],
+        "cfacshr_anndats": [5.0, 1.0],
+        "share_basis_status": ["adjusted", "adjusted"],
+    })
+
+    result, _stats = clean.resolve_eps_basis(panel, step)
+
+    # Row 0 (the prior quarter) is itself in-window (a step lands in its
+    # own (fpedats, anndats]) -- confirm the fixture actually exercises
+    # what it claims to before trusting row 1's result.
+    assert result.iloc[0]["eps_basis_status"] != "anndats_basis_assumed"
+    assert result.iloc[1]["eps_basis_status"] == "basis_undetermined_no_reference"
+
+
+def test_resolve_eps_basis_prior_gap_day_count_boundaries():
+    """Gap of 44 and 136 days (just outside [45, 135]) both yield
+    basis_undetermined_no_reference; 45 and 135 (the inclusive boundary)
+    are accepted as a usable reference."""
     rows = []
-    for ticker, fped, permno in events:
-        fped_ts = pd.Timestamp(fped)
-        actu_row = actu[(actu["ticker"] == ticker) & (actu["pends"] == fped_ts)]
-        assert len(actu_row) == 1, f"expected exactly one real actu_epsus row for {ticker} {fped}"
-        anndats = actu_row.iloc[0]["anndats"]
-        eps_actual = actu_row.iloc[0]["value"]
-
-        eligible = statsumu[
-            (statsumu["ticker"] == ticker) & (statsumu["fpedats"] == fped_ts) & (statsumu["statpers"] < anndats)
-        ]
-        assert len(eligible) > 0, f"expected a point-in-time-eligible consensus for {ticker} {fped}"
-        best = eligible.loc[eligible["statpers"].idxmax()]
-
+    step_rows = []
+    for i, gap in enumerate([44, 45, 135, 136]):
+        ticker = f"GAP{gap}"
+        permno = 900 + i
+        prior_fped = pd.Timestamp("2000-01-01")
+        cur_fped = prior_fped + pd.DateOffset(days=int(gap))
+        cur_anndats = cur_fped + pd.DateOffset(days=10)
+        step_date = cur_fped + pd.DateOffset(days=5)
         rows.append({
-            "ibes_ticker": ticker, "permno": str(int(permno)), "fpedats": fped_ts, "anndats": anndats,
-            "eps_actual": eps_actual, "consensus_statpers": best["statpers"],
-            "consensus_meanest": best["meanest"], "consensus_stdev": best["stdev"],
+            "ibes_ticker": ticker, "permno": str(permno), "fpedats": prior_fped,
+            "anndats": prior_fped + pd.DateOffset(days=5), "eps_actual": 0.0,
+            "cfacshr_anndats": 100.0, "share_basis_status": "no_change",
         })
+        rows.append({
+            "ibes_ticker": ticker, "permno": str(permno), "fpedats": cur_fped,
+            "anndats": cur_anndats, "eps_actual": 1.0,
+            "cfacshr_anndats": 1.0, "share_basis_status": "no_change",
+        })
+        step_rows.append((permno, "1990-01-01", 100.0))
+        step_rows.append((permno, step_date.strftime("%Y-%m-%d"), 1.0))
 
     panel = pd.DataFrame(rows)
-    panel, _basis_stats = clean.attach_share_basis(panel, step_table)
-    cfacshr_ratio = (panel["cfacshr_statpers"] / panel["cfacshr_anndats"]).fillna(1.0)
-    panel["sue_analyst"] = clean.compute_sue_analyst(
-        panel["eps_actual"] * cfacshr_ratio, panel["consensus_meanest"], panel["consensus_stdev"]
-    )
+    step = _step_table(step_rows)
 
-    by_ticker = panel.set_index("ibes_ticker")
+    result, _stats = clean.resolve_eps_basis(panel, step)
+    by_ticker_current = result[result["eps_actual"] == 1.0].set_index("ibes_ticker")
 
-    for ticker in tickers:
-        row = by_ticker.loc[ticker]
-        # share_basis_status describes cfacshr_anndats specifically, and
-        # CRSP resets cfacshr to 1.0 immediately after a split -- so a real
-        # split can still show "no_change" here if it happens to land
-        # exactly on that reset value (this is genuinely the case for FEMP
-        # and BGH below). The precise, direct measure of "did this row's
-        # sue_analyst actually get rescaled" is R_c != 1.0, checked below
-        # for all three; share_basis_status is only checked for having
-        # resolved successfully at all (not "unavailable_*").
-        assert row["share_basis_status"] in ("no_change", "adjusted"), f"{ticker}: expected cfacshr_anndats to resolve"
-        r_c = row["cfacshr_statpers"] / row["cfacshr_anndats"]
-        assert r_c != pytest.approx(1.0), f"{ticker}: expected a real cross-basis R_c correction"
-        expected_sue = (row["eps_actual"] * r_c - row["consensus_meanest"]) / row["consensus_stdev"]
-        assert row["sue_analyst"] == pytest.approx(expected_sue)
+    assert by_ticker_current.loc["GAP44", "eps_basis_status"] == "basis_undetermined_no_reference"
+    assert by_ticker_current.loc["GAP136", "eps_basis_status"] == "basis_undetermined_no_reference"
+    assert by_ticker_current.loc["GAP45", "eps_basis_status"] != "basis_undetermined_no_reference"
+    assert by_ticker_current.loc["GAP135", "eps_basis_status"] != "basis_undetermined_no_reference"
 
-    femp = by_ticker.loc["FEMP"]
-    assert femp["cfacshr_anndats"] == pytest.approx(1.0)
-    assert femp["cfacshr_statpers"] == pytest.approx(10.0)
-    assert femp["sue_analyst"] == pytest.approx(0.875, abs=0.05)
-    assert 0 < femp["sue_analyst"] < 3  # "a small beat", nowhere near the pre-fix -105
 
-    mbi = by_ticker.loc["MBI"]
-    unadjusted_mbi = (mbi["eps_actual"] - mbi["consensus_meanest"]) / mbi["consensus_stdev"]
-    assert unadjusted_mbi == pytest.approx(-111, abs=1)  # sanity: confirms the pre-fix number really was ~-111
-    assert abs(mbi["sue_analyst"]) < abs(unadjusted_mbi) / 3  # tail shrank by at least 3x
+def test_resolve_eps_basis_unavailable_share_basis_status_fixes_sue_seasonal_fail_closed():
+    """Regression test for the sue_seasonal fail-closed bug: before this
+    fix, a row whose share_basis_status started with "unavailable_" left
+    cfacshr_anndats (and so eps_actual_adj) null, which would silently
+    propagate forward and null out eps_diff_yoy/sue_seasonal for every
+    LATER quarter that looked this one up as its own year-ago reference --
+    failing CLOSED rather than computing a seasonal surprise sue_analyst
+    also couldn't provide. The fix gives an unresolvable basis
+    cfacshr_eps_basis=1.0 (no rescaling, but a DEFINED divisor), so
+    eps_actual_adj -- and everything built on top of it -- stays
+    computable.
+    """
+    eps_values = [1.00, 1.05, 0.98, 1.10, 1.20, 1.12, 1.30, 1.25, 1.40, 1.35, 1.50, 1.45]
+    quarters = pd.date_range("2000-03-31", periods=len(eps_values), freq="QE")
+    panel = pd.DataFrame({
+        "ibes_ticker": ["FCLS"] * len(eps_values),
+        "permno": ["800"] * len(eps_values),
+        "fpedats": quarters,
+        "anndats": quarters + datetime.timedelta(days=15),
+        "eps_actual": eps_values,
+        "cfacshr_anndats": [np.nan] + [1.0] * (len(eps_values) - 1),
+        "share_basis_status": ["unavailable_no_crsp_coverage"] + ["no_change"] * (len(eps_values) - 1),
+    })
+    step_table = _empty_step_table()  # no CRSP coverage at all for this permno
 
-    bgh = by_ticker.loc["BGH"]
-    unadjusted_bgh = (bgh["eps_actual"] - bgh["consensus_meanest"]) / bgh["consensus_stdev"]
-    assert unadjusted_bgh == pytest.approx(144, abs=1)  # sanity: confirms the pre-fix number really was ~144
-    assert abs(bgh["sue_analyst"]) < abs(unadjusted_bgh) / 3
+    result, _stats = clean.resolve_eps_basis(panel, step_table)
+
+    first = result.iloc[0]
+    assert first["eps_basis_status"] == "basis_unverified_no_crsp"
+    assert first["cfacshr_eps_basis"] == pytest.approx(1.0)
+    assert pd.notna(first["eps_actual_adj"])
+    assert first["eps_actual_adj"] == pytest.approx(first["eps_actual"])
+
+    seasonal = clean.compute_sue_seasonal(
+        result, ticker_col="ibes_ticker", eps_col="eps_actual_adj", min_history=4
+    ).sort_values("fpedats").reset_index(drop=True)
+
+    # Index 4 is exactly one year after index 0 (the unavailable_ row) --
+    # its eps_diff_yoy depends directly on index 0's eps_actual_adj being
+    # non-null. Under the old fail-closed bug this would be null.
+    assert pd.notna(seasonal.loc[4, "eps_year_ago"])
+    assert pd.notna(seasonal.loc[4, "eps_diff_yoy"])
+    # By index 8 there is enough prior history for sue_seasonal itself
+    # (matches the shape of the existing min-history-gate test).
+    assert seasonal.loc[8:, "sue_seasonal"].notna().all()
+
+
+def test_compute_sue_seasonal_raises_clear_error_on_repeated_call():
+    """Merge-suffix guard (small fix #1): calling compute_sue_seasonal a
+    second time on a frame that already carries one of its own output
+    columns must raise a clear ValueError naming the column, not silently
+    produce merge-suffixed columns and fail downstream with a confusing
+    bare KeyError."""
+    panel = _panel([("AAA", "2000-03-31", 1.00), ("AAA", "2000-06-30", 1.10)])
+    panel["sue_seasonal"] = [np.nan, np.nan]
+
+    with pytest.raises(ValueError, match="sue_seasonal"):
+        clean.compute_sue_seasonal(panel)
 
 
 # ---------------------------------------------------------------------------
