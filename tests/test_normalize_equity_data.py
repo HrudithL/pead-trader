@@ -1384,6 +1384,40 @@ def test_cross_validate_master_stock_ticker_spanning_two_permnos_quarantines_onl
     assert set(merged["permno"]) == {100, 200}
 
 
+def test_cross_validate_master_stock_is_retained_segment_flags_only_quarantined_rows():
+    # Additive column check (Fix 8): reuses the exact fixture from
+    # test_cross_validate_master_stock_ticker_spanning_two_permnos_
+    # quarantines_only_bad_segment above, which already has one quarantined
+    # segment (permno 100, misaligned) and one retained segment (permno
+    # 200) under the same ticker -- is_retained_segment must be False for
+    # exactly the quarantined segment's rows and True everywhere else.
+    dates_a = pd.to_datetime(["2012-01-03", "2012-01-04", "2012-01-05", "2012-01-06"])
+    dates_b = pd.to_datetime(["2012-06-04", "2012-06-05", "2012-06-06", "2012-06-07", "2012-06-08"])
+    crsp_a_prices = [10.0, 10.5, 9.8, 10.2]
+    master_a_prices = [50.0, 30.0, 80.0, 20.0]
+    crsp_b_prices = [20.0, 20.5, 19.8, 20.2, 20.1]
+    master_b_prices = list(crsp_b_prices)
+
+    crsp = pd.DataFrame({
+        "permno": [100] * 4 + [200] * 5,
+        "ticker": "SPAN",
+        "date": list(dates_a) + list(dates_b),
+        "prc": crsp_a_prices + crsp_b_prices,
+    })
+    crsp["retx"] = crsp.groupby("permno")["prc"].pct_change().fillna(0.0)
+    crsp["ret"] = crsp["retx"]
+    master = pd.DataFrame({
+        "ticker": "SPAN",
+        "date": list(dates_a) + list(dates_b),
+        "price": master_a_prices + master_b_prices,
+    })
+    stats, merged = neq.cross_validate_master_stock(crsp, master, dates_a.min(), dates_b.max())
+
+    assert stats["segments_quarantined_misaligned"] == 1  # sanity: permno 100 is the quarantined segment
+    assert not merged.loc[merged["permno"] == 100, "is_retained_segment"].any()
+    assert merged.loc[merged["permno"] == 200, "is_retained_segment"].all()
+
+
 def test_cross_validate_master_stock_excludes_permno_handoff_row_from_return_comparison():
     # The single day a ticker hands off from one permno to another is
     # excluded from the return-agreement stats regardless of either
