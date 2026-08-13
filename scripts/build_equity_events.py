@@ -17,24 +17,41 @@ Key decisions (numbers behind each are in FINDINGS.md):
    multi-candidate permno is resolved by checking which candidate(s) have
    normalized_equity coverage bracketing anndats: exactly one bracketing
    candidate resolves it; zero or 2+ is left unresolved (tagged, not
-   guessed).
+   guessed). Coverage bracketing proves a candidate traded then, not that it
+   is exclusively this ticker's -- flag_contested_permnos() separately tags
+   rows where the same resolved permno is also claimed by a different
+   ticker for an overlapping anndats range (almost always an upstream
+   IBES<->CRSP link ambiguity, not something arbitrable here).
 2. Day 0. The next trading day at/after anndats, in the RESOLVED PERMNO's OWN
    trading-day sequence (not a market-wide calendar), shifted one further
-   trading day for after-market announcements (anntims >= 16:00:00) -- see
-   find_day0_index(). anntims's 00:00:00 sentinel (time unknown, ~16% of
-   rows) sorts below 16:00:00 and is therefore treated as not-after-market,
-   the plain default -- deliberate, not an oversight (see FINDINGS.md).
+   trading day for after-market announcements -- see find_day0_index(). The
+   shift only applies when the roll-forward landed exactly on anndats (i.e.
+   anndats itself was a real session); if anndats wasn't a trading day, the
+   rolled-forward session hasn't happened yet and needs no further shift.
+   anntims's 00:00:00 "time unknown" sentinel (~13% of in-window rows) is
+   treated as after-market: empirically, most sentinel rows' reaction shows
+   up at day0+1 rather than day0, i.e. they are genuinely after-market more
+   often than not, not merely "safer to assume so" -- see FINDINGS.md. The
+   `anntims_unknown` column keeps this recoverable/filterable.
 3. Forward returns. Cumulative return over the h trading days strictly AFTER
    day 0 (day 0's own reaction-day return is excluded from every horizon),
    raw and market-adjusted. Market-adjusted = cumulative stock return minus
    cumulative CRSP dsi.sprtrn return over the exact same h dates (both sides
    read off the same per-permno rows, so "matched by date" holds even
    through a gap in that security's own trading history) -- see
-   forward_window_return().
+   forward_window_return(). Daily-frequency data can't fully separate an
+   intraday/pre-open announcement's own reaction from its first drift day;
+   see FINDINGS.md's Returns methodology section for the honest caveat.
 4. Delisting. normalized_equity does not merge dsedelist (unchanged, out of
    scope); a security's panel simply ends at its last trade, so any horizon
    needing a row past that point is null via the same end-of-panel bounds
    check used for the archive's own right edge -- no separate code path.
+   `n_fwd_sessions` records how many sessions actually remained after day0,
+   so a null return is distinguishable as "ran out of panel" vs. "hit a
+   missing return inside an otherwise-long-enough window." In practice this
+   attrition is ~entirely delisting, not the archive's 2014-06-30 edge (the
+   buffer past 2013 is long enough), and it is not random -- see
+   FINDINGS.md's disclosed correlation with SUE and short-horizon returns.
 5. Event window. Output is filtered to anndats in [1996-01-01, 2013-12-31]
    -- the project's core study window. The 1995 lookback and 2014-H1 forward
    buffer in ibes_clean exist only to support seasonal-SUE history and
@@ -78,10 +95,19 @@ HORIZONS = (1, 5, 10, 20, 40, 60)
 MARKET_RET_COL = "sprtrn"
 
 # US market close, ET. anntims >= this is treated as after-market (see
-# Decision 2). The IBES "time unknown" sentinel is 00:00:00, which sorts
-# below this threshold and is therefore NOT treated as after-market -- the
-# plain "day 0 = next trading day at/after anndats" default applies to it.
+# Decision 2).
 AFTER_MARKET_THRESHOLD = dt.time(16, 0, 0)
+
+# IBES's "announcement time unknown" sentinel. Defaulted to after-market
+# (Decision 2, revised after review): locating each sentinel row's actual
+# reaction day empirically (via the SUE-spread jump in market-adjusted
+# returns at day0 vs day0+1) shows the jump sits mostly at day0+1, not
+# day0 -- i.e. most sentinel rows are genuinely after-market, not merely
+# "safer to assume so." A wrong after-market guess only loses one legitimate
+# drift day; a wrong before-market guess (the old default) folds a same-
+# session reaction jump into what gets reported as "+1 day of drift,"
+# contaminating the exact quantity a PEAD study measures. See FINDINGS.md.
+ANNTIMS_UNKNOWN = dt.time(0, 0, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +119,11 @@ def load_earnings(path=EARNINGS_PATH) -> pd.DataFrame:
     """Reads ibes_clean's event-identity + surprise columns and filters to
     the core study window (Decision 5). Returns a fresh 0..n-1 index."""
     df = pd.read_parquet(path, columns=EARNINGS_USECOLS)
+    # ibes_clean parses anndats with errors="raise", so a null here would
+    # mean that guarantee broke upstream -- a tripwire, not a real code
+    # path: `.between()` silently treats NaT as "not in window" and would
+    # otherwise drop such a row before it ever reaches "tag, don't filter."
+    assert df["anndats"].notna().all(), "load_earnings: found a null anndats -- upstream guarantee broke"
     in_window = df["anndats"].between(EVENT_WINDOW_START, EVENT_WINDOW_END)
     return df.loc[in_window].reset_index(drop=True)
 
@@ -166,6 +197,35 @@ def resolve_permno(permno_raw: str, anndats: pd.Timestamp, coverage: dict) -> tu
     return None, True, "unresolved_multiple_bracketing_coverage"
 
 
+def flag_contested_permnos(df: pd.DataFrame) -> pd.Series:
+    """True where the resolved `permno` is also claimed by a DIFFERENT
+    ibes_ticker with an overlapping anndats range -- e.g. two tickers that
+    both carry the same ambiguous permno_raw candidate list and both
+    resolve to the same candidate for the same period. Coverage bracketing
+    (resolve_permno) only proves a candidate traded then, not that it
+    belongs to this ticker and no other -- almost always an upstream IBES
+    ticker<->permno link issue (most such rows were never permno_ambiguous
+    at all), not something resolvable from this table alone. Does not
+    change permno/day0/returns -- a trust flag only, per tag-don't-filter.
+    """
+    resolved = df.loc[df["permno"].notna(), ["permno", "ibes_ticker", "anndats"]]
+    spans = resolved.groupby(["permno", "ibes_ticker"])["anndats"].agg(lo="min", hi="max").reset_index()
+
+    contested = set()
+    for permno, group in spans.groupby("permno"):
+        if group["ibes_ticker"].nunique() < 2:
+            continue
+        running_max = None
+        for _, row in group.sort_values("lo").iterrows():
+            if running_max is not None and row["lo"] <= running_max:
+                contested.add(int(permno))
+            running_max = row["hi"] if running_max is None else max(running_max, row["hi"])
+
+    if not contested:
+        return pd.Series(False, index=df.index)
+    return df["permno"].isin(contested)
+
+
 # ---------------------------------------------------------------------------
 # Per-permno return series + day-0/window math.
 # ---------------------------------------------------------------------------
@@ -212,11 +272,22 @@ def find_day0_index(dates: np.ndarray, anndats: pd.Timestamp, is_after_market: b
     later), not an ordinary non-trading-day gap, so it is guarded
     explicitly rather than left to fall out of searchsorted's default
     behavior.
+
+    The after-market shift only applies when the roll-forward landed
+    EXACTLY on anndats -- i.e. anndats itself was a real trading day whose
+    own close could plausibly have already passed. If anndats was not a
+    trading day (weekend/holiday/market closure), searchsorted already
+    rolled forward to the first tradeable session, which has not happened
+    yet as of anndats and can fully absorb the news -- shifting past it too
+    would skip a real trading day for no reason (verified: e.g.
+    anndats=2001-09-11 23:00 -- markets were closed through 2001-09-14, so
+    the correct day 0 is 2001-09-17, the first session back, not one past
+    it).
     """
     if len(dates) == 0 or anndats < dates[0]:
         return None, "anndats_before_permno_coverage_start"
     idx = int(np.searchsorted(dates, np.datetime64(anndats), side="left"))
-    if is_after_market:
+    if is_after_market and idx < len(dates) and dates[idx] == np.datetime64(anndats):
         idx += 1
     if idx >= len(dates):
         return None, "no_trading_day_at_or_after_anndats"
@@ -236,6 +307,13 @@ def forward_window_return(prefix: tuple[np.ndarray, np.ndarray], n_rows: int, id
     start = idx0 + 1
     if nan_count[end] - nan_count[start] > 0:
         return np.nan
+    if P[start] == 0.0:
+        # A -100% return already zeroed the running product -- no position
+        # survives that to compound forward, so this window has no
+        # meaningful percentage return (0/0), not a real number. Dormant
+        # today (no ret == -1.0 in normalized_equity) but guards against a
+        # future dsedelist-derived delisting return doing so.
+        return np.nan
     return P[end] / P[start] - 1.0
 
 
@@ -254,7 +332,10 @@ def build_event_table(earnings: pd.DataFrame, equity_with_mkt: pd.DataFrame) -> 
     series_by_permno = build_permno_series(equity_with_mkt)
 
     df = earnings.reset_index(drop=True).copy()
-    is_after_market = df["anntims"].map(lambda t: t >= AFTER_MARKET_THRESHOLD)
+    anntims_unknown = df["anntims"] == ANNTIMS_UNKNOWN
+    is_after_market = anntims_unknown | df["anntims"].map(lambda t: t >= AFTER_MARKET_THRESHOLD)
+    df["anntims_unknown"] = anntims_unknown
+    stats["n_anntims_unknown"] = int(anntims_unknown.sum())
 
     resolved = [resolve_permno(row.permno, row.anndats, coverage) for row in df.itertuples()]
     df["permno_resolved"] = pd.array([r[0] for r in resolved], dtype="Int64")
@@ -264,6 +345,7 @@ def build_event_table(earnings: pd.DataFrame, equity_with_mkt: pd.DataFrame) -> 
 
     day0_dates = pd.array([pd.NaT] * len(df), dtype="datetime64[ns]")
     day0_status = np.full(len(df), None, dtype=object)
+    n_fwd_sessions = np.full(len(df), np.nan)  # sessions available after day0 in that permno's own series
     horizon_cols = {f"ret_fwd_{h}d": np.full(len(df), np.nan) for h in HORIZONS}
     horizon_cols.update({f"ret_fwd_{h}d_mktadj": np.full(len(df), np.nan) for h in HORIZONS})
 
@@ -280,6 +362,7 @@ def build_event_table(earnings: pd.DataFrame, equity_with_mkt: pd.DataFrame) -> 
             continue
         day0_dates[i] = series["dates"][idx0]
         n_rows = len(series["dates"])
+        n_fwd_sessions[i] = n_rows - idx0 - 1
         for h in HORIZONS:
             horizon_cols[f"ret_fwd_{h}d"][i] = forward_window_return(series["stock"], n_rows, idx0, h)
             horizon_cols[f"ret_fwd_{h}d_mktadj"][i] = (
@@ -288,20 +371,50 @@ def build_event_table(earnings: pd.DataFrame, equity_with_mkt: pd.DataFrame) -> 
 
     df["day0_date"] = day0_dates
     df["day0_status"] = day0_status
+    df["n_fwd_sessions"] = pd.array(n_fwd_sessions, dtype="Int64")
     for col, values in horizon_cols.items():
         df[col] = values
 
     stats["day0_status_counts"] = pd.Series(day0_status).value_counts(dropna=False).to_dict()
     stats["n_with_day0"] = int(df["day0_date"].notna().sum())
     for h in HORIZONS:
-        stats[f"n_ret_fwd_{h}d_computed"] = int(df[f"ret_fwd_{h}d"].notna().sum())
+        computed = df[f"ret_fwd_{h}d"].notna()
+        stats[f"n_ret_fwd_{h}d_computed"] = int(computed.sum())
+        # Of the rows with a day0 but no return at this horizon, how many
+        # simply didn't have enough sessions left (truncated -- panel end
+        # or delisting) vs. had enough sessions but a NaN inside the window
+        # (Decision 3's never-silently-fill-missing-returns rule)? See
+        # render_findings -- this replaces a prior claim that blamed the
+        # 2013 events span into 2014-06-30, which the data does not support.
+        missing_with_day0 = df["day0_date"].notna() & ~computed
+        truncated = missing_with_day0 & (df["n_fwd_sessions"] < h)
+        stats[f"n_ret_fwd_{h}d_truncated"] = int(truncated.sum())
+        stats[f"n_ret_fwd_{h}d_nulled_by_missing_ret"] = int((missing_with_day0 & ~truncated).sum())
 
     df = df.rename(columns={"permno_resolved": "permno", "permno": "permno_raw"})
+    df["permno_contested"] = flag_contested_permnos(df)
+    stats["n_permno_contested"] = int(df["permno_contested"].sum())
+
+    has_day0 = df["day0_date"].notna()
+    dup_size = df.loc[has_day0].groupby(["permno", "day0_date"])["permno"].transform("size")
+    df["n_events_same_permno_day0"] = pd.array([pd.NA] * len(df), dtype="Int64")
+    df.loc[has_day0, "n_events_same_permno_day0"] = dup_size.astype("Int64")
+    stats["n_duplicate_permno_day0"] = int((dup_size > 1).sum())
+
+    # Attrition-vs-outcome check for the FINDINGS disclosure (Decision 4):
+    # a simple two-group mean comparison, not a quantile sort -- the actual
+    # quantile/IC apparatus is the next slice's job, not this table's.
+    attrited = df["day0_date"].notna() & (df["n_fwd_sessions"] < max(HORIZONS)) & df["ret_fwd_1d"].notna()
+    retained = df["day0_date"].notna() & (df["n_fwd_sessions"] >= max(HORIZONS)) & df["ret_fwd_1d"].notna()
+    stats["n_attrited_before_max_horizon"] = int(attrited.sum())
+    stats["mean_ret_fwd_1d_attrited"] = float(df.loc[attrited, "ret_fwd_1d"].mean()) if attrited.any() else None
+    stats["mean_ret_fwd_1d_retained"] = float(df.loc[retained, "ret_fwd_1d"].mean()) if retained.any() else None
+
     out_cols = [
-        "ibes_ticker", "permno", "permno_raw", "permno_ambiguous", "permno_resolution", "gvkey",
-        "fpedats", "anndats", "anntims",
+        "ibes_ticker", "permno", "permno_raw", "permno_ambiguous", "permno_resolution", "permno_contested", "gvkey",
+        "fpedats", "anndats", "anntims", "anntims_unknown",
         "sue_analyst", "sue_seasonal", "sue_primary", "sue_source",
-        "day0_date", "day0_status",
+        "day0_date", "day0_status", "n_fwd_sessions", "n_events_same_permno_day0",
     ] + list(horizon_cols.keys())
     return df[out_cols], stats
 
@@ -336,17 +449,26 @@ def render_findings(events: pd.DataFrame, stats: dict) -> str:
     lines.append("| --- | --- |")
     for status, count in sorted(res_counts.items(), key=lambda kv: -kv[1]):
         lines.append(f"| {status} | {count:,} |")
+    n_contested = stats["n_permno_contested"]
     lines.append(
         "\n`unresolved_no_bracketing_coverage` / `unresolved_multiple_bracketing_coverage` rows keep their "
         "surprise measure but get no permno, day 0, or return -- there is no honest way to pick a price "
-        "series for them.\n"
+        f"series for them. Separately, {n_contested:,} rows' resolved permno is also claimed by a "
+        "*different* ibes_ticker for an overlapping announcement period (`permno_contested=True`) -- "
+        "almost always an upstream IBES-to-CRSP link ambiguity this table can surface but not arbitrate; "
+        "these rows keep their (possibly wrong) permno and return rather than being nulled.\n"
     )
+    n_unknown = stats["n_anntims_unknown"]
     lines.append("## Day-0 alignment\n")
     lines.append(
         "Day 0 is the next trading day at/after `anndats` in the resolved permno's own trading history "
-        "(not a market-wide calendar), shifted one further trading day for after-market announcements "
-        "(`anntims >= 16:00:00`). The `anntims` \"unknown\" sentinel (00:00:00) sorts below that threshold "
-        "and is treated as not-after-market, the plain default -- ~16% of rows carry it.\n"
+        "(not a market-wide calendar). The after-market shift (one further trading day) only applies when "
+        "`anndats` itself was a real session -- if it wasn't (weekend/holiday/market closure), the session "
+        "the roll-forward already lands on hasn't happened yet and needs no further shift. `anntims`'s "
+        f"00:00:00 \"time unknown\" sentinel ({n_unknown:,} rows, {n_unknown / n:.1%}) is treated as "
+        "after-market: checking where the SUE-related return jump actually lands (day 0 vs. day0+1) shows "
+        "most sentinel rows react at day0+1, i.e. they are genuinely after-market more often than not. "
+        "`anntims_unknown` keeps this subset filterable for a robustness check.\n"
     )
     lines.append("| day0_status | rows |")
     lines.append("| --- | --- |")
@@ -354,20 +476,43 @@ def render_findings(events: pd.DataFrame, stats: dict) -> str:
         label = "(permno unresolved -- see identifier resolution above)" if pd.isna(status) else status
         lines.append(f"| {label} | {count:,} |")
     lines.append("\n## Forward-return coverage by horizon\n")
-    lines.append("| horizon | rows with a return |")
-    lines.append("| --- | --- |")
+    lines.append("| horizon | rows with a return | truncated (ran out of panel) | nulled (missing return in window) |")
+    lines.append("| --- | --- | --- | --- |")
     for h in HORIZONS:
         c = stats[f"n_ret_fwd_{h}d_computed"]
-        lines.append(f"| +{h}d | {c:,} ({c / n:.1%}) |")
+        t = stats[f"n_ret_fwd_{h}d_truncated"]
+        m = stats[f"n_ret_fwd_{h}d_nulled_by_missing_ret"]
+        lines.append(f"| +{h}d | {c:,} ({c / n:.1%}) | {t:,} | {m:,} |")
+    n_attrited = stats["n_attrited_before_max_horizon"]
+    mean_attrited = stats["mean_ret_fwd_1d_attrited"]
+    mean_retained = stats["mean_ret_fwd_1d_retained"]
+    attrition_sentence = ""
+    if mean_attrited is not None and mean_retained is not None:
+        attrition_sentence = (
+            f" This attrition is not random: the {n_attrited:,} events whose panel ends before the "
+            f"longest ({max(HORIZONS)}-day) horizon average a {mean_attrited:.2%} +1d return, vs. "
+            f"{mean_retained:.2%} for events with a full panel -- consistent with delisting attrition "
+            f"skewing toward bad-news names, since names that go on to delist announce worse surprises on "
+            f"average. Long-horizon statistics computed on this table implicitly condition on survival to "
+            f"that horizon."
+        )
     lines.append(
-        "\nCoverage shrinks with horizon length because longer horizons run past the end of the equity "
-        "panel (2014-06-30) for events late in 2013, and because a security that delists mid-horizon has "
-        "no rows past its last trade -- both are the same end-of-panel bounds check, surfaced as a null "
-        "return rather than a truncated or silently wrong one. Delisting returns themselves "
-        "(CRSP `dsedelist`) are not merged into `normalized_equity` and remain out of scope for this "
-        "phase, per the project plan; a stock that goes private or is delisted mid-horizon simply stops "
-        "contributing return data from that point, rather than having its final realized (possibly large) "
-        "delisting return captured.\n"
+        "\nCoverage shrinks with horizon length almost entirely because a security's own panel ends "
+        "before that horizon's target date (predominantly delisting, not the archive's 2014-06-30 edge -- "
+        "the buffer past the 2013 window is long enough that this is not a meaningful contributor); a "
+        "smaller share is a missing daily return somewhere inside an otherwise-long-enough window "
+        "(Decision 3: never silently treated as 0%). Delisting returns themselves (CRSP `dsedelist`) are "
+        "not merged into `normalized_equity` and remain out of scope for this phase, per the project "
+        "plan -- a stock that goes private or is delisted mid-horizon simply stops contributing return "
+        "data from that point, rather than having its final realized (possibly large) delisting return "
+        f"captured.{attrition_sentence}\n"
+    )
+    n_dup = stats["n_duplicate_permno_day0"]
+    lines.append(
+        f"{n_dup:,} rows share a `(permno, day0_date)` pair with at least one other row (e.g. a "
+        "delinquent filer announcing several fiscal quarters on the same date) -- `n_events_same_permno_"
+        "day0` counts the group size so a later statistical pass can weight or dedupe rather than "
+        "silently double- or triple-counting one firm-day.\n"
     )
     lines.append("## Returns methodology\n")
     lines.append(
@@ -376,6 +521,14 @@ def render_findings(events: pd.DataFrame, stats: dict) -> str:
         "compounded return over that window minus CRSP `dsi.sprtrn`'s compounded return over the exact "
         "same dates. Any missing daily return inside a window nulls that horizon rather than being "
         "silently treated as 0%.\n"
+    )
+    lines.append(
+        "**Known limitation.** Daily-frequency data cannot fully separate an announcement's own reaction "
+        "from its first day of drift when the announcement lands before or during market hours: some of "
+        "the reaction can still show up on day0+1, which is inside every `ret_fwd_*d` window. This is most "
+        "acute for the shortest horizon (+1d). Announcements confidently after-market "
+        "(`anntims_unknown=False` and `anntims >= 16:00:00`) are the cleanest subset for a short-horizon "
+        "robustness check.\n"
     )
     return "\n".join(lines)
 

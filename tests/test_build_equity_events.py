@@ -5,6 +5,7 @@ events to normalized_equity, day-0 alignment, and forward-return computation
 
 import datetime as dt
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -114,11 +115,16 @@ def test_find_day0_index_after_market_shifts_one_further_trading_day():
     assert (idx, status) == (2, "ok")  # 2020-01-06, not 2020-01-03
 
 
-def test_find_day0_index_after_market_on_non_trading_day_also_shifts():
-    # Baseline (not-after-market) roll for 01-04 lands on 01-06 (idx 2);
-    # after-market shifts one further, to 01-07 (idx 3).
+def test_find_day0_index_after_market_on_non_trading_day_does_not_double_shift():
+    # 2020-01-04 is a Saturday -- it has no session of its own to have
+    # already closed, so the after-market shift must not apply on top of
+    # the roll-forward: day 0 is 2020-01-06 (idx 2), the same as the
+    # not-after-market case, not one session further. Regression test for a
+    # real bug: the original implementation shifted unconditionally,
+    # produce day 0 one session late whenever anndats fell on a
+    # weekend/holiday/market closure (e.g. the 2001-09-11 closures).
     idx, status = bee.find_day0_index(_BUSINESS_DATES, pd.Timestamp("2020-01-04"), is_after_market=True)
-    assert (idx, status) == (3, "ok")
+    assert (idx, status) == (2, "ok")
 
 
 def test_find_day0_index_before_coverage_start_is_not_silently_matched_to_first_row():
@@ -180,6 +186,22 @@ def test_forward_window_return_null_at_end_of_panel():
     assert not np.isnan(bee.forward_window_return(prefix, n, idx0=2, horizon=1))
     # horizon 2 needs index 4 (doesn't exist) -> null, not truncated.
     assert np.isnan(bee.forward_window_return(prefix, n, idx0=2, horizon=2))
+
+
+def test_forward_window_return_null_not_zero_division_warning_after_total_wipeout():
+    # ret[1] = -1.0 (a -100% day) zeroes the running product from that
+    # point on; any window entirely after it is a 0/0 ratio, not a real
+    # percentage return. Dormant in today's data (no ret == -1.0 in
+    # normalized_equity) but guards against a future delisting-return merge
+    # introducing one. Uses pytest's default warning behavior -- a
+    # RuntimeWarning here would fail this test under this project's
+    # warnings-as-errors convention elsewhere.
+    ret = np.array([0.01, -1.0, 0.02, 0.03, 0.05])
+    prefix = bee._prefix_arrays(ret)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = bee.forward_window_return(prefix, len(ret), idx0=1, horizon=2)
+    assert np.isnan(result)
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +329,94 @@ def test_build_event_table_anndats_before_coverage_start():
     assert pd.isna(row["day0_date"])
 
 
+def test_build_event_table_anntims_unknown_sentinel_defaults_to_after_market():
+    # Same exact-trading-day anndats, one with a known before-market time
+    # (day0 = anndats itself) and one with the 00:00:00 "unknown" sentinel
+    # (day0 rolls one further session -- treated as after-market, per the
+    # empirical review finding that most sentinel-time rows react at
+    # day0+1, not day0).
+    earnings = _synthetic_earnings([
+        {"ibes_ticker": "AAA", "permno": "100", "anndats": pd.Timestamp("2005-01-03"), "anntims": dt.time(9, 0, 0)},
+        {"ibes_ticker": "BBB", "permno": "100", "anndats": pd.Timestamp("2005-01-03"), "anntims": dt.time(0, 0, 0),
+         "fpedats": pd.Timestamp("2005-04-01")},
+    ])
+    equity = _daily_series(100, "2005-01-03", 10, ret=0.01, mkt_ret=0.0)
+
+    events, _ = bee.build_event_table(earnings, equity)
+    known = events[events["ibes_ticker"] == "AAA"].iloc[0]
+    unknown = events[events["ibes_ticker"] == "BBB"].iloc[0]
+
+    assert not bool(known["anntims_unknown"])
+    assert bool(unknown["anntims_unknown"])
+    assert known["day0_date"] == pd.Timestamp("2005-01-03")
+    assert unknown["day0_date"] == pd.Timestamp("2005-01-04")  # rolled forward, treated as after-market
+
+
+def test_build_event_table_n_fwd_sessions_tracks_remaining_panel():
+    earnings = _synthetic_earnings([
+        {"ibes_ticker": "BBB", "permno": "200", "anndats": pd.Timestamp("2005-01-03")},
+    ])
+    equity = _daily_series(200, "2005-01-03", 25, ret=0.01, mkt_ret=0.0)
+
+    events, _ = bee.build_event_table(earnings, equity)
+    row = events.iloc[0]
+    assert row["n_fwd_sessions"] == 24  # 25 rows, day0 at index 0 -> 24 remain after it
+
+
+def test_build_event_table_n_events_same_permno_day0_flags_duplicates():
+    # FFF and GGG both announce on the same day0 for the same permno (a
+    # delinquent filer catching up several fiscal quarters at once); HHH is
+    # an unrelated single event on a different day0.
+    earnings = _synthetic_earnings([
+        {"ibes_ticker": "FFF", "permno": "100", "anndats": pd.Timestamp("2005-01-03"), "fpedats": pd.Timestamp("2004-09-30")},
+        {"ibes_ticker": "GGG", "permno": "100", "anndats": pd.Timestamp("2005-01-03"), "fpedats": pd.Timestamp("2004-12-31")},
+        {"ibes_ticker": "HHH", "permno": "100", "anndats": pd.Timestamp("2005-01-05")},
+    ])
+    equity = _daily_series(100, "2005-01-03", 10, ret=0.01, mkt_ret=0.0)
+
+    events, stats = bee.build_event_table(earnings, equity)
+    by_ticker = events.set_index("ibes_ticker")
+    assert by_ticker.loc["FFF", "n_events_same_permno_day0"] == 2
+    assert by_ticker.loc["GGG", "n_events_same_permno_day0"] == 2
+    assert by_ticker.loc["HHH", "n_events_same_permno_day0"] == 1
+    assert stats["n_duplicate_permno_day0"] == 2  # counts rows in a >1 group, not groups
+
+
+def test_build_event_table_permno_contested_flags_overlapping_tickers_sharing_a_permno():
+    # III and JJJ both resolve to permno 100 for the SAME announcement date
+    # -- a real IBES<->CRSP link ambiguity this table can surface but not
+    # arbitrate. KKK resolves to a different permno entirely and must not
+    # be flagged.
+    earnings = _synthetic_earnings([
+        {"ibes_ticker": "III", "permno": "100", "anndats": pd.Timestamp("2005-01-03")},
+        {"ibes_ticker": "JJJ", "permno": "100", "anndats": pd.Timestamp("2005-01-03"), "fpedats": pd.Timestamp("2005-06-30")},
+        {"ibes_ticker": "KKK", "permno": "200", "anndats": pd.Timestamp("2005-01-03")},
+    ])
+    equity = pd.concat([
+        _daily_series(100, "2005-01-03", 10, ret=0.01, mkt_ret=0.0),
+        _daily_series(200, "2005-01-03", 10, ret=0.01, mkt_ret=0.0),
+    ], ignore_index=True)
+
+    events, stats = bee.build_event_table(earnings, equity)
+    by_ticker = events.set_index("ibes_ticker")
+    assert bool(by_ticker.loc["III", "permno_contested"]) is True
+    assert bool(by_ticker.loc["JJJ", "permno_contested"]) is True
+    assert bool(by_ticker.loc["KKK", "permno_contested"]) is False
+    assert stats["n_permno_contested"] == 2
+
+
+def test_flag_contested_permnos_does_not_flag_sequential_non_overlapping_tickers():
+    # A ticker rename (LLL 1996-2000, then MMM 2001+ on the same permno) is
+    # a normal, non-erroneous pattern and must NOT be flagged as contested.
+    df = pd.DataFrame({
+        "permno": pd.array([100, 100], dtype="Int64"),
+        "ibes_ticker": ["LLL", "MMM"],
+        "anndats": pd.to_datetime(["1997-01-15", "2005-01-15"]),
+    })
+    flagged = bee.flag_contested_permnos(df)
+    assert not flagged.any()
+
+
 # ---------------------------------------------------------------------------
 # load_earnings -- core-window filter.
 # ---------------------------------------------------------------------------
@@ -330,6 +440,24 @@ def test_load_earnings_filters_to_core_window(tmp_path):
 
     out = bee.load_earnings(path)
     assert out["ibes_ticker"].tolist() == ["B"]  # only the 2005 row is in [1996, 2013]
+
+
+def test_load_earnings_asserts_on_null_anndats(tmp_path):
+    # ibes_clean parses anndats with errors="raise", so this should never
+    # happen in practice -- a tripwire against .between() silently treating
+    # a NaT as "outside the window" and dropping the row (violating "tag,
+    # don't filter") rather than failing loudly.
+    df = pd.DataFrame({
+        "ibes_ticker": ["A"], "permno": ["1"], "gvkey": ["000001"],
+        "fpedats": pd.to_datetime(["2005-09-30"]), "anndats": pd.to_datetime([pd.NaT]),
+        "anntims": [dt.time(9, 0, 0)], "sue_analyst": [1.0], "sue_seasonal": [np.nan],
+        "sue_primary": [1.0], "sue_source": ["analyst"],
+    })
+    path = tmp_path / "ibes_clean.parquet"
+    df.to_parquet(path, index=False)
+
+    with pytest.raises(AssertionError):
+        bee.load_earnings(path)
 
 
 # ---------------------------------------------------------------------------
