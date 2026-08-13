@@ -41,6 +41,24 @@ def _panel(rows) -> pd.DataFrame:
     )
 
 
+def _step_table(rows) -> pd.DataFrame:
+    """rows: iterable of (permno, date_str, cfacshr). Builds an already-
+    compressed step table directly (bypassing _build_cfacshr_step_table)
+    for tests that just need a specific set of (permno, date, cfacshr)
+    anchors to resolve against."""
+    return pd.DataFrame(
+        [{"permno": float(p), "date": pd.Timestamp(d), "cfacshr": c} for p, d, c in rows]
+    ).sort_values("date").reset_index(drop=True)
+
+
+def _empty_step_table() -> pd.DataFrame:
+    return pd.DataFrame({
+        "permno": pd.Series(dtype="float64"),
+        "date": pd.Series(dtype="datetime64[ns]"),
+        "cfacshr": pd.Series(dtype="float64"),
+    })
+
+
 # ---------------------------------------------------------------------------
 # Date/time parsing.
 # ---------------------------------------------------------------------------
@@ -340,6 +358,26 @@ def test_clean_consensus_drops_duplicate_snapshots():
 
     assert len(cleaned) == 1
     assert stats["duplicate_snapshot_rows_dropped"] == 1
+
+
+def test_clean_consensus_resolves_conflicting_duplicate_deterministically():
+    """A genuinely conflicting-value duplicate (not just byte-identical):
+    the same (ticker, statpers, fpedats) key reported with two different
+    estimate snapshots. Resolution must be deterministic -- driven by the
+    sort, not by whatever row order the raw WRDS pull happened to return."""
+    raw = pd.DataFrame([
+        _raw_consensus_row(meanest=1.0, medest=1.0, stdev=0.05, numest=4.0),
+        _raw_consensus_row(meanest=1.2, medest=1.2, stdev=0.08, numest=5.0),
+    ])
+
+    cleaned_forward, _ = clean.clean_consensus(raw)
+    cleaned_reversed, _ = clean.clean_consensus(raw.iloc[::-1].reset_index(drop=True))
+
+    assert len(cleaned_forward) == 1
+    assert cleaned_forward.iloc[0]["meanest"] == cleaned_reversed.iloc[0]["meanest"]
+    # Sorted ascending by (ticker, statpers, fpedats, meanest, ...), keep="last"
+    # deterministically keeps the row with the LARGEST meanest among ties.
+    assert cleaned_forward.iloc[0]["meanest"] == 1.2
 
 
 # ---------------------------------------------------------------------------
@@ -684,6 +722,321 @@ def test_compute_sue_seasonal_zero_variance_history_yields_null_not_inf():
     assert not (result["sue_seasonal"].abs() > 1e6).any()
 
 
+def test_compute_sue_seasonal_yoy_diff_uses_adjusted_basis_across_a_split():
+    """Synthetic regression for the split-adjustment fix: a clean 2:1
+    forward split occurs between two consecutive fiscal quarters
+    (2000-12-31 and 2001-03-31). The post-split quarter's year-over-year
+    diff, computed on eps_actual_adj, must reflect the real ~3% underlying
+    growth built into this fixture -- NOT the raw 2x jump the split alone
+    would otherwise create."""
+    dates = ["2000-03-31", "2000-06-30", "2000-09-30", "2000-12-31", "2001-03-31"]
+    true_adjusted = [1.00, 1.01, 0.99, 1.02, 1.03]
+    cfacshr = [2.0, 2.0, 2.0, 2.0, 1.0]  # split lands between 2000-12-31 and 2001-03-31
+    raw_eps = [t * c for t, c in zip(true_adjusted, cfacshr)]
+
+    panel = pd.DataFrame({
+        "ibes_ticker": ["SPLTQ"] * 5,
+        "fpedats": [pd.Timestamp(d) for d in dates],
+        "eps_actual": raw_eps,
+        "eps_actual_adj": true_adjusted,
+    })
+
+    result = clean.compute_sue_seasonal(
+        panel, ticker_col="ibes_ticker", eps_col="eps_actual_adj"
+    ).sort_values("fpedats").reset_index(drop=True)
+
+    last = result.iloc[-1]
+    assert last["fpedats"] == pd.Timestamp("2001-03-31")
+    assert last["eps_year_ago"] == pytest.approx(1.00)
+    assert last["eps_diff_yoy"] == pytest.approx(0.03)
+
+    raw_last_diff = raw_eps[-1] - raw_eps[0]
+    assert raw_last_diff == pytest.approx(1.03 - 2.00)
+    assert abs(last["eps_diff_yoy"]) < abs(raw_last_diff)
+
+
+def test_compute_sue_seasonal_nulls_out_across_a_multi_year_reporting_gap():
+    """The existing rolling-window tests (see
+    test_compute_sue_seasonal_prior_diff_count_capped_by_rolling_window)
+    only cover a row-count cap on a CONTIGUOUS series -- they do not cover
+    a ticker with a genuine multi-year reporting gap, where up to `window`
+    prior ROWS can span many years rather than recent quarters. Verified
+    cases in the real data span up to 15 years; this constructs an
+    ~11.75-year gap."""
+    pre_gap_quarters = pd.date_range("2000-03-31", periods=12, freq="QE")  # 2000Q1..2002Q4
+    pre_gap_eps = [1.00, 1.02, 1.01, 1.03, 1.05, 1.06, 1.04, 1.07, 1.08, 1.09, 1.07, 1.10]
+    rows = [("AAA", q.strftime("%Y-%m-%d"), v) for q, v in zip(pre_gap_quarters, pre_gap_eps)]
+
+    gap_q1 = pd.Timestamp("2012-03-31")
+    gap_q2 = pd.Timestamp("2013-03-31")  # exactly 1 year after gap_q1 -- has a valid yoy match
+    rows += [("AAA", gap_q1.strftime("%Y-%m-%d"), 1.50), ("AAA", gap_q2.strftime("%Y-%m-%d"), 1.60)]
+
+    panel = _panel(rows)
+    result = clean.compute_sue_seasonal(panel, min_history=4, window=8).sort_values("fpedats").reset_index(drop=True)
+
+    last = result.iloc[-1]
+    assert last["fpedats"] == gap_q2
+    assert last["eps_diff_yoy"] == pytest.approx(0.10)
+    # Without the calendar-span gate, this would already have enough PRIOR
+    # history (by row count alone) to compute a (stale) std dev:
+    assert last["seasonal_n_prior_diffs"] >= 4
+    assert last["seasonal_window_span_days"] > clean.MAX_SEASONAL_WINDOW_SPAN_DAYS
+    assert pd.isna(last["seasonal_diff_stdev"])
+    assert pd.isna(last["sue_seasonal"])
+
+
+# ---------------------------------------------------------------------------
+# Share-basis (stock-split) normalization.
+# ---------------------------------------------------------------------------
+
+
+def test_build_cfacshr_step_table_keeps_only_change_points():
+    raw = pd.DataFrame({
+        "permno": [1, 1, 1, 1, 2, 2],
+        "date": pd.to_datetime([
+            "2000-01-01", "2000-01-02", "2000-01-03", "2000-01-04", "2000-01-01", "2000-01-02",
+        ]),
+        "cfacshr": [2.0, 2.0, 1.0, 1.0, 5.0, 5.0],
+    })
+
+    step = clean._build_cfacshr_step_table(raw)
+
+    p1 = step[step["permno"] == 1.0].sort_values("date")
+    assert list(p1["date"]) == [pd.Timestamp("2000-01-01"), pd.Timestamp("2000-01-03")]
+    assert list(p1["cfacshr"]) == [2.0, 1.0]
+    p2 = step[step["permno"] == 2.0]
+    assert len(p2) == 1
+    assert p2.iloc[0]["cfacshr"] == 5.0
+
+
+def test_resolve_share_basis_single_permno_resolves_backward():
+    step = _step_table([(100, "2000-01-01", 2.0), (100, "2000-06-01", 1.0)])
+    value, status = clean.resolve_share_basis(step, pd.Series(["100"]), pd.Series([pd.Timestamp("2000-03-01")]))
+
+    assert value.iloc[0] == 2.0
+    assert status.iloc[0] == "resolved"
+
+
+def test_resolve_share_basis_null_permno_is_unavailable():
+    step = _step_table([(100, "2000-01-01", 1.0)])
+    value, status = clean.resolve_share_basis(step, pd.Series([None]), pd.Series([pd.Timestamp("2000-03-01")]))
+
+    assert pd.isna(value.iloc[0])
+    assert status.iloc[0] == "unavailable_no_permno"
+
+
+def test_resolve_share_basis_no_crsp_coverage_is_unavailable():
+    step = _step_table([(999, "2000-01-01", 1.0)])
+    value, status = clean.resolve_share_basis(step, pd.Series(["100"]), pd.Series([pd.Timestamp("2000-03-01")]))
+
+    assert pd.isna(value.iloc[0])
+    assert status.iloc[0] == "unavailable_no_crsp_coverage"
+
+
+def test_resolve_share_basis_before_first_coverage_date_is_unavailable():
+    step = _step_table([(100, "2000-06-01", 1.0)])
+    value, status = clean.resolve_share_basis(step, pd.Series(["100"]), pd.Series([pd.Timestamp("2000-01-01")]))
+
+    assert pd.isna(value.iloc[0])
+    assert status.iloc[0] == "unavailable_no_crsp_coverage"
+
+
+def test_resolve_share_basis_negative_or_zero_cfacshr_is_unavailable():
+    step = _step_table([(100, "2000-01-01", 0.0)])
+    value, status = clean.resolve_share_basis(step, pd.Series(["100"]), pd.Series([pd.Timestamp("2000-03-01")]))
+
+    assert pd.isna(value.iloc[0])
+    assert status.iloc[0] == "unavailable_no_crsp_coverage"
+
+
+def test_resolve_share_basis_ambiguous_permno_candidates_agree():
+    step = _step_table([(100, "2000-01-01", 2.0), (200, "2000-01-01", 2.0)])
+    value, status = clean.resolve_share_basis(step, pd.Series(["100,200"]), pd.Series([pd.Timestamp("2000-03-01")]))
+
+    assert value.iloc[0] == 2.0
+    assert status.iloc[0] == "resolved"
+
+
+def test_resolve_share_basis_ambiguous_permno_candidates_disagree():
+    step = _step_table([(100, "2000-01-01", 2.0), (200, "2000-01-01", 3.0)])
+    value, status = clean.resolve_share_basis(step, pd.Series(["100,200"]), pd.Series([pd.Timestamp("2000-03-01")]))
+
+    assert pd.isna(value.iloc[0])
+    assert status.iloc[0] == "unavailable_ambiguous_permno"
+
+
+def test_resolve_share_basis_ambiguous_permno_one_covered_candidate_is_resolved():
+    step = _step_table([(100, "2000-01-01", 2.0)])  # 200 has no CRSP coverage at all
+    value, status = clean.resolve_share_basis(step, pd.Series(["100,200"]), pd.Series([pd.Timestamp("2000-03-01")]))
+
+    assert value.iloc[0] == 2.0
+    assert status.iloc[0] == "resolved"
+
+
+def test_resolve_share_basis_null_target_date_is_unavailable():
+    step = _step_table([(100, "2000-01-01", 1.0)])
+    value, status = clean.resolve_share_basis(step, pd.Series(["100"]), pd.Series([pd.NaT]))
+
+    assert pd.isna(value.iloc[0])
+    assert status.iloc[0] == "unavailable_no_permno"
+
+
+def test_attach_share_basis_classifies_no_change_vs_adjusted():
+    step = _step_table([
+        (100, "1990-01-01", 1.0),  # never split
+        # permno 200 splits 2:1 on 2000-06-01, going from 4.0 to 2.0 --
+        # deliberately NOT landing on CRSP's "1.0" reset value, so
+        # cfacshr_anndats itself is what actually demonstrates "adjusted"
+        # (see the FEMP/BGH real-data test for the opposite, equally valid
+        # case where a split DOES land on cfacshr==1.0 post-event).
+        (200, "1990-01-01", 4.0), (200, "2000-06-01", 2.0),
+    ])
+    panel = pd.DataFrame({
+        "permno": ["100", "200"],
+        "anndats": [pd.Timestamp("2000-04-15"), pd.Timestamp("2000-07-15")],
+        "consensus_statpers": [pd.Timestamp("2000-04-01"), pd.Timestamp("2000-04-01")],
+        "eps_actual": [1.00, 0.50],
+    })
+
+    result, stats = clean.attach_share_basis(panel, step)
+
+    assert result.loc[0, "share_basis_status"] == "no_change"
+    assert result.loc[0, "cfacshr_anndats"] == 1.0
+    assert result.loc[0, "eps_actual_adj"] == pytest.approx(1.00)
+
+    assert result.loc[1, "share_basis_status"] == "adjusted"
+    assert result.loc[1, "cfacshr_anndats"] == 2.0
+    assert result.loc[1, "cfacshr_statpers"] == 4.0
+    assert result.loc[1, "eps_actual_adj"] == pytest.approx(0.25)
+
+    assert stats["no_change"] == 1
+    assert stats["adjusted"] == 1
+
+
+def test_attach_share_basis_unavailable_permno_leaves_derived_columns_null():
+    step = _step_table([(100, "1990-01-01", 1.0)])
+    panel = pd.DataFrame({
+        "permno": [None],
+        "anndats": [pd.Timestamp("2000-04-15")],
+        "consensus_statpers": [pd.Timestamp("2000-04-01")],
+        "eps_actual": [1.00],
+    })
+
+    result, stats = clean.attach_share_basis(panel, step)
+
+    assert result.loc[0, "share_basis_status"] == "unavailable_no_permno"
+    assert pd.isna(result.loc[0, "cfacshr_anndats"])
+    assert pd.isna(result.loc[0, "eps_actual_adj"])
+    assert stats["unavailable_no_permno"] == 1
+
+
+def test_real_femp_mbi_bgh_split_events_are_fixed_by_share_basis_adjustment():
+    """Regression test for the three real split-artifact events the review
+    identified: FEMP fpedats 2000-09-30 (a 10-for-1 forward split between
+    statpers and anndats), MBI fpedats 1997-09-30 (a 2-for-1 forward
+    split), and BGH fpedats 2009-09-30 (a 1-for-10 reverse split). Before
+    this fix these shipped sue_analyst around -105, -111, and +144
+    respectively -- pure units artifacts from comparing a consensus formed
+    on one CRSP share basis against an actual reported on a different one.
+
+    Pulls the REAL raw ingredients from the actual WRDS/CRSP pull (skips if
+    not present, e.g. in a CI environment without the local data pull) and
+    independently re-derives the expected adjusted sue_analyst from those
+    raw values by hand, rather than hardcoding the review's summary numbers
+    or calling the production formula twice.
+    """
+    if not clean.ACTU_EPSUS_PATH.exists() or not clean.STATSUMU_EPSUS_PATH.exists() or not clean.RAW_CRSP_DIR.exists():
+        pytest.skip("real WRDS/CRSP data pull not present in this environment")
+
+    events = [("FEMP", "2000-09-30", 35554.0), ("MBI", "1997-09-30", 75175.0), ("BGH", "2009-09-30", 10890.0)]
+    tickers = [t for t, _, _ in events]
+
+    actu = pd.read_parquet(clean.ACTU_EPSUS_PATH, filters=[("ticker", "in", tickers)])
+    actu["anndats"] = clean._parse_date(actu["anndats"])
+    actu["pends"] = clean._parse_date(actu["pends"])
+
+    statsumu = pd.read_parquet(
+        clean.STATSUMU_EPSUS_PATH,
+        columns=["ticker", "statpers", "fpedats", "fpi", "meanest", "medest", "stdev", "numest"],
+        filters=[("ticker", "in", tickers), ("fpi", "==", "6")],
+    )
+    statsumu["statpers"] = clean._parse_date(statsumu["statpers"])
+    statsumu["fpedats"] = clean._parse_date(statsumu["fpedats"])
+
+    permnos = {p for _, _, p in events}
+    crsp_frames = []
+    for f in sorted(clean.RAW_CRSP_DIR.glob("dsf_*.parquet")):
+        chunk = pd.read_parquet(f, columns=["permno", "date", "cfacshr"])
+        chunk = chunk[chunk["permno"].astype("float64").isin(permnos)]
+        if len(chunk):
+            crsp_frames.append(chunk)
+    assert crsp_frames, "expected at least some CRSP coverage for the three named permnos"
+    crsp_raw = pd.concat(crsp_frames, ignore_index=True)
+    crsp_raw["date"] = clean._parse_date(crsp_raw["date"])
+    step_table = clean._build_cfacshr_step_table(crsp_raw)
+
+    rows = []
+    for ticker, fped, permno in events:
+        fped_ts = pd.Timestamp(fped)
+        actu_row = actu[(actu["ticker"] == ticker) & (actu["pends"] == fped_ts)]
+        assert len(actu_row) == 1, f"expected exactly one real actu_epsus row for {ticker} {fped}"
+        anndats = actu_row.iloc[0]["anndats"]
+        eps_actual = actu_row.iloc[0]["value"]
+
+        eligible = statsumu[
+            (statsumu["ticker"] == ticker) & (statsumu["fpedats"] == fped_ts) & (statsumu["statpers"] < anndats)
+        ]
+        assert len(eligible) > 0, f"expected a point-in-time-eligible consensus for {ticker} {fped}"
+        best = eligible.loc[eligible["statpers"].idxmax()]
+
+        rows.append({
+            "ibes_ticker": ticker, "permno": str(int(permno)), "fpedats": fped_ts, "anndats": anndats,
+            "eps_actual": eps_actual, "consensus_statpers": best["statpers"],
+            "consensus_meanest": best["meanest"], "consensus_stdev": best["stdev"],
+        })
+
+    panel = pd.DataFrame(rows)
+    panel, _basis_stats = clean.attach_share_basis(panel, step_table)
+    cfacshr_ratio = (panel["cfacshr_statpers"] / panel["cfacshr_anndats"]).fillna(1.0)
+    panel["sue_analyst"] = clean.compute_sue_analyst(
+        panel["eps_actual"] * cfacshr_ratio, panel["consensus_meanest"], panel["consensus_stdev"]
+    )
+
+    by_ticker = panel.set_index("ibes_ticker")
+
+    for ticker in tickers:
+        row = by_ticker.loc[ticker]
+        # share_basis_status describes cfacshr_anndats specifically, and
+        # CRSP resets cfacshr to 1.0 immediately after a split -- so a real
+        # split can still show "no_change" here if it happens to land
+        # exactly on that reset value (this is genuinely the case for FEMP
+        # and BGH below). The precise, direct measure of "did this row's
+        # sue_analyst actually get rescaled" is R_c != 1.0, checked below
+        # for all three; share_basis_status is only checked for having
+        # resolved successfully at all (not "unavailable_*").
+        assert row["share_basis_status"] in ("no_change", "adjusted"), f"{ticker}: expected cfacshr_anndats to resolve"
+        r_c = row["cfacshr_statpers"] / row["cfacshr_anndats"]
+        assert r_c != pytest.approx(1.0), f"{ticker}: expected a real cross-basis R_c correction"
+        expected_sue = (row["eps_actual"] * r_c - row["consensus_meanest"]) / row["consensus_stdev"]
+        assert row["sue_analyst"] == pytest.approx(expected_sue)
+
+    femp = by_ticker.loc["FEMP"]
+    assert femp["cfacshr_anndats"] == pytest.approx(1.0)
+    assert femp["cfacshr_statpers"] == pytest.approx(10.0)
+    assert femp["sue_analyst"] == pytest.approx(0.875, abs=0.05)
+    assert 0 < femp["sue_analyst"] < 3  # "a small beat", nowhere near the pre-fix -105
+
+    mbi = by_ticker.loc["MBI"]
+    unadjusted_mbi = (mbi["eps_actual"] - mbi["consensus_meanest"]) / mbi["consensus_stdev"]
+    assert unadjusted_mbi == pytest.approx(-111, abs=1)  # sanity: confirms the pre-fix number really was ~-111
+    assert abs(mbi["sue_analyst"]) < abs(unadjusted_mbi) / 3  # tail shrank by at least 3x
+
+    bgh = by_ticker.loc["BGH"]
+    unadjusted_bgh = (bgh["eps_actual"] - bgh["consensus_meanest"]) / bgh["consensus_stdev"]
+    assert unadjusted_bgh == pytest.approx(144, abs=1)  # sanity: confirms the pre-fix number really was ~144
+    assert abs(bgh["sue_analyst"]) < abs(unadjusted_bgh) / 3
+
+
 # ---------------------------------------------------------------------------
 # Identifier crosswalk.
 # ---------------------------------------------------------------------------
@@ -747,6 +1100,19 @@ def test_build_identifier_crosswalk_ignores_unresolved_tickers():
     assert list(crosswalk["ibes_ticker"]) == ["AAA"]
 
 
+def test_build_identifier_crosswalk_empty_input_returns_correctly_shaped_frame():
+    resolved = pd.DataFrame({
+        "ibes_ticker": pd.Series(dtype="object"),
+        "permno": pd.Series(dtype="object"),
+        "gvkey": pd.Series(dtype="object"),
+    })
+
+    crosswalk = clean.build_identifier_crosswalk(resolved)
+
+    assert list(crosswalk.columns) == ["ibes_ticker", "permno", "gvkey", "n_secids", "identifier_ambiguous"]
+    assert len(crosswalk) == 0
+
+
 def test_attach_identifiers_marks_unmatched_tickers():
     panel = pd.DataFrame({"ticker": ["ZZZ"], "fpedats": [pd.Timestamp("2000-01-01")]})
     crosswalk = clean.build_identifier_crosswalk(
@@ -760,6 +1126,42 @@ def test_attach_identifiers_marks_unmatched_tickers():
     assert pd.isna(result.loc[0, "permno"])
     assert "ticker" not in result.columns
     assert result.loc[0, "ibes_ticker"] == "ZZZ"
+
+
+def test_attach_identifiers_requires_a_usable_identifier_not_just_ticker_presence():
+    """A ticker can appear in the crosswalk (n_secids > 0) with both permno
+    and gvkey null, if resolved_universe_ids itself never resolved either
+    for that secid. identifier_matched must be False in that case -- the
+    ticker string matching is not enough."""
+    panel = pd.DataFrame({"ticker": ["ZZZ"]})
+    crosswalk = pd.DataFrame({
+        "ibes_ticker": ["ZZZ"], "permno": [None], "gvkey": [None],
+        "n_secids": [1], "identifier_ambiguous": [False],
+    })
+
+    result = clean.attach_identifiers(panel, crosswalk)
+
+    assert result.loc[0, "identifier_matched"] == False  # noqa: E712
+
+
+def test_attach_identifiers_handles_empty_crosswalk_without_crashing():
+    panel = pd.DataFrame({"ticker": ["ZZZ"], "fpedats": [pd.Timestamp("2000-01-01")]})
+    empty_crosswalk = clean.build_identifier_crosswalk(
+        pd.DataFrame({"ibes_ticker": pd.Series(dtype="object"), "permno": pd.Series(dtype="object"), "gvkey": pd.Series(dtype="object")})
+    )
+
+    result = clean.attach_identifiers(panel, empty_crosswalk)
+
+    assert result.loc[0, "identifier_matched"] == False  # noqa: E712
+    assert pd.isna(result.loc[0, "permno"])
+
+
+def test_attach_identifiers_raises_clear_error_on_malformed_crosswalk():
+    panel = pd.DataFrame({"ticker": ["ZZZ"]})
+    malformed_crosswalk = pd.DataFrame()  # no columns at all -- not from build_identifier_crosswalk
+
+    with pytest.raises(ValueError, match="crosswalk"):
+        clean.attach_identifiers(panel, malformed_crosswalk)
 
 
 # ---------------------------------------------------------------------------
@@ -822,14 +1224,16 @@ def test_build_event_table_end_to_end_small_synthetic_dataset():
         "permno": ["10000"],
         "gvkey": ["001000"],
     })
+    step_table = _step_table([(10000, "1990-01-01", 1.0)])  # this ticker never split
 
-    panel, stats = clean.build_event_table(actu_raw, statsumu_raw, resolved_raw)
+    panel, stats = clean.build_event_table(actu_raw, statsumu_raw, resolved_raw, step_table)
 
     assert len(panel) == 5
     assert (panel["ibes_ticker"] == "AAA").all()
     assert (panel["permno"] == "10000").all()
     assert panel["sue_analyst"].notna().all()
     assert (panel["sue_source"] == "analyst").all()
+    assert (panel["share_basis_status"] == "no_change").all()
     assert stats["point_in_time"]["total_lookahead_snapshots_excluded"] == 0
 
 
@@ -863,10 +1267,36 @@ def test_build_event_table_excludes_lookahead_consensus_end_to_end():
         "numest": [4.0],
     })
     resolved_raw = pd.DataFrame({"ibes_ticker": ["AAA"], "permno": ["10000"], "gvkey": ["001000"]})
+    step_table = _step_table([(10000, "1990-01-01", 1.0)])
 
-    panel, stats = clean.build_event_table(actu_raw, statsumu_raw, resolved_raw)
+    panel, stats = clean.build_event_table(actu_raw, statsumu_raw, resolved_raw, step_table)
 
     assert pd.isna(panel.loc[0, "sue_analyst"])
     assert pd.isna(panel.loc[0, "consensus_meanest"])
     assert panel.loc[0, "sue_source"] in ("seasonal", "none")
     assert stats["point_in_time"]["total_lookahead_snapshots_excluded"] == 1
+    assert panel.loc[0, "n_lookahead_excluded"] == 1
+    assert panel.loc[0, "n_candidates"] == 1
+
+
+def test_build_event_table_consensus_staleness_days_computed_for_known_stale_case():
+    actu_raw = pd.DataFrame({
+        "ticker": ["AAA"], "anndats": ["2000-04-15"], "value": [1.10],
+        "cusip": [None], "oftic": [None], "cname": [None],
+        "pends": ["2000-03-31"], "anntims": ["09:00:00"], "curr_act": ["USD"],
+        "pdicity": ["QTR"], "measure": ["EPS"],
+    })
+    # statpers is ~197 days before anndats -- point-in-time eligible, but stale.
+    statsumu_raw = pd.DataFrame({
+        "ticker": ["AAA"], "statpers": ["1999-10-01"], "fpedats": ["2000-03-31"],
+        "fpi": ["6"], "measure": ["EPS"], "fiscalp": ["QTR"], "curcode": ["USD"],
+        "meanest": [1.00], "medest": [1.00], "stdev": [0.05], "numest": [4.0],
+    })
+    resolved_raw = pd.DataFrame({"ibes_ticker": ["AAA"], "permno": ["10000"], "gvkey": ["001000"]})
+    step_table = _step_table([(10000, "1990-01-01", 1.0)])
+
+    panel, _stats = clean.build_event_table(actu_raw, statsumu_raw, resolved_raw, step_table)
+
+    expected_days = (pd.Timestamp("2000-04-15") - pd.Timestamp("1999-10-01")).days
+    assert panel.loc[0, "consensus_staleness_days"] == expected_days
+    assert expected_days > 150  # genuinely stale, not just a few days -- and still point-in-time-safe

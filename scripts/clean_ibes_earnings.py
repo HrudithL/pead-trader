@@ -1,6 +1,7 @@
 """Cleans and joins the WRDS I/B/E/S pull (data/raw_wrds/ibes/actu_epsus.parquet
-and statsumu_epsus.parquet) into a single point-in-time-safe earnings/surprise
-table, one row per (I/B/E/S ticker, fiscal quarter):
+and statsumu_epsus.parquet), together with CRSP daily share-adjustment
+factors (data/raw_wrds/crsp/dsf_*.parquet), into a single point-in-time-safe
+earnings/surprise table, one row per (I/B/E/S ticker, fiscal quarter):
 
     data/earnings/ibes_clean_1995_2014.parquet
 
@@ -22,12 +23,13 @@ every row that buffer produced (a later slice can filter to any date window
 it needs; restricting here would just mean re-deriving history this module
 already has) and names the file after what is actually on disk.
 
-Two WRDS-pull schema wrinkles drive most of the logic below (both are
-covered in detail in data/earnings/FINDINGS.md, written by this script's
-main()):
+Several WRDS-pull schema wrinkles and data-quality issues drive most of the
+logic below (all covered in detail in data/earnings/FINDINGS.md, written by
+this script's main()):
 
 1. Every I/B/E/S date column landed as VARCHAR, not a real date type --
-   parsed explicitly here (see _parse_date/_parse_time).
+   parsed explicitly here (see _parse_date/_parse_time). CRSP's `date`
+   column has the same VARCHAR wrinkle and is parsed the same way.
 2. ibes.actu_epsus can carry BOTH a quarterly and an annual actual EPS
    under the exact same ticker/period-end/announcement-date (a fiscal Q4
    and fiscal year-end are the same calendar date). An earlier version of
@@ -37,6 +39,13 @@ main()):
    pull now includes a real `pdicity` (period-type: QTR/ANN/SAN) column,
    and resolve_actual_duplicates() uses it directly instead of guessing.
    See resolve_actual_duplicates() for the current logic.
+3. I/B/E/S actuals and consensus estimates are split-unadjusted. A stock
+   split between a consensus snapshot and the announcement (or between two
+   fiscal years, for the seasonal measure) puts the two EPS-like numbers on
+   different per-share bases, producing a "surprise" that is really just a
+   units artifact. See attach_share_basis()/compute_sue_analyst()/
+   compute_sue_seasonal() for how this is corrected using CRSP's cumulative
+   share-adjustment factor (cfacshr).
 
 Usage:
     python scripts/clean_ibes_earnings.py
@@ -47,9 +56,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RAW_IBES_DIR = REPO_ROOT / "data" / "raw_wrds" / "ibes"
+RAW_CRSP_DIR = REPO_ROOT / "data" / "raw_wrds" / "crsp"
 METADATA_DIR = REPO_ROOT / "data" / "metadata"
 OUTPUT_DIR = REPO_ROOT / "data" / "earnings"
 
@@ -62,6 +73,14 @@ FINDINGS_PATH = OUTPUT_DIR / "FINDINGS.md"
 
 DATE_FORMAT = "%Y-%m-%d"
 TIME_FORMAT = "%H:%M:%S"
+
+# Only these columns of statsumu_epsus.parquet (19 total) are ever used
+# below -- passed explicitly to pd.read_parquet as a projection pushdown so
+# the ~5.6M-row full table is never materialized in memory.
+STATSUMU_USECOLS = [
+    "ticker", "statpers", "fpedats", "fpi", "measure", "fiscalp", "curcode",
+    "meanest", "medest", "stdev", "numest",
+]
 
 # The plan calls for "at least ~4-5 prior quarters of actual EPS history"
 # before trusting sue_seasonal's scaling std dev; 4 is the low end of that
@@ -78,6 +97,17 @@ MIN_SEASONAL_DIFF_HISTORY = 4
 # dollar-scale surprise a decade later, producing a nonsensical
 # several-hundred-sigma result. See FINDINGS.md.
 ROLLING_SEASONAL_WINDOW = 8
+
+# This window is row-count-based (the trailing `ROLLING_SEASONAL_WINDOW`
+# PANEL ROWS for a ticker), not calendar-bounded -- a ticker with reporting
+# gaps can have up to 8 prior rows spanning many YEARS of calendar time
+# rather than 8 recent quarters. seasonal_diff_stdev/sue_seasonal are
+# nulled out whenever the actual calendar span of the contributing prior
+# diffs exceeds this many days (~3 years -- enough slack for 52/53-week
+# fiscal calendars and one missed quarter, while still excluding genuine
+# multi-year-gap cases, some of which run up to 15 years in this data). See
+# compute_sue_seasonal()/FINDINGS.md.
+MAX_SEASONAL_WINDOW_SPAN_DAYS = 1095
 
 # A standard deviation smaller than this (about 1/100th of a cent of EPS) is
 # treated as zero dispersion, not real variation. This matters because of a
@@ -96,10 +126,14 @@ _ZERO_STDEV_EPSILON = 1e-6
 
 FINAL_COLUMNS = [
     "ibes_ticker", "permno", "gvkey", "identifier_matched", "identifier_ambiguous",
-    "fpedats", "anndats", "anntims", "eps_actual", "eps_actual_dup_flag", "eps_actual_multiple_anndats",
+    "fpedats", "anndats", "anntims",
+    "eps_actual", "eps_actual_dup_flag", "eps_actual_multiple_anndats",
+    "cfacshr_anndats", "cfacshr_statpers", "eps_actual_adj", "share_basis_status",
     "consensus_statpers", "consensus_meanest", "consensus_medest", "consensus_stdev", "consensus_numest",
+    "consensus_staleness_days", "n_candidates", "n_lookahead_excluded",
     "sue_analyst",
-    "eps_year_ago", "eps_diff_yoy", "seasonal_n_prior_diffs", "seasonal_diff_stdev", "sue_seasonal",
+    "eps_year_ago", "eps_diff_yoy", "seasonal_n_prior_diffs", "seasonal_diff_stdev",
+    "seasonal_window_span_days", "sue_seasonal",
     "sue_primary", "sue_source",
 ]
 
@@ -110,11 +144,10 @@ FINAL_COLUMNS = [
 
 
 def _parse_date(series: pd.Series) -> pd.Series:
-    """Parses a VARCHAR YYYY-MM-DD column (as pulled from WRDS) into a real
-    datetime64 column. Every I/B/E/S date column landed as a string, not a
-    date type -- see memory/phase1-equity-pead-plan.md's 2026-08-12 update.
-    `errors="raise"` is deliberate: a value that doesn't match is a pull/
-    schema problem worth crashing loudly on, not silently coercing to NaT.
+    """Parses a VARCHAR YYYY-MM-DD column (as pulled from WRDS, both I/B/E/S
+    and CRSP) into a real datetime64 column. `errors="raise"` is deliberate:
+    a value that doesn't match is a pull/schema problem worth crashing
+    loudly on, not silently coercing to NaT.
     """
     return pd.to_datetime(series, format=DATE_FORMAT, errors="raise")
 
@@ -123,6 +156,15 @@ def _parse_time(series: pd.Series) -> pd.Series:
     """Parses a VARCHAR HH:MM:SS column into a datetime.time. anntims is
     never null in actu_epsus (confirmed during the WRDS pull audit)."""
     return pd.to_datetime(series, format=TIME_FORMAT, errors="raise").dt.time
+
+
+def _parquet_row_count(path: Path) -> int:
+    """Row count read from a Parquet file's footer metadata only -- no row
+    data is scanned off disk, so this does not undermine the projection/
+    predicate pushdown used elsewhere when actually loading a file. Used
+    purely for FINDINGS.md's narrative about how large the raw file is.
+    """
+    return pq.ParquetFile(path).metadata.num_rows
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +277,13 @@ def clean_consensus(raw: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     df = df[["ticker", "statpers", "fpedats", "meanest", "medest", "stdev", "numest"]].reset_index(drop=True)
 
     before_dedup = len(df)
+    # Deterministic sort before keep="last": sorting purely by the dedup
+    # key (ticker, statpers, fpedats) doesn't itself break ties among rows
+    # that share that key but disagree on the estimate columns, so the
+    # value columns are included as stable tiebreakers -- keep="last" then
+    # always resolves to the same specific row for a given input, not
+    # whatever order the raw WRDS pull happened to return.
+    df = df.sort_values(["ticker", "statpers", "fpedats", "meanest", "medest", "stdev", "numest"]).reset_index(drop=True)
     df = df.drop_duplicates(subset=["ticker", "statpers", "fpedats"], keep="last").reset_index(drop=True)
     stats["duplicate_snapshot_rows_dropped"] = before_dedup - len(df)
 
@@ -260,13 +309,14 @@ def select_point_in_time_consensus(keys: pd.DataFrame, consensus: pd.DataFrame) 
     market participant actually had at announcement time (look-ahead
     bias), which would invalidate any PEAD result built on top of it. The
     filter is the strict inequality `statpers < anndats` below -- nothing
-    implicit.
+    implicit. This does NOT bound how STALE an eligible snapshot can be
+    (see consensus_staleness_days in build_event_table -- a restated actual
+    can still be matched against a very old but technically-eligible
+    consensus; that is tagged, not filtered, here).
 
     `keys` must have columns [ticker, fpedats, anndats], one row per event
     needing a match (duplicate (ticker, fpedats) keys are fine -- anndats
-    travels with each row independently, which is what
-    resolve_actual_duplicates() relies on to disambiguate before a single
-    anndats per group is settled).
+    travels with each row independently).
 
     Returns keys.reset_index(drop=True) with added columns:
       consensus_statpers, consensus_meanest, consensus_medest,
@@ -533,6 +583,14 @@ def compute_sue_analyst(eps_actual: pd.Series, meanest: pd.Series, stdev: pd.Ser
     """Standardized unexpected earnings vs. the real analyst consensus:
     (actual - mean estimate) / dispersion (stdev across analysts).
 
+    This function is share-basis-agnostic by design: it does not know
+    about stock splits at all. build_event_table() corrects for a split
+    landing between the consensus snapshot and the announcement BEFORE
+    calling this, by pre-multiplying `eps_actual` by R_c = cfacshr_statpers
+    / cfacshr_anndats (see attach_share_basis()) -- mathematically
+    equivalent to adjusting both sides to a common per-share basis, without
+    this function needing to change at all.
+
     Null whenever stdev is null (statsumu_epsus reports stdev as null when
     numest==1: a single analyst has no defined dispersion) or effectively
     zero, i.e. at or below _ZERO_STDEV_EPSILON (numest>1 but every analyst
@@ -550,10 +608,27 @@ def compute_sue_seasonal(
     panel: pd.DataFrame,
     min_history: int = MIN_SEASONAL_DIFF_HISTORY,
     window: int = ROLLING_SEASONAL_WINDOW,
+    ticker_col: str = "ticker",
+    eps_col: str = "eps_actual",
 ) -> pd.DataFrame:
     """Adds eps_year_ago, eps_diff_yoy, seasonal_n_prior_diffs,
-    seasonal_diff_stdev, and sue_seasonal to `panel` (one row per (ticker,
-    fpedats) -- see resolve_actual_duplicates).
+    seasonal_diff_stdev, seasonal_window_span_days, and sue_seasonal to
+    `panel` (one row per (ticker, fpedats) -- see resolve_actual_
+    duplicates).
+
+    `eps_col` (default "eps_actual") is the column used as "the actual EPS"
+    throughout -- build_event_table() passes "eps_actual_adj" (the
+    split-adjusted actual; see attach_share_basis()) so that eps_year_ago
+    and everything derived from it (eps_diff_yoy, seasonal_diff_stdev,
+    sue_seasonal) are computed on ONE consistent, split-adjusted basis. A
+    split landing between two fiscal years being compared year-over-year
+    would otherwise produce a spurious multiple-of-the-split-ratio "diff"
+    that has nothing to do with real earnings growth, and -- because the
+    rolling std dev also consumes eps_diff_yoy -- would go on to poison the
+    scaling denominator for several subsequent quarters too. `ticker_col`
+    (default "ticker") lets build_event_table() pass "ibes_ticker" once
+    identifiers have been attached and the panel's ticker column has been
+    renamed.
 
     sue_seasonal = (EPS this quarter - EPS the same fiscal quarter one year
     ago) / (std dev of that same difference over this ticker's OWN recent
@@ -571,33 +646,232 @@ def compute_sue_seasonal(
     sue_seasonal is computed at all -- otherwise it is left null (per the
     plan: null, not zero, since zero would silently claim perfect
     predictability rather than admit the scale is unknown).
-    """
-    df = panel.sort_values(["ticker", "fpedats"]).reset_index(drop=True).copy()
 
-    prior = df[["ticker", "fpedats", "eps_actual"]].rename(
-        columns={"fpedats": "prior_fpedats", "eps_actual": "eps_year_ago"}
+    That window is row-count-based, not calendar-bounded: a ticker with
+    reporting gaps can have `window` prior ROWS spanning many years rather
+    than recent quarters. seasonal_window_span_days measures the actual
+    calendar gap between this row's fpedats and the oldest fpedats among
+    the rows that fed a real (non-null) diff into the rolling window;
+    seasonal_diff_stdev (and therefore sue_seasonal) is additionally nulled
+    out whenever that span exceeds MAX_SEASONAL_WINDOW_SPAN_DAYS, even if
+    seasonal_n_prior_diffs already cleared min_history.
+    """
+    df = panel.sort_values([ticker_col, "fpedats"]).reset_index(drop=True).copy()
+
+    prior = df[[ticker_col, "fpedats", eps_col]].rename(
+        columns={"fpedats": "prior_fpedats", eps_col: "eps_year_ago"}
     )
     df["prior_fpedats"] = df["fpedats"] - pd.DateOffset(years=1)
-    df = df.merge(prior, on=["ticker", "prior_fpedats"], how="left").drop(columns=["prior_fpedats"])
+    df = df.merge(prior, on=[ticker_col, "prior_fpedats"], how="left").drop(columns=["prior_fpedats"])
 
-    df["eps_diff_yoy"] = df["eps_actual"] - df["eps_year_ago"]
+    df["eps_diff_yoy"] = df[eps_col] - df["eps_year_ago"]
 
-    grouped_diff = df.groupby("ticker")["eps_diff_yoy"]
+    grouped_diff = df.groupby(ticker_col)["eps_diff_yoy"]
     prior_count = grouped_diff.transform(lambda s: s.shift(1).rolling(window, min_periods=1).count())
     prior_std = grouped_diff.transform(lambda s: s.shift(1).rolling(window, min_periods=1).std())
 
     df["seasonal_n_prior_diffs"] = prior_count.astype(int)
+
+    # Which prior quarters actually fed a valid (non-null) diff into the
+    # rolling window -- tracked so the window's REAL calendar span can be
+    # measured, not just its row count (see MAX_SEASONAL_WINDOW_SPAN_DAYS).
+    # pandas' rolling().min() does not support datetime64 directly (raises
+    # "No numeric types to aggregate" even without any NaT present), so the
+    # dates are round-tripped through int64 nanoseconds -- NaT's int64
+    # sentinel is remapped to int64's MAX (rather than its actual MIN) so a
+    # missing diff never wins a rolling MINIMUM, then mapped back to NaT
+    # after the rolling pass.
+    contributing_fpedats = df["fpedats"].where(df["eps_diff_yoy"].notna())
+    nat_sentinel = np.iinfo("int64").min
+    pos_sentinel = np.iinfo("int64").max
+    contributing_as_int = contributing_fpedats.astype("int64")
+    contributing_as_int = contributing_as_int.where(contributing_as_int != nat_sentinel, pos_sentinel)
+    df["_contributing_fpedats_int"] = contributing_as_int
+    oldest_contributing_int = df.groupby(ticker_col)["_contributing_fpedats_int"].transform(
+        lambda s: s.shift(1).rolling(window, min_periods=1).min()
+    )
+    oldest_contributing = pd.to_datetime(oldest_contributing_int.where(oldest_contributing_int != pos_sentinel), unit="ns")
+    df["seasonal_window_span_days"] = (df["fpedats"] - oldest_contributing).dt.days
+    df = df.drop(columns=["_contributing_fpedats_int"])
+
     # Explicit min-history gate, independent of pandas' own min_periods/NaN
     # interaction: a std computed from fewer than min_history valid prior
     # diffs is nulled out here regardless of what rolling(...).std() itself
-    # would have returned.
-    df["seasonal_diff_stdev"] = prior_std.where(prior_count >= min_history)
+    # would have returned. The span gate is independent of and additional
+    # to the history-count gate -- a gappy ticker can clear min_history on
+    # row count alone while still spanning far more calendar time than a
+    # "recent volatility" estimate should.
+    window_within_span = df["seasonal_window_span_days"] <= MAX_SEASONAL_WINDOW_SPAN_DAYS
+    df["seasonal_diff_stdev"] = prior_std.where((prior_count >= min_history) & window_within_span)
 
     stdev_safe = df["seasonal_diff_stdev"].where(
         df["seasonal_diff_stdev"].notna() & (df["seasonal_diff_stdev"].abs() > _ZERO_STDEV_EPSILON)
     )
     df["sue_seasonal"] = df["eps_diff_yoy"] / stdev_safe
     return df
+
+
+# ---------------------------------------------------------------------------
+# Share-basis (stock-split) normalization.
+# ---------------------------------------------------------------------------
+
+
+def _build_cfacshr_step_table(raw: pd.DataFrame) -> pd.DataFrame:
+    """Core compression logic for the CRSP share-adjustment "step table":
+    takes an already-loaded raw DataFrame with [permno, date (datetime64),
+    cfacshr] columns (one row per permno per trading day) and keeps only
+    the rows where cfacshr first appears for a permno or changes from the
+    immediately preceding date -- cfacshr is piecewise-constant between
+    corporate actions (splits/stock dividends), so this compresses the full
+    daily history down to one row per permno's first observation plus one
+    per subsequent adjustment event -- on the real 1995-2014 pull this is
+    ~14K rows (8,100 distinct permnos, ~39% of which have at least one real
+    change) out of ~20.5M raw daily rows, a >1000x reduction.
+
+    Separated from load_cfacshr_step_table() so tests can exercise this on
+    a small synthetic or filtered-real frame without reading CRSP's full
+    daily file set from disk.
+    """
+    raw = raw.dropna(subset=["cfacshr"]).sort_values(["permno", "date"]).reset_index(drop=True)
+    prev_cfacshr = raw.groupby("permno")["cfacshr"].shift(1)
+    changed = prev_cfacshr.isna() | (raw["cfacshr"] != prev_cfacshr)
+    step = raw.loc[changed, ["permno", "date", "cfacshr"]].reset_index(drop=True)
+    step["permno"] = step["permno"].astype("float64")
+    return step.sort_values("date").reset_index(drop=True)
+
+
+def load_cfacshr_step_table(crsp_dir: Path = RAW_CRSP_DIR) -> pd.DataFrame:
+    """Reads every data/raw_wrds/crsp/dsf_*.parquet file (permno, date,
+    cfacshr only -- CRSP's other ~12 daily columns are not needed here) and
+    compresses the result into a step table via _build_cfacshr_step_table().
+    """
+    files = sorted(crsp_dir.glob("dsf_*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"load_cfacshr_step_table: no dsf_*.parquet files found under {crsp_dir}")
+    frames = [pd.read_parquet(f, columns=["permno", "date", "cfacshr"]) for f in files]
+    raw = pd.concat(frames, ignore_index=True)
+    raw["date"] = _parse_date(raw["date"])
+    return _build_cfacshr_step_table(raw)
+
+
+def resolve_share_basis(
+    step_table: pd.DataFrame, permno_raw: pd.Series, target_date: pd.Series
+) -> tuple[pd.Series, pd.Series]:
+    """Resolves the CRSP cumulative share-adjustment factor (cfacshr) in
+    effect on or before `target_date`, for each row's `permno_raw`.
+
+    `permno_raw` is a string PERMNO (the common case), a comma-joined
+    multi-candidate PERMNO string (from an upstream ambiguous identifier
+    resolution -- e.g. "10000,20000"), or null (no identifier match at
+    all). For a multi-candidate row, every candidate is resolved
+    independently via `step_table`; if every CRSP-covered candidate agrees
+    on the resulting cfacshr, that value is used, otherwise the row is
+    marked ambiguous.
+
+    Returns (cfacshr, status), aligned to permno_raw's index. `status` is
+    one of:
+      "resolved" -- a usable cfacshr was found (the caller decides
+        no_change vs. adjusted by comparing it to 1.0).
+      "unavailable_no_permno" -- permno_raw is null/empty, or target_date
+        is null (nothing to resolve against).
+      "unavailable_ambiguous_permno" -- more than one CRSP-covered
+        candidate PERMNO, and they do not agree on cfacshr.
+      "unavailable_no_crsp_coverage" -- no candidate PERMNO has a usable
+        (non-null, positive) step-table entry on or before target_date.
+    """
+    idx = permno_raw.index
+    result_value = pd.Series(np.nan, index=idx, dtype="float64")
+    result_status = pd.Series("unavailable_no_permno", index=idx, dtype="object")
+
+    permno_str = permno_raw.astype("string")
+    eligible = permno_str.notna() & (permno_str.str.len() > 0) & target_date.notna()
+    if not eligible.any():
+        return result_value, result_status
+
+    work = pd.DataFrame({
+        "_row_id": np.asarray(idx[eligible]),
+        "_permno_str": permno_str[eligible].to_numpy(),
+        "_date": pd.Series(target_date[eligible].to_numpy(), dtype="datetime64[ns]"),
+    })
+    work = work.assign(_candidate=work["_permno_str"].str.split(",")).explode("_candidate", ignore_index=True)
+    work["_candidate"] = pd.to_numeric(work["_candidate"], errors="coerce").astype("float64")
+    work = work.sort_values("_date", kind="mergesort").reset_index(drop=True)
+
+    step_renamed = step_table.rename(columns={"permno": "_candidate", "date": "_date"})[["_candidate", "_date", "cfacshr"]]
+    merged = pd.merge_asof(work, step_renamed, on="_date", by="_candidate", direction="backward")
+
+    covered = merged["cfacshr"].notna() & (merged["cfacshr"] > 0)
+    merged["_covered_value"] = merged["cfacshr"].where(covered)
+    merged["_covered_value_r"] = merged["_covered_value"].round(8)
+
+    covered_only = merged.loc[covered, ["_row_id", "_covered_value", "_covered_value_r"]]
+    n_distinct = covered_only.groupby("_row_id")["_covered_value_r"].nunique()
+    first_value = covered_only.groupby("_row_id")["_covered_value"].first()
+
+    all_row_ids = pd.Index(work["_row_id"].unique())
+    n_distinct = n_distinct.reindex(all_row_ids, fill_value=0)
+
+    resolved_ids = n_distinct.index[n_distinct == 1]
+    ambiguous_ids = n_distinct.index[n_distinct > 1]
+    no_coverage_ids = n_distinct.index[n_distinct == 0]
+
+    result_value.loc[resolved_ids] = first_value.loc[resolved_ids].to_numpy()
+    result_status.loc[resolved_ids] = "resolved"
+    result_status.loc[ambiguous_ids] = "unavailable_ambiguous_permno"
+    result_status.loc[no_coverage_ids] = "unavailable_no_crsp_coverage"
+
+    return result_value, result_status
+
+
+def attach_share_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Adds cfacshr_anndats, cfacshr_statpers, eps_actual_adj, and
+    share_basis_status to `panel` (which must already have `permno`,
+    `anndats`, `consensus_statpers`, and `eps_actual`).
+
+    cfacshr_statpers is only meaningfully resolved where consensus_statpers
+    is non-null (resolve_share_basis treats a null target_date as
+    unavailable). eps_actual_adj = eps_actual / cfacshr_anndats is defined
+    for every row that has a resolved cfacshr_anndats, independent of
+    whether a consensus was ever selected at all -- it feeds the seasonal
+    path too, which needs no consensus.
+
+    share_basis_status describes the cfacshr_anndats resolution
+    specifically (the one used for eps_actual_adj, which is used
+    everywhere): "no_change" if resolved and equal to 1.0 (eps_actual_adj
+    is numerically identical to raw eps_actual for this row -- CRSP resets
+    cfacshr to 1.0 immediately after a split, so this does NOT mean the
+    permno has never split, only that nothing needs rescaling as of THIS
+    row's own anndats), "adjusted" if resolved and not 1.0 (eps_actual_adj
+    genuinely differs from eps_actual), or one of resolve_share_basis()'s
+    three "unavailable_*" statuses otherwise. Note this is independent of
+    whether sue_analyst's own R_c ratio (cfacshr_statpers / cfacshr_anndats)
+    differs from 1.0 -- a row can show "no_change" here (cfacshr_anndats
+    == 1.0) while still getting a real R_c-driven correction if
+    cfacshr_statpers != cfacshr_anndats (e.g. a split landing between the
+    consensus snapshot and an announcement that happens to land exactly on
+    CRSP's post-split reset value of 1.0). Both cfacshr columns are
+    exposed directly in the output, so R_c itself can always be recomputed
+    downstream rather than inferred from this status.
+    """
+    df = panel.copy()
+
+    cfacshr_anndats, status_anndats = resolve_share_basis(step_table, df["permno"], df["anndats"])
+    cfacshr_statpers, _ = resolve_share_basis(step_table, df["permno"], df["consensus_statpers"])
+
+    df["cfacshr_anndats"] = cfacshr_anndats
+    df["cfacshr_statpers"] = cfacshr_statpers
+    df["eps_actual_adj"] = df["eps_actual"] / df["cfacshr_anndats"]
+
+    is_resolved = status_anndats == "resolved"
+    is_no_change = is_resolved & np.isclose(cfacshr_anndats.to_numpy(dtype="float64", na_value=np.nan), 1.0)
+    df["share_basis_status"] = np.select(
+        [is_no_change, is_resolved],
+        ["no_change", "adjusted"],
+        default=status_anndats,
+    )
+
+    stats = {str(k): int(v) for k, v in df["share_basis_status"].value_counts(dropna=False).items()}
+    return df, stats
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +912,12 @@ def build_identifier_crosswalk(resolved: pd.DataFrame) -> pd.DataFrame:
     is set True rather than guessing -- a later slice with announcement-
     date context to disambiguate against equity history can resolve it
     properly; this one cannot.
+
+    Always returns a frame with the full expected column set, even when
+    `resolved` produces zero crosswalk rows (e.g. an empty input) -- a bare
+    `pd.DataFrame([])` from an empty `rows` list would otherwise have NO
+    columns at all, which crashes attach_identifiers()'s merge with a
+    KeyError instead of a clear, handled empty result.
     """
     df = resolved[["ibes_ticker", "permno", "gvkey"]].copy()
     df = df[df["ibes_ticker"].notna() & (df["ibes_ticker"] != "")]
@@ -654,6 +934,9 @@ def build_identifier_crosswalk(resolved: pd.DataFrame) -> pd.DataFrame:
             "n_secids": len(group),
             "identifier_ambiguous": bool(permno_ambiguous or gvkey_ambiguous),
         })
+
+    if not rows:
+        return pd.DataFrame(columns=["ibes_ticker", "permno", "gvkey", "n_secids", "identifier_ambiguous"])
     return pd.DataFrame(rows)
 
 
@@ -661,9 +944,26 @@ def attach_identifiers(panel: pd.DataFrame, crosswalk: pd.DataFrame) -> pd.DataF
     """Left-joins the ibes_ticker -> permno/gvkey crosswalk onto `panel`
     (keyed on `ticker`), renaming `ticker` to `ibes_ticker` on the way out
     to make clear which ticker namespace it is (I/B/E/S's own, not
-    OptionMetrics' or any other vendor's)."""
+    OptionMetrics' or any other vendor's).
+
+    identifier_matched reflects whether a USABLE identifier resulted
+    (permno or gvkey actually populated), not merely whether the ticker
+    string was present in the crosswalk at all -- a ticker can appear in
+    the crosswalk (n_secids > 0) with a null permno and a null gvkey if
+    resolved_universe_ids itself never resolved either for that secid, and
+    that is not a match.
+    """
+    required_cols = {"ibes_ticker", "permno", "gvkey", "n_secids", "identifier_ambiguous"}
+    missing = required_cols - set(crosswalk.columns)
+    if missing:
+        raise ValueError(
+            f"attach_identifiers: crosswalk is missing required column(s) {sorted(missing)} "
+            "-- empty or malformed crosswalk input. Use build_identifier_crosswalk() to build "
+            "a correctly-shaped crosswalk (including for a zero-row input)."
+        )
+
     df = panel.merge(crosswalk, left_on="ticker", right_on="ibes_ticker", how="left")
-    df["identifier_matched"] = df["n_secids"].notna() & (df["n_secids"] > 0)
+    df["identifier_matched"] = df["permno"].notna() | df["gvkey"].notna()
     ambiguous = df["identifier_ambiguous"]
     df["identifier_ambiguous"] = ambiguous.where(ambiguous.notna(), False).astype(bool)
     # Drop the crosswalk's OWN ibes_ticker column, not panel's `ticker` --
@@ -685,7 +985,17 @@ def assign_sue_primary(df: pd.DataFrame) -> pd.DataFrame:
     quarter); fall back to the seasonal/mechanical measure only where
     analyst coverage is missing; and if neither is computable, say so
     explicitly (sue_source="none") rather than leaving an unexplained
-    null."""
+    null.
+
+    sue_analyst and sue_seasonal are on different scales (analyst
+    disagreement vs. this ticker's own historical year-over-year
+    volatility) and analyst coverage is not uniform across the sample
+    window (see FINDINGS.md's per-year coverage table) -- pooling
+    sue_primary across sources is convenient for a single "does a surprise
+    exist" column, but any analysis sensitive to scale or to coverage
+    shifting over time should condition on sue_source, not assume the pool
+    is homogeneous.
+    """
     df = df.copy()
     has_analyst = df["sue_analyst"].notna()
     has_seasonal = df["sue_seasonal"].notna()
@@ -700,7 +1010,10 @@ def assign_sue_primary(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_event_table(
-    actu_raw: pd.DataFrame, statsumu_raw: pd.DataFrame, resolved_raw: pd.DataFrame,
+    actu_raw: pd.DataFrame,
+    statsumu_raw: pd.DataFrame,
+    resolved_raw: pd.DataFrame,
+    cfacshr_step_table: pd.DataFrame,
 ) -> tuple[pd.DataFrame, dict]:
     """Runs the full cleaning pipeline over already-loaded raw DataFrames
     (see main() for the disk I/O). Returns (event_table, stats), where
@@ -726,6 +1039,9 @@ def build_event_table(
     panel["consensus_medest"] = matched["consensus_medest"]
     panel["consensus_stdev"] = matched["consensus_stdev"]
     panel["consensus_numest"] = matched["consensus_numest"]
+    panel["n_candidates"] = matched["n_candidates"]
+    panel["n_lookahead_excluded"] = matched["n_lookahead_excluded"]
+    panel["consensus_staleness_days"] = (panel["anndats"] - panel["consensus_statpers"]).dt.days
 
     stats["point_in_time"] = {
         "events_with_any_candidate_consensus": int((matched["n_candidates"] > 0).sum()),
@@ -734,14 +1050,96 @@ def build_event_table(
         "events_with_point_in_time_safe_consensus": int(panel["consensus_meanest"].notna().sum()),
     }
 
-    panel["sue_analyst"] = compute_sue_analyst(panel["eps_actual"], panel["consensus_meanest"], panel["consensus_stdev"])
-
-    panel = compute_sue_seasonal(panel)
-
+    # Identifiers (permno in particular) must be attached BEFORE the
+    # share-basis join, which resolves CRSP's per-permno cfacshr.
     crosswalk = build_identifier_crosswalk(resolved_raw)
     panel = attach_identifiers(panel, crosswalk)
+    # How many secids in the broader universe actually have the null-both
+    # condition identifier_matched's fix targets -- reported alongside the
+    # panel-level match rate, since the two can legitimately diverge (a
+    # secid with no usable identifier at all is also unlikely to have
+    # surviving I/B/E/S actuals data to begin with).
+    stats["both_null_identifier_secids"] = int(
+        (resolved_raw["permno"].isna() & resolved_raw["gvkey"].isna()).sum()
+    )
+
+    panel, share_basis_stats = attach_share_basis(panel, cfacshr_step_table)
+    stats["share_basis"] = share_basis_stats
+    stats["share_basis_step_table_rows"] = len(cfacshr_step_table)
+
+    # sue_analyst: R_c rescales the raw actual onto the SAME per-share
+    # basis the (possibly pre-split) consensus was formed on, leaving the
+    # consensus columns themselves untouched. Defaults to 1.0 (no
+    # adjustment attempted) whenever either factor could not be resolved.
+    cfacshr_ratio = (panel["cfacshr_statpers"] / panel["cfacshr_anndats"]).fillna(1.0)
+    sue_analyst_unadjusted = compute_sue_analyst(panel["eps_actual"], panel["consensus_meanest"], panel["consensus_stdev"])
+    panel["sue_analyst"] = compute_sue_analyst(
+        panel["eps_actual"] * cfacshr_ratio, panel["consensus_meanest"], panel["consensus_stdev"]
+    )
+    # share_basis_status alone can understate how many events got a real
+    # sue_analyst correction: a row can resolve cfacshr_anndats to exactly
+    # 1.0 (share_basis_status="no_change") while cfacshr_statpers still
+    # differs from it -- e.g. a split landing exactly on CRSP's post-split
+    # reset value. R_c != 1.0 is the precise, direct measure of "did this
+    # row's sue_analyst actually get rescaled."
+    sue_analyst_r_c_adjusted = int((~np.isclose(cfacshr_ratio.to_numpy(dtype="float64"), 1.0)).sum())
+
+    # Real before/after numbers for the three named split-artifact events
+    # an adversarial review flagged as suspiciously extreme (see
+    # FINDINGS.md) -- looked up directly from this run's own output rather
+    # than hardcoded, so they stay accurate if the underlying pull changes.
+    named_split_events = {}
+    for ticker, fped in [("FEMP", "2000-09-30"), ("MBI", "1997-09-30"), ("BGH", "2009-09-30")]:
+        mask = (panel["ibes_ticker"] == ticker) & (panel["fpedats"] == pd.Timestamp(fped))
+        if mask.any():
+            pos = panel.index[mask][0]
+            before = sue_analyst_unadjusted.loc[pos]
+            after = panel.loc[pos, "sue_analyst"]
+            named_split_events[ticker] = {
+                "fpedats": fped,
+                "sue_analyst_before": float(before) if pd.notna(before) else None,
+                "sue_analyst_after": float(after) if pd.notna(after) else None,
+                "share_basis_status": panel.loc[pos, "share_basis_status"],
+                "cfacshr_anndats": float(panel.loc[pos, "cfacshr_anndats"]) if pd.notna(panel.loc[pos, "cfacshr_anndats"]) else None,
+                "cfacshr_statpers": float(panel.loc[pos, "cfacshr_statpers"]) if pd.notna(panel.loc[pos, "cfacshr_statpers"]) else None,
+            }
+    stats["named_split_events"] = named_split_events
+
+    # The net extreme-tail count can mask a real, honest dynamic: a
+    # uniform correction fixes systematically wrong-basis events but can
+    # occasionally also reveal a different one, where I/B/E/S's own
+    # analyst-estimate-vs-reported-actual basis convention is itself
+    # inconsistent around a split (e.g. a split announced/completed right
+    # at the consensus-to-announcement boundary). Tracked explicitly
+    # rather than only reporting the net delta.
+    before_extreme_mask = sue_analyst_unadjusted.abs() > 100
+    after_extreme_mask = panel["sue_analyst"].abs() > 100
+    stats["coverage_extra"] = {
+        "sue_analyst_extreme_left": int((before_extreme_mask & ~after_extreme_mask).sum()),
+        "sue_analyst_extreme_entered": int((~before_extreme_mask & after_extreme_mask).sum()),
+    }
+
+    # sue_seasonal: the ENTIRE seasonal path runs off eps_actual_adj (see
+    # compute_sue_seasonal's docstring) so a split landing between two
+    # fiscal years never shows up as a fake year-over-year "surprise" and
+    # never poisons the rolling std dev for subsequent quarters either.
+    seasonal_unadjusted = compute_sue_seasonal(panel, ticker_col="ibes_ticker", eps_col="eps_actual")
+    panel = compute_sue_seasonal(panel, ticker_col="ibes_ticker", eps_col="eps_actual_adj")
 
     panel = assign_sue_primary(panel)
+
+    anndats_before_fpedats = int((panel["anndats"] < panel["fpedats"]).sum())
+
+    panel["_ann_year"] = panel["anndats"].dt.year
+    coverage_by_year = (
+        panel.groupby("_ann_year")["sue_source"]
+        .value_counts(normalize=True)
+        .unstack(fill_value=0.0)
+        .reindex(columns=["analyst", "seasonal", "none"], fill_value=0.0)
+        * 100
+    )
+    counts_by_year = panel.groupby("_ann_year").size()
+    panel = panel.drop(columns=["_ann_year"])
 
     stats["coverage"] = {
         "total_events": len(panel),
@@ -755,7 +1153,13 @@ def build_event_table(
         "identifier_unmatched": int((~panel["identifier_matched"]).sum()),
         "sue_analyst_extreme": int((panel["sue_analyst"].abs() > 100).sum()),
         "sue_seasonal_extreme": int((panel["sue_seasonal"].abs() > 100).sum()),
+        "sue_analyst_extreme_before_split_fix": int((sue_analyst_unadjusted.abs() > 100).sum()),
+        "sue_seasonal_extreme_before_split_fix": int((seasonal_unadjusted["sue_seasonal"].abs() > 100).sum()),
+        "anndats_before_fpedats": anndats_before_fpedats,
+        "sue_analyst_r_c_adjusted": sue_analyst_r_c_adjusted,
     }
+    stats["coverage_by_year"] = coverage_by_year
+    stats["counts_by_year"] = counts_by_year
 
     panel = panel[FINAL_COLUMNS].sort_values(["ibes_ticker", "fpedats"]).reset_index(drop=True)
     return panel, stats
@@ -766,24 +1170,67 @@ def build_event_table(
 # ---------------------------------------------------------------------------
 
 
-def render_findings(panel: pd.DataFrame, stats: dict) -> str:
+def render_findings(panel: pd.DataFrame, stats: dict, statsumu_total_rows: int | None = None) -> str:
     actu = stats["actuals"]
     cons = stats["consensus"]
     dedup = stats["dedup"]
     pit = stats["point_in_time"]
+    basis = stats["share_basis"]
     cov = stats["coverage"]
+    by_year = stats["coverage_by_year"]
+    n_by_year = stats["counts_by_year"]
+    both_null_secids = stats["both_null_identifier_secids"]
     qtr_ann = stats["qtr_ann_validation"]
+    extra = stats["coverage_extra"]
+    named_events = stats["named_split_events"]
+    step_table_rows = stats["share_basis_step_table_rows"]
 
     anndats_min = panel["anndats"].min()
     anndats_max = panel["anndats"].max()
 
     pct = lambda n, d: f"{100 * n / d:.1f}%" if d else "n/a"
+    fmt_sue = lambda v: f"{v:.2f}" if v is not None else "n/a (no point-in-time consensus)"
+
+    basis_total = sum(basis.values())
+    year_rows = "\n".join(
+        f"| {year} | {by_year.loc[year, 'analyst']:.1f}% | {by_year.loc[year, 'seasonal']:.1f}% | "
+        f"{by_year.loc[year, 'none']:.1f}% | {int(n_by_year.loc[year]):,} |"
+        for year in sorted(by_year.index)
+    )
+
+    statsumu_total_note = (
+        f"{statsumu_total_rows:,} rows in the full file (read via Parquet footer metadata only, "
+        f"not scanned)"
+        if statsumu_total_rows is not None
+        else "not measured in this run"
+    )
+
+    if qtr_ann["pass_rate"] is not None:
+        qtr_ann_note = (
+            f"Across {qtr_ann['n_cases']:,} such cases found in the real data, the ANN value "
+            f"matched the sum of the 4 QTR values (within {'0.05'}) in {qtr_ann['n_passed']:,} "
+            f"cases -- a {qtr_ann['pass_rate']:.1%} pass rate."
+        )
+    else:
+        qtr_ann_note = "No qualifying cases (4 consecutive clean QTR quarters plus a matching ANN row) were found in this run's data to check."
+
+    named_event_rows = []
+    for ticker, split_desc in [("FEMP", "10-for-1 forward split"), ("MBI", "2-for-1 forward split"), ("BGH", "1-for-10 reverse split")]:
+        ev = named_events.get(ticker)
+        if ev is None:
+            named_event_rows.append(f"| {ticker} | n/a | {split_desc} | not found in this run's output | -- |")
+        else:
+            named_event_rows.append(
+                f"| {ticker} | {ev['fpedats']} | {split_desc} | {fmt_sue(ev['sue_analyst_before'])} | {fmt_sue(ev['sue_analyst_after'])} |"
+            )
+    named_events_table = "\n".join(named_event_rows)
 
     return f"""# I/B/E/S Earnings Data: Findings
 
-This note documents how the raw WRDS I/B/E/S pull was turned into a clean
-earnings-surprise table, one row per (company, fiscal quarter), and what was
-found along the way. It assumes no finance background.
+This note documents how the raw WRDS I/B/E/S pull (plus CRSP daily share-
+adjustment factors) was turned into a clean earnings-surprise table, one row
+per (company, fiscal quarter), and what was found along the way. It assumes
+no finance background.
 
 ## What "surprise" and "point-in-time" mean here
 
@@ -803,6 +1250,13 @@ versions:
   scaled by how volatile that year-over-year change has historically been for
   that specific company.
 
+`sue_analyst` and `sue_seasonal` are on different scales (analyst
+disagreement vs. a company's own historical year-over-year volatility), and
+which one is available shifts across the sample window (see the per-year
+table below) -- `sue_primary` pools whichever is available for convenience,
+but any analysis sensitive to scale or to coverage composition should
+condition on `sue_source` rather than treat the pool as homogeneous.
+
 "Point-in-time" means: only use information that was actually public at the
 time being studied. Analyst consensus estimates get updated continuously --
 including AFTER a company reports -- so it is easy to accidentally compute a
@@ -812,6 +1266,15 @@ look-ahead bias, and it would make any later PEAD result meaningless, since
 it would be testing whether the market reacts to information it never
 actually had. Every consensus estimate used below is checked to have been
 published strictly before the announcement it is being compared against.
+This is checked with a strict `statpers < anndats` filter, which is verified
+correct and unchanged from the prior version of this pipeline. What IS new is
+`consensus_staleness_days` (`anndats - consensus_statpers`): the filter alone
+does not bound how OLD an eligible snapshot can be, and a restated actual
+announced years after its fiscal period can still be matched against a
+consensus that, while technically point-in-time-safe, is far from fresh. That
+gap is tagged on every row, not filtered -- per this project's "tag, don't
+filter" principle, cutting on it is a decision for whichever later slice
+actually runs statistics on this data.
 
 ## Coverage found
 
@@ -822,12 +1285,17 @@ published strictly before the announcement it is being compared against.
   and roughly six-month forward buffer around it (by design, so that
   quarters right at each edge of the core window still have prior-year
   history and prior consensus snapshots to draw on). Nothing was trimmed to
-  force-fit the original filename.
+  force-fit the original filename. `statsumu_epsus` was not re-pulled to
+  extend past 2013-12-31 -- that cutoff is a deliberate pull boundary, not a
+  bug, and it produces a real coverage cliff in 2014 in the per-year table
+  below (fewer quarters have a usable consensus snapshot simply because
+  fewer snapshots exist on disk that late in the window). 1996 shows a
+  milder version of the same edge effect from the lookback side.
 - This cleans I/B/E/S at the full resolved-universe level (every ticker that
   resolved from the 8,358-secid OptionMetrics-linked universe), not filtered
   to any pilot list -- the pilot filter is a separate, later slice.
 - Raw `actu_epsus.parquet`: {actu['raw_rows']:,} rows. {actu['non_eps_rows_dropped']:,} row(s) were a non-EPS `measure` variant and dropped before anything else. After dropping {actu['non_usd_rows_dropped']:,} non-USD-denominated rows (foreign-currency echoes of the same figure for cross-listed/ADR names -- a real universe reduction, not de-duplication: a handful of tickers have zero USD rows and disappear from the universe entirely) and {actu['null_actual_eps_rows_dropped']:,} rows with no reported EPS value at all, {actu['cleaned_rows']:,} usable rows remained ({actu['distinct_ticker_fpedats_groups']:,} distinct company/fiscal-quarter combinations before duplicate resolution, across both quarterly and annual/semiannual reporters).
-- Raw `statsumu_epsus.parquet`: {cons['raw_rows']:,} rows. Filtered to the current-quarter consensus (`fpi='6'`, which turned out to already imply `measure='EPS'` and `fiscalp='QTR'` for every single row -- a clean filter, not three independent judgment calls) and USD-denominated: {cons['fpi6_qtr_eps_rows']:,} rows matched the fpi filter, and {cons['non_usd_rows_dropped']:,} of those were also non-USD and dropped, leaving {cons['cleaned_rows']:,} usable consensus snapshots.
+- Raw `statsumu_epsus.parquet`: {statsumu_total_note}. Filtered at the Parquet layer itself (column projection to the ~11 fields actually used, plus a `fpi='6'` predicate pushdown) rather than loading the full table into memory: {cons['raw_rows']:,} rows matched fpi=6 (which turned out to already imply `measure='EPS'` and `fiscalp='QTR'` for every single row -- a clean filter, not three independent judgment calls), and {cons['non_usd_rows_dropped']:,} of those were also non-USD and dropped, leaving {cons['cleaned_rows']:,} usable consensus snapshots.
 
 ## Fix: quarterly vs. annual actuals are now told apart directly, not guessed
 
@@ -853,18 +1321,81 @@ completely removed.** `pdicity` was re-pulled and is now used directly:
 - Among the surviving QTR-only rows, {dedup['groups_multiple_anndats']:,} (ticker, fpedats) groups had genuinely different announcement dates for the same fiscal quarter (e.g. a restatement) -- the earliest anndats was kept in each case (that is when the market actually first learned the result), flagged via `eps_actual_multiple_anndats`.
 - Separately, {dedup['groups_ambiguous_same_anndats_conflict']:,} groups ({pct(dedup['groups_ambiguous_same_anndats_conflict'], dedup['groups_after_period_filter'])} of QTR groups) reported more than one distinct EPS value under the exact same announcement date -- a genuine value conflict, not a quarterly/annual mix-up. These are resolved deterministically (sort by `eps_actual` ascending, keep the first row) and flagged `eps_actual_dup_flag="ambiguous_same_anndats_conflict"` -- never by proximity to consensus or by magnitude.
 - `eps_actual_dup_flag` no longer has "consensus_disambiguated" or "magnitude_fallback" values anywhere in the code or output.
+- On this pull, both of the counts in the two bullets above measured exactly zero: every surviving QTR-only (ticker, fpedats) group already has exactly one row. That is itself informative, not merely a non-finding -- it confirms the QTR/ANN conflation was the ENTIRE source of the old "649 restatement rows" and "~70,979 ambiguous value groups" this document used to report, not a separate, independent restatement or same-day-conflict phenomenon coexisting alongside it. The `eps_actual_multiple_anndats` and `ambiguous_same_anndats_conflict` machinery is kept (not deleted) because a future re-pull covering a different date range or a broader ticker set could still exercise it -- it is a correctness safeguard, not something proven unreachable in general.
 
 **Non-circular validation of the `pdicity` labels themselves:** for (ticker,
 fpedats) groups where the 3 prior same-ticker fiscal quarters each had
 exactly one QTR row, and the current fpedats had both a QTR and an ANN row
 for the same ticker, the ANN value should approximately equal the sum of the
-4 QTR values if `pdicity` is labeling things correctly. {"Across " + format(qtr_ann['n_cases'], ",") + " such cases found in the real data, the ANN value matched the sum of the 4 QTR values (within 0.05) in " + format(qtr_ann['n_passed'], ",") + f" cases -- a {qtr_ann['pass_rate']:.1%} pass rate." if qtr_ann['pass_rate'] is not None else "No qualifying cases were found in this run's data to check."}
+4 QTR values if `pdicity` is labeling things correctly. {qtr_ann_note}
+
+## Fix: I/B/E/S actuals and consensus are split-unadjusted -- now corrected
+
+I/B/E/S reports EPS actuals and consensus estimates on whatever per-share
+basis was current when each was recorded, with no adjustment for stock
+splits in between. A stock split between a consensus snapshot and the
+announcement it is being compared against (or between two fiscal years, for
+the seasonal measure) puts the two numbers on different per-share bases --
+producing a "surprise" that is really just a units artifact, not a real beat
+or miss.
+
+**Three real events an adversarial review flagged as suspiciously extreme
+turned out to be exactly this** -- not, as a prior version of this document
+claimed, "spot-checked and confirmed genuine." All three were splits landing
+between the consensus snapshot and the announcement:
+
+| Ticker | Fiscal quarter | Split | Before fix (`sue_analyst`) | After fix |
+|---|---|---|---|---|
+{named_events_table}
+
+Correction mechanism: CRSP's daily `cfacshr` (cumulative share-adjustment
+factor) is resolved for both the announcement date (`cfacshr_anndats`) and
+the selected consensus's `statpers` (`cfacshr_statpers`), compressed from
+CRSP's ~20M-row daily file set into a ~{step_table_rows:,}-row "step table" (one row per
+permno per adjustment event) via a groupby/shift/diff, then resolved for an
+arbitrary date via `merge_asof`. `sue_analyst` rescales the raw actual by
+`R_c = cfacshr_statpers / cfacshr_anndats` before comparing it to consensus
+(defaulting to no adjustment, R_c=1.0, whenever either factor cannot be
+resolved) -- mathematically equivalent to adjusting both sides to a common
+basis while leaving the consensus columns themselves untouched. `sue_seasonal`
+runs its ENTIRE year-over-year path (the prior-year lookup, the diff, and the
+rolling std dev that scales it) off the split-adjusted actual
+(`eps_actual_adj = eps_actual / cfacshr_anndats`) instead of the raw one, so a
+split does not masquerade as a year-over-year surprise and does not go on to
+poison the volatility estimate for several subsequent quarters either -- this
+second effect was found only during the fix's own verification pass, and
+turned out to be the larger of the two contamination sources (a ~7.75% raw
+contamination rate on the year-over-year side vs. the originally-flagged
+consensus-side issue, since annual gaps make splits far more likely than the
+short consensus-to-announcement gap).
+
+`share_basis_status` (whether `eps_actual_adj` -- and so the seasonal path -- needed rescaling) breakdown across all {basis_total:,} events: {', '.join(f"{k}: {v:,} ({pct(v, basis_total)})" for k, v in basis.items())}. Note "no_change" here does not mean "never split": CRSP resets `cfacshr` to 1.0 immediately after a split, so a row can show `cfacshr_anndats == 1.0` (share_basis_status="no_change") while still getting a real `sue_analyst` correction if `cfacshr_statpers` differs from it. The precise count of events where `sue_analyst`'s own R_c ratio was not 1.0 (a genuine cross-basis rescaling was applied) is **{cov['sue_analyst_r_c_adjusted']:,} of {cov['total_events']:,}** ({pct(cov['sue_analyst_r_c_adjusted'], cov['total_events'])}).
+
+Measured effect on the extreme tail (`|sue_*| > 100`): `sue_analyst` had
+{cov['sue_analyst_extreme_before_split_fix']:,} such events before this fix and {cov['sue_analyst_extreme']:,} after; `sue_seasonal` had
+{cov['sue_seasonal_extreme_before_split_fix']:,} before and {cov['sue_seasonal_extreme']:,} after. The net `sue_analyst`
+change is not one-directional: {extra['sue_analyst_extreme_left']:,} events (including all three named above) LEFT the
+extreme set, while {extra['sue_analyst_extreme_entered']:,} newly ENTERED it. Spot-checked: the one entrant found in
+this run (FAMR, fpedats 1998-06-30) has a real, CRSP-confirmed 3-for-1 split landing right at the
+consensus-to-announcement boundary -- the correction is mechanically working as designed, but this specific case is a
+reminder that a uniform correction can occasionally reveal a DIFFERENT extreme where I/B/E/S's own analyst-estimate-vs.
+-reported-actual basis convention is itself inconsistent around a split, not just fix the previously-known ones.
 
 ## The point-in-time filter's measured effect
 
 Of the {cov['total_events']:,} (company, fiscal-quarter) events, {pit['events_with_any_candidate_consensus']:,} had at least one fpi=6 consensus snapshot for that fiscal quarter at all (eligible or not). Of those, **{pit['events_with_a_lookahead_candidate_excluded']:,} events had at least one candidate consensus snapshot that would have been look-ahead contamination** (published on or after the announcement date) had it not been explicitly filtered out. Across all events, **{pit['total_lookahead_snapshots_excluded']:,} individual consensus snapshots** were excluded on exactly this basis. This is expected and mechanical, not a data error: I/B/E/S keeps publishing new consensus snapshots for years after any given historical quarter (as analysts revise their NEXT-quarter forecasts), so "the last available snapshot for this fiscal quarter" is almost always a post-announcement one -- which is precisely why an explicit `statpers < anndats` filter matters rather than simply taking the latest available row per fiscal quarter.
 
 After the filter, {pit['events_with_point_in_time_safe_consensus']:,} of {cov['total_events']:,} events ({pct(pit['events_with_point_in_time_safe_consensus'], cov['total_events'])}) have a usable, point-in-time-safe consensus snapshot at all.
+
+**A previously-stated safety claim here was backwards and has been
+corrected.** The point-in-time filter guarantees a selected consensus was
+published before the announcement -- it does NOT guarantee the consensus is
+fresh. A restated or late actual announced long after its fiscal period ended
+can be, and in this data is, matched against a consensus snapshot that is
+technically eligible but calendar-old. `consensus_staleness_days` now tags
+this gap on every row with a selected consensus so a later slice can decide
+whether and how to cut on it; the cleaning layer itself does not filter on
+it.
 
 ## How the {actu['pre_1995_pends_rows']:,} pre-1995 pends rows were handled
 
@@ -876,22 +1407,58 @@ result is still real information, and the point-in-time filter above is
 exactly what keeps this safe regardless of how old the underlying period is
 -- it compares the analyst consensus's STATPERS against this row's own
 `anndats` (when the restated figure actually became public), never against
-the ancient `pends`. A restated 1994 actual announced in 1996, for example,
-can only ever be matched against a consensus snapshot published before that
-1996 announcement, never against a stale 1994-era consensus.
+the ancient `pends`.
 
-## Analyst vs. seasonal coverage
+Separately, {cov['anndats_before_fpedats']:,} events have an announcement date recorded BEFORE their own fiscal period even ended -- these are I/B/E/S key errors (a period cannot be reported on before it ends), and for these rows the point-in-time filter is vacuous by construction (there is no meaningful "before this announcement" consensus window to speak of). Left as-is in the output rather than dropped, consistent with this pipeline's general policy of tagging data problems rather than silently filtering them.
 
-- `sue_analyst` computed (usable consensus with non-null, non-negligible dispersion, i.e. more than one analyst who did not all submit the same or a near-identical estimate): {cov['sue_analyst_available']:,} of {cov['total_events']:,} events ({pct(cov['sue_analyst_available'], cov['total_events'])}).
-- `sue_seasonal` computed (an exact same-fiscal-quarter-one-year-ago match existed, and at least {MIN_SEASONAL_DIFF_HISTORY} valid diffs were available within the trailing {ROLLING_SEASONAL_WINDOW} quarters to scale it): {cov['sue_seasonal_available']:,} of {cov['total_events']:,} events ({pct(cov['sue_seasonal_available'], cov['total_events'])}). The scaling std dev uses a trailing {ROLLING_SEASONAL_WINDOW}-quarter window (matching the standard seasonal-random-walk SUE construction from the academic literature) rather than a company's entire available history -- an all-history version was tried first and rejected after it let a stale, no-longer-relevant volatility estimate from years earlier (e.g. from before a stock split, restructuring, or a multi-year reporting gap) scale a present-day surprise, occasionally by several hundredfold.
-- Per the plan's preemptive-check design (prefer real analyst data, fall back to seasonal only where analyst coverage is missing): `sue_primary` came from `sue_analyst` for {cov['sue_primary_from_analyst']:,} events, from `sue_seasonal` for {cov['sue_primary_from_seasonal']:,} events, and neither measure was computable for {cov['sue_primary_none']:,} events ({pct(cov['sue_primary_none'], cov['total_events'])}) -- these rows are kept in the output (not dropped) with `sue_source="none"`, since a future slice may still want the actual EPS/announcement-date fields even without a surprise measure.
-- Both measures have a small tail of extreme values: {cov['sue_analyst_extreme']:,} `sue_analyst` values and {cov['sue_seasonal_extreme']:,} `sue_seasonal` values exceed a magnitude of 100. Spot-checking the largest of these (e.g. a company reporting an EPS of -91.60 against a tightly-clustered analyst consensus of -0.44) shows they are genuine -- large one-time write-offs, bankruptcies, and similar real events that also happen to have had unusually low estimate disagreement or historical volatility beforehand -- not computation errors. Deciding whether and how to winsorize or cap these for statistical analysis is left to whichever later slice actually runs event-study statistics on this data, not this cleaning slice.
+## Analyst vs. seasonal coverage, by year
+
+`sue_analyst` computed (usable consensus with non-null, non-negligible
+dispersion): {cov['sue_analyst_available']:,} of {cov['total_events']:,} events ({pct(cov['sue_analyst_available'], cov['total_events'])}). `sue_seasonal` computed (an exact
+same-fiscal-quarter-one-year-ago match existed, at least {MIN_SEASONAL_DIFF_HISTORY} valid diffs were
+available within the trailing {ROLLING_SEASONAL_WINDOW} quarters, and those diffs span no more than
+{MAX_SEASONAL_WINDOW_SPAN_DAYS} calendar days -- see the seasonal-window fix below): {cov['sue_seasonal_available']:,} of {cov['total_events']:,} events ({pct(cov['sue_seasonal_available'], cov['total_events'])}).
+
+Pooled averages hide real edge-of-window effects, so here is the coverage by
+announcement year (percent of that year's events, not cumulative):
+
+| Year | Analyst % | Seasonal % | Neither % | Events |
+|---|---|---|---|---|
+{year_rows}
+
+1996 and 2014 are visibly thinner than the interior years -- 1996 sits right
+at the one-year seasonal-history lookback's edge (fewer tickers have a full
+prior year on record yet), and 2014 sits past `statsumu_epsus`'s deliberate
+2013-12-31 pull cutoff (consensus coverage thins out approaching and past
+that boundary, by construction, not by bug).
+
+Per the plan's preemptive-check design (prefer real analyst data, fall back to seasonal only where analyst coverage is missing): `sue_primary` came from `sue_analyst` for {cov['sue_primary_from_analyst']:,} events, from `sue_seasonal` for {cov['sue_primary_from_seasonal']:,} events, and neither measure was computable for {cov['sue_primary_none']:,} events ({pct(cov['sue_primary_none'], cov['total_events'])}) -- these rows are kept in the output (not dropped) with `sue_source="none"`.
+
+Both measures still have a small tail of extreme values after the split fix ({cov['sue_analyst_extreme']:,} `sue_analyst`, {cov['sue_seasonal_extreme']:,} `sue_seasonal`, magnitude over 100) -- with the three known split-basis artifacts corrected, the remaining tail is a mix of genuine large one-time events (write-offs, bankruptcies) landing on unusually low estimate disagreement or historical volatility, and possibly further data issues not yet investigated. Deciding whether and how to winsorize or cap these for statistical analysis is left to whichever later slice actually runs event-study statistics on this data.
+
+## Fix: the seasonal scaling window is now calendar-bounded, not just row-count-bounded
+
+The trailing {ROLLING_SEASONAL_WINDOW}-quarter window used to scale `sue_seasonal` is defined over PANEL
+ROWS for a ticker, not calendar time. A ticker with reporting gaps can have
+{ROLLING_SEASONAL_WINDOW} prior rows spanning many YEARS rather than {ROLLING_SEASONAL_WINDOW} recent quarters -- verified cases in
+this data span up to 15 years. `seasonal_window_span_days` now measures the
+actual calendar gap between a row's fpedats and the oldest fpedats
+contributing a real diff to its rolling window, and `seasonal_diff_stdev`
+(and therefore `sue_seasonal`) is nulled out whenever that span exceeds
+{MAX_SEASONAL_WINDOW_SPAN_DAYS} days (~3 years), even where the row-count history requirement was
+already satisfied.
+
+One known, out-of-scope asymmetry: the year-ago match uses
+`fpedats - DateOffset(years=1)`, which does not special-case Feb 29 in a leap
+year (a Feb 29 fpedats has no exact match one non-leap year later). This is
+unchanged from the prior version of this pipeline and left as a documented
+limitation rather than fixed here.
 
 ## Identifiers
 
-`resolved_universe_ids.parquet` is one row per OptionMetrics secid (8,358 rows), not one row per I/B/E/S ticker, and a handful of secids resolve ambiguously to more than one candidate PERMNO/GVKEY/ticker (recorded there as a comma-joined string rather than a silently-picked guess). This file's `ibes_ticker` -> PERMNO/GVKEY crosswalk was built by exploding those comma-joined ticker values into individually-joinable tickers and unioning whatever PERMNO/GVKEY values map to each one: {cov['identifier_matched']:,} of {cov['total_events']:,} events ({pct(cov['identifier_matched'], cov['total_events'])}) matched to at least one PERMNO/GVKEY. That match rate is expected to be at or near 100% (not a sign the check is trivial): the raw I/B/E/S pull was itself already filtered, at pull time, to tickers that resolved from this same universe, so nearly every ticker `actu_epsus` could possibly contain was, by construction, already in this crosswalk.
+`resolved_universe_ids.parquet` is one row per OptionMetrics secid (8,358 rows), not one row per I/B/E/S ticker, and a handful of secids resolve ambiguously to more than one candidate PERMNO/GVKEY/ticker (recorded there as a comma-joined string rather than a silently-picked guess). This file's `ibes_ticker` -> PERMNO/GVKEY crosswalk was built by exploding those comma-joined ticker values into individually-joinable tickers and unioning whatever PERMNO/GVKEY values map to each one: {cov['identifier_matched']:,} of {cov['total_events']:,} events ({pct(cov['identifier_matched'], cov['total_events'])}) matched to a USABLE identifier. `identifier_matched` now requires permno OR gvkey to actually be populated, not merely that the ticker string appeared in the crosswalk -- a prior version of this document's claim here was based on the weaker, ticker-presence-only definition, which is a real bug ({both_null_secids:,} of the 8,358 secids in the broader universe have BOTH permno and gvkey null). On this specific pull, though, that correction does not change the aggregate match rate: none of those {both_null_secids:,} fully-unresolved secids' I/B/E/S tickers have a surviving row in this output (a secid with no usable identifier at all is also unlikely to have clean, surviving actuals data), so the fixed definition and the old, weaker one happen to agree here -- reported honestly rather than implying a specific row count moved when none did.
 
-Of the matched events, {cov['identifier_ambiguous']:,} ({pct(cov['identifier_ambiguous'], cov['identifier_matched'])} of matched events) carry more than one distinct candidate PERMNO or GVKEY (comma-joined in the output, `identifier_ambiguous=True`) -- most often because the same company was reassigned a new PERMNO/GVKEY after a corporate restructuring. This is flagged, not resolved, here: resolving it correctly needs announcement-date-aware matching against equity history, which belongs in the later event-table-assembly slice, not this one. {cov['identifier_unmatched']:,} events had no PERMNO/GVKEY match at all.
+Of the matched events, {cov['identifier_ambiguous']:,} ({pct(cov['identifier_ambiguous'], cov['identifier_matched'])} of matched events) carry more than one distinct candidate PERMNO or GVKEY (comma-joined in the output, `identifier_ambiguous=True`) -- most often because the same company was reassigned a new PERMNO/GVKEY after a corporate restructuring. This is flagged, not resolved, here: resolving it correctly needs announcement-date-aware matching against equity history, which belongs in the later event-table-assembly slice, not this one. {cov['identifier_unmatched']:,} events had no usable identifier at all.
 
 ## Output
 
@@ -901,16 +1468,24 @@ Of the matched events, {cov['identifier_ambiguous']:,} ({pct(cov['identifier_amb
 
 def main():
     actu_raw = pd.read_parquet(ACTU_EPSUS_PATH)
-    statsumu_raw = pd.read_parquet(STATSUMU_EPSUS_PATH)
-    resolved_raw = pd.read_parquet(RESOLVED_UNIVERSE_PATH)
 
-    panel, stats = build_event_table(actu_raw, statsumu_raw, resolved_raw)
+    statsumu_total_rows = _parquet_row_count(STATSUMU_EPSUS_PATH)
+    statsumu_raw = pd.read_parquet(
+        STATSUMU_EPSUS_PATH,
+        columns=STATSUMU_USECOLS,
+        filters=[("fpi", "==", "6")],
+    )
+
+    resolved_raw = pd.read_parquet(RESOLVED_UNIVERSE_PATH)
+    cfacshr_step_table = load_cfacshr_step_table()
+
+    panel, stats = build_event_table(actu_raw, statsumu_raw, resolved_raw, cfacshr_step_table)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     panel.to_parquet(OUTPUT_PATH, index=False)
     print(f"Wrote {len(panel):,} rows to {OUTPUT_PATH}", flush=True)
 
-    findings = render_findings(panel, stats)
+    findings = render_findings(panel, stats, statsumu_total_rows=statsumu_total_rows)
     FINDINGS_PATH.write_text(findings)
     print(f"Wrote findings to {FINDINGS_PATH}", flush=True)
 
