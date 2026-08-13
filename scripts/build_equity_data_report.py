@@ -283,10 +283,17 @@ def _load_ticker_window(
         # Prefer the permno on the row whose date exactly equals the
         # window's own center date, when such a row exists (the center
         # date is the one this window was explicitly built to examine);
-        # otherwise fall back to whichever permno has the most rows in
-        # this window.
+        # otherwise raise ValueError if multiple permnos share the ticker
+        # and the center_date row is missing (cannot disambiguate).
         center_rows = df.loc[df["date"] == center]
-        chosen = center_rows["permno"].iloc[0] if len(center_rows) > 0 else df["permno"].value_counts().idxmax()
+        if len(center_rows) > 0:
+            chosen = center_rows["permno"].iloc[0]
+        else:
+            unique_permnos = sorted(distinct_permnos.tolist())
+            raise ValueError(
+                f"_load_ticker_window: ticker {ticker!r} has multiple permnos in window "
+                f"({unique_permnos}) and no row on center_date {center_date}; cannot disambiguate"
+            )
         df = df.loc[df["permno"] == chosen].reset_index(drop=True)
     return df
 
@@ -462,7 +469,9 @@ def _make_split_chart(window_df: pd.DataFrame, ticker: str, split_date: str) -> 
     split_ret_is_nan = bool(split_mask.any() and df.loc[split_mask, "ret"].isna().any())
     fill_mask = working_ret.isna() & ~split_mask
     working_ret.loc[fill_mask] = 0.0
-    working_ret.iloc[0] = 0.0
+    # Only zero out the first row if the split date is not the first date.
+    if split_ts != df["date"].iloc[0]:
+        working_ret.iloc[0] = 0.0
     df["cum_return_index"] = (1.0 + working_ret).cumprod()
 
     axes[0].plot(df["date"], df["prc"], color=_BLUE, linewidth=2, marker="o", markersize=3)
@@ -1048,7 +1057,19 @@ def _format_split_caption(window_df: pd.DataFrame, ticker: str, split_date: str)
     i = match[0]
     prev_price = float(window_df.loc[i - 1, "prc"])
     split_price = float(window_df.loc[i, "prc"])
+    # Guard against zero prev_price or near-zero naive_pct -- skip the
+    # numeric branch and fall through to the numberless branch.
+    if prev_price <= 0:
+        return (
+            f"{ticker}'s actual traded price around its {split_ts.date()} split, next to "
+            "the same window built from the return column instead."
+        )
     naive_pct = split_price / prev_price - 1.0
+    if abs(naive_pct) < 1e-4:
+        return (
+            f"{ticker}'s actual traded price around its {split_ts.date()} split, next to "
+            "the same window built from the return column instead."
+        )
     actual_ret = window_df.loc[i, "ret"]
     # Sign-agnostic wording: a standard split cuts the price (naive_pct <
     # 0, the common case, including the real AAPL/MSFT examples this

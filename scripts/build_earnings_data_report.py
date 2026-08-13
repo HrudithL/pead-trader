@@ -116,15 +116,18 @@ def _coverage_shares_by_year(df: pd.DataFrame) -> pd.DataFrame:
     none), reindexed to a fixed column order. Shared by the coverage-by-year
     chart and the caption/prose that describes its trend, so both always
     read the exact same numbers off the exact same computation."""
-    assert df["sue_source"].notna().all(), (
-        "sue_source has null value(s) that would silently drop out of the per-year coverage shares"
-    )
+    if not df["sue_source"].notna().all():
+        raise ValueError(
+            "sue_source has null value(s) that would silently drop out of the per-year coverage shares"
+        )
     unexpected = set(df["sue_source"].dropna().unique()) - {"analyst", "seasonal", "none"}
-    assert not unexpected, f"unexpected sue_source value(s) found: {sorted(unexpected)}"
-    assert df["anndats"].notna().all(), (
-        "anndats has null value(s) that would silently drop out of the per-year coverage chart "
-        "while still being counted in the overall event total elsewhere in the report"
-    )
+    if unexpected:
+        raise ValueError(f"unexpected sue_source value(s) found: {sorted(unexpected)}")
+    if not df["anndats"].notna().all():
+        raise ValueError(
+            "anndats has null value(s) that would silently drop out of the per-year coverage chart "
+            "while still being counted in the overall event total elsewhere in the report"
+        )
 
     by_year = (
         df.groupby(df["anndats"].dt.year.rename("year"))["sue_source"]
@@ -163,11 +166,13 @@ def _basis_status_breakdown(df: pd.DataFrame) -> dict:
     third populations above -- conflating it with the second population
     alone is exactly the bug this helper exists to prevent.
     """
-    assert df["eps_basis_status"].notna().all(), (
-        "eps_basis_status has null value(s) that would silently drop out of the data-quality chart"
-    )
+    if not df["eps_basis_status"].notna().all():
+        raise ValueError(
+            "eps_basis_status has null value(s) that would silently drop out of the data-quality chart"
+        )
     unexpected = set(df["eps_basis_status"].dropna().unique()) - set(_BASIS_STATUS_ORDER)
-    assert not unexpected, f"unexpected eps_basis_status value(s) found: {sorted(unexpected)}"
+    if unexpected:
+        raise ValueError(f"unexpected eps_basis_status value(s) found: {sorted(unexpected)}")
 
     n_total = len(df)
     counts = df["eps_basis_status"].value_counts().reindex(_BASIS_STATUS_ORDER, fill_value=0)
@@ -404,7 +409,7 @@ def build_earnings_data_report(
     pct_seasonal_available = 100.0 * n_seasonal_available / n_events
     pct_fallback_used = 100.0 * n_fallback_used / n_events
     pct_neither = 100.0 * n_neither / n_events
-    pct_identifier_ambiguous = 100.0 * df["identifier_ambiguous"].mean()
+    pct_identifier_ambiguous = 100.0 * df["identifier_ambiguous"].fillna(False).sum() / n_events
 
     n_lookahead_excluded = int(df["n_lookahead_excluded"].sum())
     median_staleness = df["consensus_staleness_days"].median()

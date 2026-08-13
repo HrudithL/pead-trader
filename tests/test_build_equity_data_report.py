@@ -353,6 +353,70 @@ def test_load_ticker_window_resolves_ticker_reassignment_to_center_date_permno(t
     assert len(window) == 4  # only the 4 rows belonging to permno 222
 
 
+def test_load_ticker_window_raises_when_center_date_missing_with_multiple_permnos(tmp_path):
+    """Fix 1: when a ticker has multiple permnos in the window AND the
+    center_date row is missing, _load_ticker_window must raise ValueError
+    instead of silently picking the majority permno (which can be wrong)."""
+    data_dir = tmp_path / "normalized_equity"
+    dates = ["1995-06-01", "1995-06-02", "1995-06-03", "1995-06-08", "1995-06-09"]
+    rows = []
+    # Two permnos (111 and 222) sharing ticker "MULTI" on non-overlapping
+    # date ranges, with a gap around the center_date we'll request below.
+    for d in dates[:3]:
+        rows.append({"permno": 111, "ticker": "MULTI", "date": d, "prc": 10.0, "ret": 0.01, "retx": 0.01})
+    for d in dates[3:]:
+        rows.append({"permno": 222, "ticker": "MULTI", "date": d, "prc": 20.0, "ret": 0.02, "retx": 0.02})
+    _write_equity_year(data_dir, 1995, _equity_year_frame(rows))
+
+    # Center_date 1995-06-05 is NOT present in the frame -- the window
+    # would span both permnos, but there's no row on the center date
+    # itself to disambiguate.
+    with pytest.raises(ValueError, match=r"ticker 'MULTI' has multiple permnos.*cannot disambiguate"):
+        ber._load_ticker_window(data_dir, 1995, "MULTI", "1995-06-05", window_days=10)
+
+
+def test_format_split_caption_returns_numberless_branch_on_zero_prev_price(tmp_path):
+    """Fix 4: when prev_price is <= 0, _format_split_caption must fall
+    through to the numberless branch instead of dividing by zero."""
+    data_dir = tmp_path / "normalized_equity"
+    rows = [
+        {"permno": 99, "ticker": "ZERO", "date": "1995-06-03", "prc": 0.0, "ret": 0.0, "retx": 0.0},
+        {"permno": 99, "ticker": "ZERO", "date": "1995-06-04", "prc": 50.0, "ret": 0.0, "retx": 0.0},
+    ]
+    _write_equity_year(data_dir, 1995, _equity_year_frame(rows))
+
+    window_df = ber._load_ticker_window(data_dir, 1995, "ZERO", "1995-06-04", window_days=3)
+    caption = ber._format_split_caption(window_df, "ZERO", "1995-06-04")
+
+    # The numberless branch does not emit the direction tokens ("fell",
+    # "rose", "crash", "spike") that the numbered branch does -- assert
+    # their absence rather than hardcoding the exact wording.
+    assert "fell" not in caption
+    assert "rose" not in caption
+    assert "crash" not in caption
+    assert "spike" not in caption
+
+
+def test_format_split_caption_returns_numberless_branch_on_zero_naive_pct(tmp_path):
+    """Fix 4: when abs(naive_pct) < 1e-4, _format_split_caption must fall
+    through to the numberless branch (e.g. a non-split date passed in)."""
+    data_dir = tmp_path / "normalized_equity"
+    rows = [
+        {"permno": 99, "ticker": "FLAT", "date": "1995-06-03", "prc": 100.0, "ret": 0.0, "retx": 0.0},
+        {"permno": 99, "ticker": "FLAT", "date": "1995-06-04", "prc": 100.0, "ret": 0.0, "retx": 0.0},
+    ]
+    _write_equity_year(data_dir, 1995, _equity_year_frame(rows))
+
+    window_df = ber._load_ticker_window(data_dir, 1995, "FLAT", "1995-06-04", window_days=3)
+    caption = ber._format_split_caption(window_df, "FLAT", "1995-06-04")
+
+    # Same assertion as the prev_price guard test above.
+    assert "fell" not in caption
+    assert "rose" not in caption
+    assert "crash" not in caption
+    assert "spike" not in caption
+
+
 def test_split_caption_reports_real_computed_numbers(tmp_path):
     fixture = _build_fixture_tree(tmp_path)
     window_df = ber._load_ticker_window(

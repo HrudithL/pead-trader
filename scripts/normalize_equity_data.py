@@ -1406,11 +1406,14 @@ def cross_validate_master_stock(crsp_df: pd.DataFrame, master_df: pd.DataFrame, 
         stats["quarantined_segment_examples"] = examples
 
     quarantined_segments = misaligned_segments | too_few_segments
+    # Compute the in-quarantine mask once and reuse it for both
+    # retained_merged and the is_retained_segment column.
+    in_quarantine = _in_segments(merged, quarantined_segments)
     # Handoff rows are excluded here too (not just from full_ret_cmp below):
     # a handoff row's OWN segment might be perfectly well-aligned, but its
     # master_ret still reflects a step across the boundary into a
     # different company's price level -- see docstring.
-    retained_merged = merged.loc[~_in_segments(merged, quarantined_segments) & ~merged["is_permno_handoff"]]
+    retained_merged = merged.loc[~in_quarantine & ~merged["is_permno_handoff"]]
 
     # Additive: a per-row flag mirroring the same (ticker, permno) gate
     # `retained_merged` above already applies, so callers that want the
@@ -1422,7 +1425,7 @@ def cross_validate_master_stock(crsp_df: pd.DataFrame, master_df: pd.DataFrame, 
     # statistics use should also filter ~is_permno_handoff, exactly as
     # `retained_merged` does here. Purely additive: every existing column
     # and the (stats, merged) return shape are unchanged.
-    merged["is_retained_segment"] = ~_in_segments(merged, quarantined_segments)
+    merged["is_retained_segment"] = ~in_quarantine
 
     # --- Return agreement, on the retained (correctly-aligned) segments ---
     full_ret_cmp = merged.dropna(subset=["retx", "master_ret"]).copy()
