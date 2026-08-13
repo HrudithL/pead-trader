@@ -234,6 +234,14 @@ def test_monotonicity_check_non_monotonic_sequence_reported_honestly():
     assert -1.0 <= result["spearman_rho"] <= 1.0
 
 
+def test_monotonicity_check_returns_none_for_constant_quintile_means():
+    # All quintile means identical -> zero variance -> spearmanr returns NaN.
+    result = bess.monotonicity_check([0.01, 0.01, 0.01, 0.01, 0.01])
+    assert result["spearman_rho"] is None
+    # Constant sequence is trivially non-decreasing.
+    assert result["strict_monotonic"] is True
+
+
 def test_quantile_sort_recovers_known_monotonic_relationship():
     # rank_col strictly increasing with value_col by construction -> the
     # resulting quintile means must be strictly increasing (monotonic=True).
@@ -299,6 +307,32 @@ def test_quantile_sort_quintile_1_is_lowest_rank_quintile_5_is_highest():
     # spread is defined as high (Q5) minus low (Q1) -- here that is negative,
     # since q5_mean < q1_mean by construction.
     assert spread["spread"] == pytest.approx(q5_mean - q1_mean)
+
+
+def test_quantile_sort_duplicates_drop_collapses_bins_when_ties_at_boundaries():
+    # A rank_col engineered to have heavy ties that force pd.qcut's
+    # duplicates="drop" to collapse at least one bin (fewer achieved
+    # quintile codes than requested).
+    rank_col = np.array([0.0]*40 + [0.5]*20 + [1.0]*40)
+    value_col = rank_col * 0.10 + np.zeros(len(rank_col))
+    df = pd.DataFrame({"rank": rank_col, "value": value_col})
+
+    records, mono, spread = bess.quantile_sort(df, "rank", "value", n_quantiles=5)
+
+    # Verify the returned per-quintile records use the achieved codes (not
+    # hardcoded [1,2,3,4,5]).
+    achieved_codes = sorted([r["quintile"] for r in records])
+    assert len(achieved_codes) < 5  # bin collapse happened
+    assert achieved_codes[0] >= 1  # still starts at least at 1
+    assert achieved_codes[-1] <= 5  # still ends at most at 5
+
+    # Verify spread["quantile_low"] and spread["quantile_high"] match the
+    # achieved lowest/highest codes (not hardcoded 1/5).
+    assert spread["quantile_low"] == achieved_codes[0]
+    assert spread["quantile_high"] == achieved_codes[-1]
+
+    # Verify the spread computation itself doesn't crash.
+    assert spread["spread"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +422,15 @@ def test_spearman_ic_n_less_than_two_is_none():
     assert result["p_value"] is None
 
 
+def test_spearman_ic_returns_none_for_zero_variance_input():
+    # Zero variance in y -> spearmanr returns NaN.
+    x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    y = np.array([0.5, 0.5, 0.5, 0.5, 0.5])
+    result = bess.spearman_ic(x, y)
+    assert result["ic"] is None
+    assert result["p_value"] is None
+
+
 # ---------------------------------------------------------------------------
 # build_results -- integration across a small synthetic event table.
 # ---------------------------------------------------------------------------
@@ -447,8 +490,37 @@ def test_build_results_end_to_end_on_synthetic_fixture():
         assert mono["strict_monotonic"] is True
 
 
-def test_build_results_asserts_on_empty_input():
-    with pytest.raises(AssertionError):
+def test_rank_cell_stats_fraction_of_source_uses_non_null_denominator():
+    # Construct a synthetic df with a known tie block AND a few null
+    # sue_primary rows in the same source, and assert the returned
+    # fraction_of_source uses the non-null denominator.
+    df = pd.DataFrame({
+        "sue_primary": [0.12345678] * 50 + [np.nan] * 10 + [0.5] * 40,
+        "sue_source": ["analyst"] * 100,
+        "anndats": pd.to_datetime(["2004-02-15"] * 100),
+        "permno_contested": [False] * 100,
+        "n_events_same_permno_day0": [1] * 100,
+    })
+    for h in bess.HORIZONS:
+        df[f"ret_fwd_{h}d"] = 0.01
+        df[f"ret_fwd_{h}d_mktadj"] = 0.005
+
+    result = bess._rank_cell_stats(df)
+    block = result["largest_tied_value_block"]
+
+    # The largest tie block should be the 50 analyst events at 0.12345678.
+    assert block["source"] == "analyst"
+    assert block["value"] == pytest.approx(0.12345678)
+    assert block["count"] == 50
+
+    # The fraction should be 50 / 90 (non-null analyst events), NOT 50 / 100.
+    non_null_count = 90  # 50 + 40, excluding the 10 NaN rows
+    expected_fraction = 50 / non_null_count
+    assert block["fraction_of_source"] == pytest.approx(expected_fraction)
+
+
+def test_build_results_raises_on_empty_input():
+    with pytest.raises(ValueError):
         bess.build_results(pd.DataFrame({
             "sue_primary": pd.Series(dtype="float64"),
             "sue_source": pd.Series(dtype="object"),

@@ -281,8 +281,8 @@ def monotonicity_check(quintile_means: list[float]) -> dict:
     strict_monotonic = all(quintile_means[i] <= quintile_means[i + 1] for i in range(k - 1))
     rho = None
     if k >= 2:
-        rho, _ = sps.spearmanr(np.arange(1, k + 1), quintile_means)
-        rho = float(rho)
+        rho_raw, _ = sps.spearmanr(np.arange(1, k + 1), quintile_means)
+        rho = None if not np.isfinite(rho_raw) else float(rho_raw)
     return {
         "n_quantiles": k,
         "quintile_means": [float(m) for m in quintile_means],
@@ -419,7 +419,9 @@ def spearman_ic(x: np.ndarray, y: np.ndarray) -> dict:
     if n < 2:
         return {"n": n, "ic": None, "p_value": None}
     rho, p = sps.spearmanr(x, y)
-    return {"n": n, "ic": float(rho), "p_value": float(p)}
+    ic = None if not np.isfinite(rho) else float(rho)
+    p_value = None if (not np.isfinite(p) or ic is None) else float(p)
+    return {"n": n, "ic": ic, "p_value": p_value}
 
 
 def build_spearman_ic_table(df: pd.DataFrame, rank_col: str = "sue_rank_pct") -> list[dict]:
@@ -460,16 +462,18 @@ def _rank_cell_stats(df: pd.DataFrame, sue_col: str = "sue_primary", source_col:
     rounded = available[sue_col].round(8)
     largest_block = {"source": None, "value": None, "count": 0, "fraction_of_source": None}
     for source, g in available.groupby(source_col):
-        counts = rounded.loc[g.index].value_counts()
+        rounded_g = rounded.loc[g.index]
+        counts = rounded_g.value_counts()  # NaN dropped by default
         if len(counts) == 0:
             continue
+        non_null_g = int(rounded_g.notna().sum())
         top_value, top_count = counts.index[0], int(counts.iloc[0])
         if top_count > largest_block["count"]:
             largest_block = {
                 "source": str(source),
                 "value": float(top_value),
                 "count": top_count,
-                "fraction_of_source": top_count / len(g),
+                "fraction_of_source": top_count / non_null_g,
             }
 
     return {
@@ -484,7 +488,8 @@ def build_results(df: pd.DataFrame) -> dict:
     """Pure function of an already day0_status=="ok"-restricted dataframe
     (see load_day0_ok_events). Adds `sue_rank_pct` and computes every
     statistic plus the caveat counts FINDINGS.md discloses."""
-    assert len(df) > 0, "build_results: empty (day0_status=='ok') input -- nothing to compute"
+    if len(df) == 0:
+        raise ValueError("build_results: empty (day0_status=='ok') input -- nothing to compute")
     df = df.copy()
     df["sue_rank_pct"] = compute_sue_rank_pct(df)
 
