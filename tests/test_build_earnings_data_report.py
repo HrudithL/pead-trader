@@ -68,6 +68,8 @@ def _make_synthetic_df(n_per_year: int = 20) -> pd.DataFrame:
                     "sue_source": source,
                     "identifier_ambiguous": i % 5 == 0,
                     "eps_basis_status": basis_statuses[i % len(basis_statuses)],
+                    "n_lookahead_excluded": i % 3,
+                    "consensus_staleness_days": float(3 + (i % 20)),
                 }
             )
     return pd.DataFrame(rows)
@@ -97,16 +99,20 @@ def test_coverage_by_year_chart_reflects_real_per_year_shares():
     """Regression guard against hardcoding: build the coverage-by-year
     figure from the synthetic dataframe (whose per-year analyst/seasonal/
     none split is known by construction: 50%/25%/25%) and confirm the
-    figure was actually built without erroring against that shape, for
-    both years present in the data."""
+    actual bar heights, in draw order, match that shape for both years."""
     df = _make_synthetic_df()
     fig = report._make_coverage_by_year_chart(df)
     try:
         assert fig is not None
         ax = fig.axes[0]
         # Two years in the synthetic data -> six bar segments (3 sources x
-        # 2 years) stacked into 2 x-axis positions.
+        # 2 years) stacked into 2 x-axis positions. Draw order is all
+        # "analyst" bars, then all "seasonal" bars, then all "none" bars
+        # (one bar per year within each source), matching the loop order in
+        # _make_coverage_by_year_chart.
         assert len(ax.patches) == 6
+        heights = [patch.get_height() for patch in ax.patches]
+        assert heights == pytest.approx([50.0, 50.0, 25.0, 25.0, 25.0, 25.0])
     finally:
         import matplotlib.pyplot as plt
 
@@ -121,11 +127,37 @@ def test_surprise_distribution_chart_reports_correct_excluded_fraction():
     non_null = df["sue_primary"].dropna()
     expected_excluded_pct = 100.0 * (non_null.abs() > 20).sum() / len(non_null)
 
-    fig, excluded_pct, n_total = report._make_surprise_distribution_chart(df)
+    fig, stats = report._make_surprise_distribution_chart(df)
     try:
-        assert n_total == len(non_null)
-        assert excluded_pct == pytest.approx(expected_excluded_pct)
-        assert excluded_pct > 0  # sanity: the synthetic outlier is actually excluded
+        assert stats["n_total"] == len(non_null)
+        assert stats["excluded_pct"] == pytest.approx(expected_excluded_pct)
+        assert stats["excluded_pct"] > 0  # sanity: the synthetic outlier is actually excluded
+    finally:
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+
+def test_surprise_distribution_chart_splits_sample_sizes_by_source():
+    """The two histogram panels (analyst-benchmarked, seasonal-benchmarked)
+    must each report the real per-source sample size from the data, not a
+    pooled or hardcoded count."""
+    df = _make_synthetic_df()
+    expected_n_analyst = int(
+        ((df["sue_source"] == "analyst") & df["sue_primary"].notna()).sum()
+    )
+    expected_n_seasonal = int(
+        ((df["sue_source"] == "seasonal") & df["sue_primary"].notna()).sum()
+    )
+
+    fig, stats = report._make_surprise_distribution_chart(df)
+    try:
+        assert stats["n_analyst"] == expected_n_analyst
+        assert stats["n_seasonal"] == expected_n_seasonal
+        # Sanity: both panels are non-trivial in the synthetic fixture, so
+        # this test would actually fail if the split logic were wrong.
+        assert expected_n_analyst > 0
+        assert expected_n_seasonal > 0
     finally:
         import matplotlib.pyplot as plt
 
@@ -133,12 +165,24 @@ def test_surprise_distribution_chart_reports_correct_excluded_fraction():
 
 
 def test_data_quality_chart_covers_all_basis_statuses():
+    """Regression guard against hardcoding: with the synthetic fixture's
+    i % 6 status cycle over 40 rows (8/8/6/6/6/6 per status), confirm the
+    two-panel chart's actual bar heights match the hand-computed shares."""
     df = _make_synthetic_df()
     fig = report._make_data_quality_chart(df)
     try:
-        ax = fig.axes[0]
-        # One bar per eps_basis_status category.
-        assert len(ax.patches) == 6
+        assert len(fig.axes) == 2
+        left_ax, right_ax = fig.axes
+        # Left panel: 2 bars -- "no basis question" (assumed, 8/40) vs.
+        # "some basis question" (the other 32/40), as % of all 40 rows.
+        assert len(left_ax.patches) == 2
+        left_heights = [patch.get_height() for patch in left_ax.patches]
+        assert left_heights == pytest.approx([20.0, 80.0])
+        # Right panel: the 5 non-assumed statuses, each as % of all 40 rows
+        # (confirmed=8, the other four=6 each).
+        assert len(right_ax.patches) == 5
+        right_heights = [patch.get_height() for patch in right_ax.patches]
+        assert right_heights == pytest.approx([20.0, 15.0, 15.0, 15.0, 15.0])
     finally:
         import matplotlib.pyplot as plt
 
