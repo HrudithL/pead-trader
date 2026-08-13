@@ -36,12 +36,14 @@ PDF_MAGIC = b"%PDF"
 def _equity_year_frame(rows: list[dict]) -> pd.DataFrame:
     """Build a minimal equity_<year>.parquet-shaped frame -- just the
     columns build_equity_data_report.py's functions actually read
-    (permno/ticker/date/prc/ret/retx/prc_is_bidask_avg), not the full
-    11-column schema normalize_equity_data.py writes."""
+    (permno/ticker/date/prc/ret/retx/cfacpr/prc_is_bidask_avg), not the
+    full 11-column schema normalize_equity_data.py writes."""
     df = pd.DataFrame(rows)
     df["date"] = pd.to_datetime(df["date"])
     if "prc_is_bidask_avg" not in df.columns:
         df["prc_is_bidask_avg"] = False
+    if "cfacpr" not in df.columns:
+        df["cfacpr"] = 1.0
     return df
 
 
@@ -180,8 +182,21 @@ def test_compute_coverage_and_cleaning_stats(tmp_path):
     assert stats["total_rows"] == 4
     assert stats["total_distinct_permnos"] == 3  # permnos 1, 2, 3 -- permno 1 appears in both years
     assert stats["bidask_rows"] == 1
+    # Fix 12d: bidask_frac's denominator is prc_rows (rows with a price at
+    # all), not total_rows -- both happen to be 4 in this fixture (every
+    # row has a non-null prc), so the fraction is unchanged, but the stat
+    # it's actually keyed against is not.
+    assert stats["prc_rows"] == 4
     assert stats["bidask_frac"] == pytest.approx(0.25)
     assert stats["missing_code_rows"] == 1  # the -66.0 sentinel in equity_1996
+    # Fix 0: the adjustment-status verdict machinery is wired in and
+    # doesn't crash on a tiny fixture -- with only 4 total rows (far below
+    # PULL_WIDE_VERDICT_MIN_ROWS) and no cfacpr changes at all, every
+    # sub-check is "inconclusive" for lack of evidence, not a false
+    # "adjusted" or "flagged".
+    assert stats["verdict"]["overall"] == "inconclusive"
+    assert stats["event_stats"]["n_events"] == 0
+    assert stats["prc_adj_stats"]["n_permnos_total"] == 3
 
 
 def test_compute_coverage_and_cleaning_stats_raises_on_empty_dir(tmp_path):
@@ -226,6 +241,56 @@ def test_build_equity_data_report_skips_crossval_when_master_stock_has_no_overla
     out = ber.build_equity_data_report(tmp_path / "report_no_crossval.pdf", **fixture)
 
     assert out.read_bytes()[:4] == PDF_MAGIC
+
+    # Fix 10: direct assertions on the section-building function itself,
+    # not just "the PDF is still valid" -- section 3 must say the
+    # cross-check didn't run, and NO section anywhere may still claim an
+    # agreement/correlation result or reference the crossval chart (which
+    # was never built this run).
+    heading, body = ber._build_crossval_section(
+        {"skipped": True}, {}, crossval_ran=False, chart_numbers={"split": 1, "crossval": None, "coverage": 2},
+    )
+    assert "did not run" in body
+    assert "correlation" not in body
+    assert "agree" not in body
+    assert "Chart" not in body
+
+    closing_heading, closing_body = ber._build_closing_section(
+        {"overall": "inconclusive", "reasons": ["not enough evidence"]},
+        crossval_ran=False,
+        chart_numbers={"split": 1, "crossval": None, "coverage": 2},
+    )
+    # The closing note's cross-check sentence must be entirely omitted --
+    # not merely softened -- when the cross-check didn't run this build.
+    assert "cross-check" not in closing_body.lower()
+
+
+def test_load_ticker_window_resolves_ticker_reassignment_to_center_date_permno(tmp_path):
+    """Fix 12b: a ticker symbol can be reassigned to a different company
+    over time (unlike a permno, which never is -- see the module's own
+    intro text). A window that happens to straddle such a reassignment
+    must resolve to a single permno -- the one on the row matching the
+    window's own center date -- rather than silently mixing two
+    companies' prices into one plotted series."""
+    data_dir = tmp_path / "normalized_equity"
+    dates = [f"1995-06-{d:02d}" for d in range(1, 9)]
+    rows = []
+    for i, d in enumerate(dates):
+        # First half of the window: permno 111 traded as SAME. Second
+        # half (from 06-05 onward): permno 222 has since been assigned
+        # the same ticker symbol.
+        permno = 111 if i < 4 else 222
+        rows.append({
+            "permno": permno, "ticker": "SAME", "date": d,
+            "prc": 10.0 + i, "ret": 0.01, "retx": 0.01,
+        })
+    _write_equity_year(data_dir, 1995, _equity_year_frame(rows))
+
+    # Center date 1995-06-06 falls in the permno-222 half.
+    window = ber._load_ticker_window(data_dir, 1995, "SAME", "1995-06-06", window_days=10)
+
+    assert set(window["permno"].unique()) == {222}
+    assert len(window) == 4  # only the 4 rows belonging to permno 222
 
 
 def test_split_caption_reports_real_computed_numbers(tmp_path):
