@@ -28,13 +28,15 @@ main()):
 
 1. Every I/B/E/S date column landed as VARCHAR, not a real date type --
    parsed explicitly here (see _parse_date/_parse_time).
-2. ibes.actu_epsus was pulled without a period-type indicator column
-   (I/B/E/S's actuals table can carry BOTH a quarterly and an annual
-   actual EPS under the exact same ticker/period-end/announcement-date --
-   a fiscal Q4 and fiscal year-end are the same calendar date -- and
-   without that column there is no direct way to tell them apart). See
-   resolve_actual_duplicates() for how this is handled without silently
-   guessing.
+2. ibes.actu_epsus can carry BOTH a quarterly and an annual actual EPS
+   under the exact same ticker/period-end/announcement-date (a fiscal Q4
+   and fiscal year-end are the same calendar date). An earlier version of
+   this pull lacked a period-type column and had to guess which was which
+   by proximity to analyst consensus -- a research-invalidating bug, since
+   that guess used the very quantity (the surprise) being computed. The
+   pull now includes a real `pdicity` (period-type: QTR/ANN/SAN) column,
+   and resolve_actual_duplicates() uses it directly instead of guessing.
+   See resolve_actual_duplicates() for the current logic.
 
 Usage:
     python scripts/clean_ibes_earnings.py
@@ -94,7 +96,7 @@ _ZERO_STDEV_EPSILON = 1e-6
 
 FINAL_COLUMNS = [
     "ibes_ticker", "permno", "gvkey", "identifier_matched", "identifier_ambiguous",
-    "fpedats", "anndats", "anntims", "eps_actual", "eps_actual_dup_flag",
+    "fpedats", "anndats", "anntims", "eps_actual", "eps_actual_dup_flag", "eps_actual_multiple_anndats",
     "consensus_statpers", "consensus_meanest", "consensus_medest", "consensus_stdev", "consensus_numest",
     "sue_analyst",
     "eps_year_ago", "eps_diff_yoy", "seasonal_n_prior_diffs", "seasonal_diff_stdev", "sue_seasonal",
@@ -129,19 +131,43 @@ def _parse_time(series: pd.Series) -> pd.Series:
 
 
 def clean_actuals(raw: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    """Parses dates/times and applies the currency + non-null-value filters
-    to the raw actu_epsus pull. Does NOT yet resolve (ticker, fpedats)
-    duplicates -- that needs the cleaned consensus table too (see
-    resolve_actual_duplicates()).
+    """Parses dates/times and applies the measure/currency/non-null-value
+    filters to the raw actu_epsus pull. Does NOT yet resolve (ticker,
+    fpedats) duplicates -- see resolve_actual_duplicates().
+
+    Hard-fails if `pdicity` (the period-type column: QTR/ANN/SAN) is
+    absent from the raw frame -- resolve_actual_duplicates() depends on it
+    to tell quarterly and annual actuals apart, and silently degrading to
+    a guess here is exactly the bug this column was re-pulled to fix.
 
     Returns (cleaned, stats). `cleaned` has columns
-    [ticker, fpedats, anndats, anntims, eps_actual] and may still have
-    multiple rows per (ticker, fpedats) -- real duplication, not yet
+    [ticker, fpedats, anndats, anntims, eps_actual, pdicity] and may still
+    have multiple rows per (ticker, fpedats) -- real duplication, not yet
     resolved. `stats` records how many rows were dropped at each step, for
     FINDINGS.md.
     """
     stats = {"raw_rows": len(raw)}
     df = raw.copy()
+
+    if "pdicity" not in df.columns:
+        raise ValueError(
+            "clean_actuals: raw actu_epsus pull is missing the 'pdicity' "
+            "period-type column. resolve_actual_duplicates() requires it to "
+            "distinguish quarterly from annual actuals; without it, the "
+            "only alternative is guessing from the surprise measure itself "
+            "(a research-invalidating bug this column was re-pulled to "
+            "fix). Failing loudly rather than silently degrading -- see "
+            "IBES_ACTU_EPSUS_OPTIONAL_COLUMNS in wrds_pull_lib.py."
+        )
+
+    # Almost every row is measure='EPS'; a lone EPSPAR (EPS before
+    # extraordinary items, or similar I/B/E/S variant) row has been
+    # observed in the real pull and is dropped here rather than silently
+    # mixed in with EPS actuals.
+    non_eps_mask = df["measure"] != "EPS"
+    stats["non_eps_rows_dropped"] = int(non_eps_mask.sum())
+    df = df[~non_eps_mask].copy()
+    assert (df["measure"] == "EPS").all(), "postcondition: only measure=='EPS' rows should remain"
 
     df["anndats"] = _parse_date(df["anndats"])
     df["pends"] = _parse_date(df["pends"])
@@ -158,7 +184,9 @@ def clean_actuals(raw: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     # echoes of the same USD-reported figure exist for cross-listed/ADR
     # names (see FINDINGS.md) and would otherwise show up as spurious
     # (ticker, fpedats) duplicates with wildly different "surprise" values
-    # driven by FX, not earnings.
+    # driven by FX, not earnings. This is a real universe reduction (a
+    # small number of tickers have ZERO usd rows and disappear entirely),
+    # not de-duplication -- see FINDINGS.md for the ticker-level count.
     non_usd = int((df["curr_act"] != "USD").sum())
     stats["non_usd_rows_dropped"] = non_usd
     df = df[df["curr_act"] == "USD"]
@@ -168,14 +196,16 @@ def clean_actuals(raw: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     df = df[df["value"].notna()]
 
     df = df.rename(columns={"pends": "fpedats", "value": "eps_actual"})
-    df = df[["ticker", "fpedats", "anndats", "anntims", "eps_actual"]]
+    df = df[["ticker", "fpedats", "anndats", "anntims", "eps_actual", "pdicity"]]
 
     before_exact_dedup = len(df)
     # anntims is deliberately excluded from the dedup key: two rows that
-    # agree on ticker/fpedats/anndats/eps_actual and differ only in a
-    # sub-day timestamp are the same observation for this project's
-    # purposes.
-    df = df.drop_duplicates(subset=["ticker", "fpedats", "anndats", "eps_actual"]).reset_index(drop=True)
+    # agree on ticker/fpedats/anndats/eps_actual/pdicity and differ only in
+    # a sub-day timestamp are the same observation for this project's
+    # purposes. pdicity IS part of the key -- a QTR and an ANN row must
+    # never be collapsed into one just because they happen to report an
+    # identical EPS value.
+    df = df.drop_duplicates(subset=["ticker", "fpedats", "anndats", "eps_actual", "pdicity"]).reset_index(drop=True)
     stats["exact_duplicate_rows_dropped"] = before_exact_dedup - len(df)
 
     stats["cleaned_rows"] = len(df)
@@ -283,92 +313,215 @@ def select_point_in_time_consensus(keys: pd.DataFrame, consensus: pd.DataFrame) 
 # ---------------------------------------------------------------------------
 
 
-def resolve_actual_duplicates(actuals: pd.DataFrame, consensus: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+def resolve_actual_duplicates(
+    actuals: pd.DataFrame,
+    max_qtr_loss_fraction: float = 0.05,
+    max_ambiguous_conflict_fraction: float = 0.01,
+) -> tuple[pd.DataFrame, dict]:
     """Collapses `actuals` (still possibly multiple rows per (ticker,
     fpedats) -- see clean_actuals) down to exactly one row per (ticker,
-    fpedats), per this module's docstring's item 2.
+    fpedats), using the real `pdicity` period-type column.
 
-    Two distinct kinds of duplication show up, resolved in this order:
+    `max_qtr_loss_fraction`/`max_ambiguous_conflict_fraction` are the two
+    safety-check thresholds described below, exposed as parameters (rather
+    than hardcoded) purely so small, deliberately-conflict-heavy test
+    fixtures can raise them -- a handful of manufactured conflicting rows
+    is a huge PERCENTAGE of a tiny fixture even though it is a tiny
+    percentage of the real ~291K-group dataset the defaults were verified
+    against. Production code should not need to override either default.
 
-    1. Genuinely different announcement dates for the same fiscal period
-       (a small minority -- true re-announcements/restatements). Keeps the
-       EARLIEST anndats: that is the date the market actually first
-       learned the result, which is what a PEAD study needs to key off of.
+    An earlier version of this function had no period-type column to work
+    with (the pull hadn't included one yet) and resolved quarterly-vs-
+    annual conflation by picking whichever candidate value sat closest to
+    the point-in-time analyst consensus -- selecting on the dependent
+    variable of the very surprise measure being computed, which an
+    adversarial review found to systematically strip large genuine
+    surprises. That logic is gone. Resolution now proceeds in two
+    unrelated stages:
 
-    2. Same (ticker, fpedats, anndats) but a different EPS value. This is
-       overwhelmingly I/B/E/S's actuals table carrying BOTH the quarterly
-       and the full fiscal-year actual under the same period-end date (a
-       company's Q4 and its fiscal year-end fall on the same calendar
-       date), conflated here because the pulled column set has no
-       period-type indicator to tell them apart. Resolved by picking
-       whichever candidate value sits closest to the point-in-time-safe
-       quarterly analyst consensus mean for that (ticker, fpedats) -- that
-       consensus was only ever asked to forecast the QUARTERLY figure, so
-       it sits far closer to the true quarterly actual than to a several-
-       times-larger annual one. Where no consensus is available at all to
-       compare against, falls back to the smaller-magnitude candidate
-       (quarterly EPS is smaller in magnitude than annual EPS for the same
-       company in the large majority of cases). Both paths are recorded in
-       eps_actual_dup_flag so the choice is auditable, not hidden.
+    1. Keep only pdicity == 'QTR' rows (drops ANN/SAN reporters and any
+       ANN/SAN duplicate of a QTR row for the same period-end). This is a
+       real, small universe reduction (some tickers only ever report
+       annually/semiannually and vanish here entirely) -- reported, not
+       hidden. If this drops more than 5% of (ticker, fpedats) groups, that
+       does not match the verified expectation (~2%) and this function
+       stops rather than proceeding on data that doesn't look like what
+       was checked.
+
+    2. Among the QTR-only rows, remaining (ticker, fpedats) duplicates are
+       classified by (n_anndats, n_values) computed BEFORE dropping
+       anything:
+         - n_anndats > 1: genuinely different announcement dates for the
+           same fiscal quarter (e.g. a restatement) -- keep the row with
+           the EARLIEST anndats (the date the market actually first learned
+           the result) and flag it via eps_actual_multiple_anndats.
+         - n_anndats == 1 and n_values > 1: the SAME announcement date
+           reporting more than one distinct EPS value -- a genuine value
+           conflict, not just a restatement. Flagged
+           eps_actual_dup_flag="ambiguous_same_anndats_conflict" and
+           resolved deterministically (sort by eps_actual ascending, keep
+           the first) -- never by proximity to consensus or magnitude. If
+           this affects more than 1% of groups, this function stops rather
+           than silently resolving unexpectedly-widespread conflicts.
+         - otherwise: eps_actual_dup_flag="unique".
     """
     stats = {}
     df = actuals.copy()
-    stats["rows_before_dedup"] = len(df)
-    stats["groups_before_dedup"] = df.drop_duplicates(["ticker", "fpedats"]).shape[0]
 
-    min_anndats = df.groupby(["ticker", "fpedats"])["anndats"].transform("min")
-    stats["rows_dropped_for_later_anndats"] = int((df["anndats"] != min_anndats).sum())
-    df = df[df["anndats"] == min_anndats].copy()
+    stats["rows_by_period_type"] = {str(k): int(v) for k, v in df["pdicity"].value_counts(dropna=False).items()}
 
-    dup_mask = df.duplicated(subset=["ticker", "fpedats"], keep=False)
-    unique_part = df.loc[~dup_mask].copy()
-    dup_part = df.loc[dup_mask].copy()
+    stats["rows_before_period_filter"] = len(df)
+    stats["groups_before_period_filter"] = df.drop_duplicates(["ticker", "fpedats"]).shape[0]
+    tickers_before = df["ticker"].nunique()
 
-    stats["ambiguous_value_groups"] = dup_part.drop_duplicates(["ticker", "fpedats"]).shape[0]
-    stats["ambiguous_value_rows"] = len(dup_part)
+    non_qtr_mask = df["pdicity"] != "QTR"
+    stats["non_qtr_rows_dropped"] = int(non_qtr_mask.sum())
+    df = df[df["pdicity"] == "QTR"].copy()
 
-    unique_part["eps_actual_dup_flag"] = "unique"
-
-    if len(dup_part) == 0:
-        # Short-circuit rather than concatenating with a genuinely empty
-        # 0-row frame: pandas' concat internals hit a deprecated NumPy
-        # datetime64 NA-inference path on an empty datetime64 block (a
-        # pandas/NumPy version wart, not a data issue), and there is
-        # nothing to resolve anyway.
-        stats["ambiguous_resolved_via_consensus"] = 0
-        stats["ambiguous_resolved_via_magnitude_fallback"] = 0
-        stats["rows_after_dedup"] = len(unique_part)
-        return unique_part, stats
-
-    keys = dup_part[["ticker", "fpedats", "anndats"]]
-    matched = select_point_in_time_consensus(keys, consensus)
-    dup_part = dup_part.reset_index(drop=True)
-    consensus_meanest = matched["consensus_meanest"].to_numpy()
-
-    has_ref = ~np.isnan(consensus_meanest)
-    eps_actual_values = dup_part["eps_actual"].to_numpy()
-    dist = np.where(
-        has_ref,
-        np.abs(eps_actual_values - consensus_meanest),
-        np.abs(eps_actual_values),
+    stats["groups_after_period_filter"] = df.drop_duplicates(["ticker", "fpedats"]).shape[0]
+    stats["groups_dropped_by_period_filter"] = (
+        stats["groups_before_period_filter"] - stats["groups_after_period_filter"]
     )
-    dup_part["_dist"] = dist
-    dup_part["eps_actual_dup_flag"] = np.where(has_ref, "consensus_disambiguated", "magnitude_fallback")
+    stats["tickers_vanished_after_qtr_filter"] = tickers_before - df["ticker"].nunique()
 
-    best_idx = dup_part.groupby(["ticker", "fpedats"])["_dist"].idxmin()
-    resolved = dup_part.loc[best_idx].drop(columns=["_dist"]).reset_index(drop=True)
+    loss_fraction = (
+        stats["groups_dropped_by_period_filter"] / stats["groups_before_period_filter"]
+        if stats["groups_before_period_filter"]
+        else 0.0
+    )
+    stats["period_filter_loss_fraction"] = loss_fraction
+    if loss_fraction > max_qtr_loss_fraction:
+        raise RuntimeError(
+            f"resolve_actual_duplicates: the QTR-only filter dropped "
+            f"{loss_fraction:.1%} of (ticker, fpedats) groups, exceeding "
+            f"the {max_qtr_loss_fraction:.0%} safety threshold. This does not match the verified "
+            f"expectation (~2%) -- stopping rather than silently "
+            f"proceeding on data that looks different than what was "
+            f"checked. Stats so far: {stats}"
+        )
 
-    stats["ambiguous_resolved_via_consensus"] = int((resolved["eps_actual_dup_flag"] == "consensus_disambiguated").sum())
-    stats["ambiguous_resolved_via_magnitude_fallback"] = int((resolved["eps_actual_dup_flag"] == "magnitude_fallback").sum())
+    # Deterministic sort before every drop_duplicates below: ticker/fpedats
+    # group the rows, anndats picks out the restatement case's "earliest"
+    # row, and eps_actual (ascending) both breaks ties within a shared
+    # anndats and implements the "sort ascending, take the first row" rule
+    # for genuine same-anndats value conflicts.
+    df = df.sort_values(["ticker", "fpedats", "anndats", "eps_actual"]).reset_index(drop=True)
 
-    # Same empty-frame concat wart as above, mirrored: if every row turned
-    # out to be part of an ambiguous group, unique_part is the empty side
-    # this time.
-    out = resolved if len(unique_part) == 0 else pd.concat([unique_part, resolved], ignore_index=True)
+    group_keys = ["ticker", "fpedats"]
+    n_anndats = df.groupby(group_keys)["anndats"].transform("nunique")
+    n_values = df.groupby(group_keys)["eps_actual"].transform("nunique")
+
+    multiple_anndats_mask = n_anndats > 1
+    same_anndats_conflict_mask = (n_anndats == 1) & (n_values > 1)
+    unique_mask = ~multiple_anndats_mask & ~same_anndats_conflict_mask
+
+    total_groups = stats["groups_after_period_filter"]
+    stats["groups_multiple_anndats"] = df.loc[multiple_anndats_mask].drop_duplicates(group_keys).shape[0]
+    stats["groups_ambiguous_same_anndats_conflict"] = (
+        df.loc[same_anndats_conflict_mask].drop_duplicates(group_keys).shape[0]
+    )
+    stats["groups_unique_no_conflict"] = df.loc[unique_mask].drop_duplicates(group_keys).shape[0]
+
+    ambiguous_fraction = (
+        stats["groups_ambiguous_same_anndats_conflict"] / total_groups if total_groups else 0.0
+    )
+    stats["ambiguous_same_anndats_conflict_fraction"] = ambiguous_fraction
+    if ambiguous_fraction > max_ambiguous_conflict_fraction:
+        raise RuntimeError(
+            f"resolve_actual_duplicates: {ambiguous_fraction:.2%} of "
+            f"(ticker, fpedats) groups have a genuine same-anndats value "
+            f"conflict, exceeding the {max_ambiguous_conflict_fraction:.0%} safety threshold -- stopping "
+            f"rather than silently resolving an unexpectedly large number "
+            f"of conflicts at scale. Stats so far: {stats}"
+        )
+
+    unique_part = df.loc[unique_mask].copy()
+    unique_part["eps_actual_dup_flag"] = "unique"
+    unique_part["eps_actual_multiple_anndats"] = False
+
+    # df is already sorted by [ticker, fpedats, anndats, eps_actual], so
+    # keep="first" per group deterministically keeps the earliest anndats
+    # (ties broken by the smallest eps_actual).
+    multi_anndats_part = df.loc[multiple_anndats_mask].drop_duplicates(group_keys, keep="first").copy()
+    multi_anndats_part["eps_actual_dup_flag"] = "unique"
+    multi_anndats_part["eps_actual_multiple_anndats"] = True
+
+    # n_anndats == 1 within this mask, so the group is already sorted
+    # purely by eps_actual ascending -- keep="first" implements "sort
+    # ascending, take the first row" exactly.
+    conflict_part = df.loc[same_anndats_conflict_mask].drop_duplicates(group_keys, keep="first").copy()
+    conflict_part["eps_actual_dup_flag"] = "ambiguous_same_anndats_conflict"
+    conflict_part["eps_actual_multiple_anndats"] = False
+
+    # Concatenating only the non-empty parts avoids a pandas/NumPy wart on
+    # empty datetime64 blocks (a deprecated NA-inference path that pandas
+    # warns will become a hard error in a future version) -- any one or
+    # two of these three parts is routinely empty for a given input (e.g.
+    # a ticker set with no restatements at all), and there is nothing to
+    # concatenate with in that case anyway.
+    non_empty_parts = [part for part in (unique_part, multi_anndats_part, conflict_part) if len(part) > 0]
+    out = pd.concat(non_empty_parts, ignore_index=True) if non_empty_parts else unique_part
     stats["rows_after_dedup"] = len(out)
+
     if out.duplicated(["ticker", "fpedats"]).any():
-        raise AssertionError("resolve_actual_duplicates postcondition violated: duplicates remain")
+        raise AssertionError(
+            "resolve_actual_duplicates postcondition violated: duplicate "
+            "(ticker, fpedats) rows remain after unique/multiple_anndats/"
+            "ambiguous_same_anndats_conflict resolution"
+        )
     return out, stats
+
+
+def validate_qtr_ann_consistency(actuals: pd.DataFrame, tolerance: float = 0.05) -> dict:
+    """Non-circular validation of the `pdicity` labels themselves (this
+    does not use consensus or anything else derived from the surprise
+    measure being built, so it cannot be fooled the way proximity-to-
+    consensus disambiguation was).
+
+    For (ticker, fpedats) groups where the prior 3 same-ticker fiscal
+    quarters (fpedats minus 3, 6, and 9 months) each have exactly one QTR
+    row, and the current fpedats has both a QTR row and an ANN row (each
+    unique) for the same ticker, the ANN value should approximately equal
+    the sum of the 4 QTR values if `pdicity` is correctly distinguishing
+    quarterly from annual actuals.
+
+    `actuals` must be shaped like clean_actuals()'s output (columns
+    ticker, fpedats, eps_actual, pdicity) and, importantly, must NOT yet
+    have had resolve_actual_duplicates()'s QTR-only filter applied -- this
+    needs to see both the QTR and ANN rows for the same (ticker, fpedats).
+
+    Returns {"n_cases": ..., "n_passed": ..., "pass_rate": ...} (pass_rate
+    is None if no qualifying cases were found at all).
+    """
+    df = actuals[["ticker", "fpedats", "eps_actual", "pdicity"]].drop_duplicates()
+
+    def _unique_by_group(sub: pd.DataFrame) -> pd.DataFrame:
+        counts = sub.groupby(["ticker", "fpedats"]).size()
+        unique_keys = counts[counts == 1].index
+        sub_indexed = sub.set_index(["ticker", "fpedats"])
+        return sub_indexed.loc[sub_indexed.index.isin(unique_keys), "eps_actual"].reset_index()
+
+    qtr_unique = _unique_by_group(df[df["pdicity"] == "QTR"])
+    ann_unique = _unique_by_group(df[df["pdicity"] == "ANN"]).rename(columns={"eps_actual": "ann_value"})
+
+    candidates = ann_unique.merge(qtr_unique.rename(columns={"eps_actual": "q0"}), on=["ticker", "fpedats"], how="inner")
+
+    for months, label in [(3, "q_m3"), (6, "q_m6"), (9, "q_m9")]:
+        # Shift the "prior quarter" candidates FORWARD by `months` so that
+        # a row originally at (ticker, fpedats=F-months) lines up, on
+        # merge, with the current row at (ticker, fpedats=F).
+        shifted = qtr_unique.rename(columns={"eps_actual": label}).copy()
+        shifted["fpedats"] = shifted["fpedats"] + pd.DateOffset(months=months)
+        candidates = candidates.merge(shifted, on=["ticker", "fpedats"], how="inner")
+
+    n_cases = len(candidates)
+    if n_cases == 0:
+        return {"n_cases": 0, "n_passed": 0, "pass_rate": None}
+
+    predicted_sum = candidates["q0"] + candidates["q_m3"] + candidates["q_m6"] + candidates["q_m9"]
+    passed = (candidates["ann_value"] - predicted_sum).abs() <= tolerance
+    n_passed = int(passed.sum())
+    return {"n_cases": n_cases, "n_passed": n_passed, "pass_rate": n_passed / n_cases}
 
 
 # ---------------------------------------------------------------------------
@@ -560,8 +713,9 @@ def build_event_table(
     consensus, consensus_stats = clean_consensus(statsumu_raw)
     stats["consensus"] = consensus_stats
 
-    actuals_resolved, dedup_stats = resolve_actual_duplicates(actuals, consensus)
+    actuals_resolved, dedup_stats = resolve_actual_duplicates(actuals)
     stats["dedup"] = dedup_stats
+    stats["qtr_ann_validation"] = validate_qtr_ann_consistency(actuals)
 
     keys = actuals_resolved[["ticker", "fpedats", "anndats"]]
     matched = select_point_in_time_consensus(keys, consensus)
@@ -618,6 +772,7 @@ def render_findings(panel: pd.DataFrame, stats: dict) -> str:
     dedup = stats["dedup"]
     pit = stats["point_in_time"]
     cov = stats["coverage"]
+    qtr_ann = stats["qtr_ann_validation"]
 
     anndats_min = panel["anndats"].min()
     anndats_max = panel["anndats"].max()
@@ -671,22 +826,39 @@ published strictly before the announcement it is being compared against.
 - This cleans I/B/E/S at the full resolved-universe level (every ticker that
   resolved from the 8,358-secid OptionMetrics-linked universe), not filtered
   to any pilot list -- the pilot filter is a separate, later slice.
-- Raw `actu_epsus.parquet`: {actu['raw_rows']:,} rows. After dropping {actu['non_usd_rows_dropped']:,} non-USD-denominated rows (foreign-currency echoes of the same figure for cross-listed/ADR names) and {actu['null_actual_eps_rows_dropped']:,} rows with no reported EPS value at all, {actu['cleaned_rows']:,} usable rows remained ({actu['distinct_ticker_fpedats_groups']:,} distinct company/fiscal-quarter combinations before duplicate resolution).
+- Raw `actu_epsus.parquet`: {actu['raw_rows']:,} rows. {actu['non_eps_rows_dropped']:,} row(s) were a non-EPS `measure` variant and dropped before anything else. After dropping {actu['non_usd_rows_dropped']:,} non-USD-denominated rows (foreign-currency echoes of the same figure for cross-listed/ADR names -- a real universe reduction, not de-duplication: a handful of tickers have zero USD rows and disappear from the universe entirely) and {actu['null_actual_eps_rows_dropped']:,} rows with no reported EPS value at all, {actu['cleaned_rows']:,} usable rows remained ({actu['distinct_ticker_fpedats_groups']:,} distinct company/fiscal-quarter combinations before duplicate resolution, across both quarterly and annual/semiannual reporters).
 - Raw `statsumu_epsus.parquet`: {cons['raw_rows']:,} rows. Filtered to the current-quarter consensus (`fpi='6'`, which turned out to already imply `measure='EPS'` and `fiscalp='QTR'` for every single row -- a clean filter, not three independent judgment calls) and USD-denominated: {cons['fpi6_qtr_eps_rows']:,} rows matched the fpi filter, and {cons['non_usd_rows_dropped']:,} of those were also non-USD and dropped, leaving {cons['cleaned_rows']:,} usable consensus snapshots.
 
-## A significant data-quality finding: quarterly vs. annual actuals were conflated
+## Fix: quarterly vs. annual actuals are now told apart directly, not guessed
 
-The raw `actu_epsus` pull has no column distinguishing a quarterly actual EPS
-from a full fiscal-year actual EPS (WRDS's I/B/E/S actuals table has one, but
-it was not part of this project's pulled column set). Because a company's
-fiscal Q4 and its fiscal year-end fall on the exact same calendar date, this
-means the SAME (ticker, period-end date) can carry two genuinely different,
-both-valid EPS figures -- the quarter alone, and the full year -- with no
-column saying which is which.
+A prior version of this pipeline had no column distinguishing a quarterly
+actual EPS from a full fiscal-year actual EPS in the raw `actu_epsus` pull
+(WRDS's I/B/E/S actuals table has one -- `pdicity` -- it just was not part of
+the originally pulled column set). Because a company's fiscal Q4 and its
+fiscal year-end fall on the exact same calendar date, the SAME (ticker,
+period-end date) can carry two genuinely different, both-valid EPS figures --
+the quarter alone, and the full year -- and without `pdicity` there was no
+column saying which was which.
 
-This is not a rare edge case: after removing currency/null-value noise, **{dedup['ambiguous_value_groups']:,} of {actu['distinct_ticker_fpedats_groups']:,} company/fiscal-quarter combinations ({pct(dedup['ambiguous_value_groups'], actu['distinct_ticker_fpedats_groups'])})** still had more than one distinct reported EPS value under an identical ticker/period-end/announcement-date. These are concentrated overwhelmingly in December period-ends (roughly three-quarters of the ambiguous cases, versus about a quarter of period-ends generally), which is exactly what this quarterly/annual conflation theory predicts, since December is by far the most common fiscal year-end among US public companies.
+**That prior version resolved the ambiguity by picking whichever candidate
+value sat closest to the point-in-time-safe analyst consensus** -- which is
+the numerator of `sue_analyst`, the very quantity being computed. An
+adversarial review found this systematically stripped large genuine
+surprises (the exact subpopulation a PEAD study needs) and produced an
+estimated several hundred wrong-signed events. **That logic has been
+completely removed.** `pdicity` was re-pulled and is now used directly:
 
-**How it was resolved:** for each ambiguous case, the point-in-time-safe quarterly analyst consensus (the same one used for `sue_analyst`) was looked up, and whichever of the candidate EPS values sits closer to that consensus was kept -- analysts covering a stock's quarterly estimate are forecasting the quarterly figure, so their consensus sits far closer to the true quarterly actual than to a several-times-larger annual one. {dedup['ambiguous_resolved_via_consensus']:,} rows were resolved this way. Where no consensus was available at all to compare against (no analyst coverage for that quarter), the smaller-magnitude candidate was kept instead, on the same reasoning (a single quarter's EPS is smaller in magnitude than a full year's EPS for the same company in the large majority of cases): {dedup['ambiguous_resolved_via_magnitude_fallback']:,} rows used this fallback. Every row's resolution method is recorded in the output's `eps_actual_dup_flag` column, so this choice is auditable rather than hidden. Separately, {dedup['rows_dropped_for_later_anndats']:,} rows were dropped for being a later, second announcement of the same period (a true restatement/re-announcement) -- the earliest announcement date was kept in each case, since that is when the market actually first learned the result.
+- Rows by period type: {', '.join(f"{k}: {v:,}" for k, v in dedup['rows_by_period_type'].items())}.
+- Keeping only `pdicity == 'QTR'` rows dropped {dedup['non_qtr_rows_dropped']:,} rows, taking {dedup['groups_before_period_filter']:,} (ticker, fpedats) groups down to {dedup['groups_after_period_filter']:,} ({pct(dedup['groups_dropped_by_period_filter'], dedup['groups_before_period_filter'])} of groups lost entirely -- these are ANN/SAN-only reporters with no QTR row for that period at all, a real universe reduction, not de-duplication). {dedup['tickers_vanished_after_qtr_filter']:,} tickers vanish completely (every one of their reported periods was ANN/SAN, never QTR).
+- Among the surviving QTR-only rows, {dedup['groups_multiple_anndats']:,} (ticker, fpedats) groups had genuinely different announcement dates for the same fiscal quarter (e.g. a restatement) -- the earliest anndats was kept in each case (that is when the market actually first learned the result), flagged via `eps_actual_multiple_anndats`.
+- Separately, {dedup['groups_ambiguous_same_anndats_conflict']:,} groups ({pct(dedup['groups_ambiguous_same_anndats_conflict'], dedup['groups_after_period_filter'])} of QTR groups) reported more than one distinct EPS value under the exact same announcement date -- a genuine value conflict, not a quarterly/annual mix-up. These are resolved deterministically (sort by `eps_actual` ascending, keep the first row) and flagged `eps_actual_dup_flag="ambiguous_same_anndats_conflict"` -- never by proximity to consensus or by magnitude.
+- `eps_actual_dup_flag` no longer has "consensus_disambiguated" or "magnitude_fallback" values anywhere in the code or output.
+
+**Non-circular validation of the `pdicity` labels themselves:** for (ticker,
+fpedats) groups where the 3 prior same-ticker fiscal quarters each had
+exactly one QTR row, and the current fpedats had both a QTR and an ANN row
+for the same ticker, the ANN value should approximately equal the sum of the
+4 QTR values if `pdicity` is labeling things correctly. {"Across " + format(qtr_ann['n_cases'], ",") + " such cases found in the real data, the ANN value matched the sum of the 4 QTR values (within 0.05) in " + format(qtr_ann['n_passed'], ",") + f" cases -- a {qtr_ann['pass_rate']:.1%} pass rate." if qtr_ann['pass_rate'] is not None else "No qualifying cases were found in this run's data to check."}
 
 ## The point-in-time filter's measured effect
 
