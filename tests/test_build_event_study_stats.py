@@ -17,7 +17,12 @@ import build_event_study_stats as bess  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# compute_sue_rank_pct -- rank-normalization within each sue_source group.
+# compute_sue_rank_pct -- rank-normalization within each (sue_source,
+# announcement-quarter) group. The four tests below all put every row in
+# the SAME calendar quarter -- this is the degenerate case where grouping
+# by (source, quarter) reduces to the old full-sample-per-source ranking,
+# so these pin that the new grouped rank is a strict generalization of the
+# old behavior, not a different one, when there is only one period.
 # ---------------------------------------------------------------------------
 
 
@@ -25,9 +30,12 @@ def test_compute_sue_rank_pct_produces_0_to_1_distribution_within_each_group():
     # Two sue_source groups on very different raw scales (analyst-like,
     # seasonal-like) -- the whole point of rank normalization is that each
     # group's OWN percentile rank spans 0..1 regardless of its raw scale.
+    # All rows share one anndats (one quarter) -- degenerate case: grouping
+    # by (source, quarter) here is equivalent to the old by-source-only rank.
     df = pd.DataFrame({
         "sue_primary": [100.0, 200.0, 300.0, 400.0, 1.0, 2.0, 3.0, 4.0],
         "sue_source": ["analyst"] * 4 + ["seasonal"] * 4,
+        "anndats": pd.to_datetime(["2004-02-15"] * 8),
     })
     ranks = bess.compute_sue_rank_pct(df)
 
@@ -46,6 +54,7 @@ def test_compute_sue_rank_pct_null_sue_primary_stays_null():
     df = pd.DataFrame({
         "sue_primary": [1.0, np.nan, 3.0],
         "sue_source": ["analyst", "analyst", "analyst"],
+        "anndats": pd.to_datetime(["2004-02-15"] * 3),
     })
     ranks = bess.compute_sue_rank_pct(df)
     assert pd.isna(ranks.iloc[1])
@@ -60,6 +69,7 @@ def test_compute_sue_rank_pct_all_null_group_is_all_null_not_an_error():
     df = pd.DataFrame({
         "sue_primary": [np.nan, np.nan, 5.0],
         "sue_source": ["none", "none", "analyst"],
+        "anndats": pd.to_datetime(["2004-02-15"] * 3),
     })
     ranks = bess.compute_sue_rank_pct(df)
     assert ranks.iloc[0:2].isna().all()
@@ -73,11 +83,56 @@ def test_compute_sue_rank_pct_groups_are_independent_of_each_other():
     df = pd.DataFrame({
         "sue_primary": [10.0, 20.0, 30.0, 1.0, 2.0, 10.0],
         "sue_source": ["A", "A", "A", "B", "B", "B"],
+        "anndats": pd.to_datetime(["2004-02-15"] * 6),
     })
     ranks = bess.compute_sue_rank_pct(df)
     # 10.0 is the minimum in group A (rank 1/3) and the maximum in group B (rank 1.0).
     assert ranks.iloc[0] == pytest.approx(1 / 3)
     assert ranks.iloc[5] == pytest.approx(1.0)
+
+
+def test_compute_sue_rank_pct_rounds_before_ranking_so_float_noise_ties_honestly():
+    # Two events whose sue_primary agree to 8 decimals but differ at the
+    # ~1e-16 level (the kind of noise that floating-point arithmetic
+    # introduces) must be assigned the EXACT same sue_rank_pct -- proves
+    # rounding-before-ranking, not the raw unrounded value, drives the rank.
+    a = 0.12345678
+    b = 0.12345678 + 1e-16
+    df = pd.DataFrame({
+        "sue_primary": [a, b, 0.5, 0.9],
+        "sue_source": ["analyst"] * 4,
+        "anndats": pd.to_datetime(["2004-02-15"] * 4),
+    })
+    ranks = bess.compute_sue_rank_pct(df)
+    assert ranks.iloc[0] == pytest.approx(ranks.iloc[1])
+    # And they are not simply both wrong/degenerate -- they tie at the
+    # average rank of positions 1 and 2 (pandas' default tie-handling),
+    # strictly below the two larger, non-tied values.
+    assert ranks.iloc[0] < ranks.iloc[2] < ranks.iloc[3]
+
+
+def test_compute_sue_rank_pct_ranks_within_quarter_not_full_sample():
+    # Same raw surprise value (0.0) compared against two different
+    # cross-sections: a "weak" quarter where every other event has a
+    # strongly negative surprise (0.0 ranks near the top), and a "strong"
+    # quarter where every other event has a strongly positive surprise
+    # (0.0 ranks near the bottom). If ranking pooled the full sample instead
+    # of the announcement quarter, both occurrences of 0.0 would get the
+    # identical rank -- they must NOT, which proves within-quarter ranking
+    # is actually happening, not just accepted on faith.
+    df = pd.DataFrame({
+        "sue_primary": [0.0, -5.0, -4.0, -3.0, 0.0, 5.0, 4.0, 3.0],
+        "sue_source": ["analyst"] * 8,
+        "anndats": pd.to_datetime(
+            ["2004-02-15"] * 4 + ["2004-05-15"] * 4  # 2004Q1 (weak) vs 2004Q2 (strong)
+        ),
+    })
+    ranks = bess.compute_sue_rank_pct(df)
+    weak_quarter_rank = ranks.iloc[0]  # 0.0 among {-5,-4,-3,0} -> top of its quarter
+    strong_quarter_rank = ranks.iloc[4]  # 0.0 among {0,5,4,3} -> bottom of its quarter
+    assert weak_quarter_rank == pytest.approx(1.0)
+    assert strong_quarter_rank == pytest.approx(0.25)
+    assert weak_quarter_rank != strong_quarter_rank
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +219,10 @@ def test_monotonicity_check_strictly_increasing_is_monotonic():
     result = bess.monotonicity_check([-0.02, -0.01, 0.0, 0.01, 0.02])
     assert result["strict_monotonic"] is True
     assert result["spearman_rho"] == pytest.approx(1.0)
-    assert result["spearman_p"] < 0.05
+    # spearman_p is deliberately not computed/returned -- a p-value from a
+    # 5-point asymptotic approximation is statistically meaningless (see
+    # module docstring / monotonicity_check docstring).
+    assert "spearman_p" not in result
 
 
 def test_monotonicity_check_non_monotonic_sequence_reported_honestly():
@@ -184,13 +242,16 @@ def test_quantile_sort_recovers_known_monotonic_relationship():
     value_col = rank_col * 0.10 + np.zeros(n)  # noiseless, deterministic
     df = pd.DataFrame({"rank": rank_col, "value": value_col})
 
-    records, mono = bess.quantile_sort(df, "rank", "value", n_quantiles=5)
+    records, mono, spread = bess.quantile_sort(df, "rank", "value", n_quantiles=5)
     assert len(records) == 5
     assert [r["quintile"] for r in records] == [1, 2, 3, 4, 5]
     means = [r["mean"] for r in records]
     assert means == sorted(means)
     assert mono["strict_monotonic"] is True
     assert mono["spearman_rho"] == pytest.approx(1.0)
+    assert spread["quantile_low"] == 1
+    assert spread["quantile_high"] == 5
+    assert spread["spread"] > 0
 
 
 def test_quantile_sort_reports_non_monotonic_relationship_honestly():
@@ -203,7 +264,7 @@ def test_quantile_sort_reports_non_monotonic_relationship_honestly():
     value_col = (rank_col - 0.5) ** 2  # U-shaped: high at edges, low at center
     df = pd.DataFrame({"rank": rank_col, "value": value_col})
 
-    records, mono = bess.quantile_sort(df, "rank", "value", n_quantiles=5)
+    records, mono, spread = bess.quantile_sort(df, "rank", "value", n_quantiles=5)
     means = [r["mean"] for r in records]
     assert mono["strict_monotonic"] is False
     # U-shape: middle quintile mean must be lower than the two extremes.
@@ -216,7 +277,7 @@ def test_quantile_sort_drops_rows_with_null_rank_or_value():
         "rank": [0.1, 0.2, np.nan, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
         "value": [1.0, 2.0, 3.0, np.nan, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
     })
-    records, _ = bess.quantile_sort(df, "rank", "value", n_quantiles=5)
+    records, _, _ = bess.quantile_sort(df, "rank", "value", n_quantiles=5)
     total_n = sum(r["n"] for r in records)
     # Rows at index 2 (null rank) and index 3 (null value) both drop out --
     # 8 of the original 10 rows remain.
@@ -231,10 +292,60 @@ def test_quantile_sort_quintile_1_is_lowest_rank_quintile_5_is_highest():
     # the relationship rather than just failing a magnitude check.
     value_col = -rank_col
     df = pd.DataFrame({"rank": rank_col, "value": value_col})
-    records, mono = bess.quantile_sort(df, "rank", "value", n_quantiles=5)
+    records, mono, spread = bess.quantile_sort(df, "rank", "value", n_quantiles=5)
     q1_mean = next(r["mean"] for r in records if r["quintile"] == 1)
     q5_mean = next(r["mean"] for r in records if r["quintile"] == 5)
     assert q1_mean > q5_mean  # lowest rank quintile has the highest (least negative) value
+    # spread is defined as high (Q5) minus low (Q1) -- here that is negative,
+    # since q5_mean < q1_mean by construction.
+    assert spread["spread"] == pytest.approx(q5_mean - q1_mean)
+
+
+# ---------------------------------------------------------------------------
+# quantile_spread_stats -- the Q5-Q1 headline spread, hand-computable
+# Welch t-statistic on a tiny two-group fixture.
+# ---------------------------------------------------------------------------
+
+
+def test_quantile_spread_stats_matches_hand_computed_welch_t():
+    x_low = np.array([1.0, 2.0, 3.0, 4.0])
+    x_high = np.array([10.0, 12.0, 14.0, 16.0])
+
+    result = bess.quantile_spread_stats(x_low, x_high)
+
+    mean_low, mean_high = 2.5, 13.0
+    var_low = float(np.var(x_low, ddof=1))  # 10/3
+    var_high = float(np.var(x_high, ddof=1))  # 40/3
+    expected_spread = mean_high - mean_low
+    expected_se = (var_high / 4 + var_low / 4) ** 0.5
+    expected_t = expected_spread / expected_se
+
+    assert result["n_low"] == 4
+    assert result["n_high"] == 4
+    assert result["mean_low"] == pytest.approx(mean_low)
+    assert result["mean_high"] == pytest.approx(mean_high)
+    assert result["spread"] == pytest.approx(expected_spread)
+    assert result["se"] == pytest.approx(expected_se)
+    assert result["t_stat"] == pytest.approx(expected_t)
+    # Sanity-check against the literal hand-computed numbers too.
+    assert result["spread"] == pytest.approx(10.5)
+
+
+def test_quantile_spread_stats_none_when_a_group_has_n_one():
+    result = bess.quantile_spread_stats(np.array([5.0]), np.array([1.0, 2.0, 3.0]))
+    assert result["n_low"] == 1
+    assert result["n_high"] == 3
+    assert result["mean_low"] == pytest.approx(5.0)
+    assert result["se"] is None
+    assert result["t_stat"] is None
+
+
+def test_quantile_spread_stats_none_when_se_is_zero():
+    # Both groups identical, zero-variance -> se == 0, a real 0/0, not a
+    # meaningful t-stat (mirrors summary_stats' se>0 guard).
+    result = bess.quantile_spread_stats(np.array([2.0, 2.0]), np.array([2.0, 2.0]))
+    assert result["se"] is None
+    assert result["t_stat"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -282,24 +393,35 @@ def test_spearman_ic_n_less_than_two_is_none():
 # ---------------------------------------------------------------------------
 
 
-def _synthetic_day0_ok_events(n_per_source=200, seed=7) -> pd.DataFrame:
+def _synthetic_day0_ok_events(n_per_source=300, seed=7) -> pd.DataFrame:
     """A day0_status=='ok'-shaped dataframe (the module never looks at
     day0_status itself -- that filter happens in load_day0_ok_events, at
     the DuckDB read) with a real, noisy but monotonic surprise-return
     relationship built in, across two sue_source groups on very different
-    raw scales -- exercises rank normalization, summary stats, quantile
-    sort, and Spearman IC together the way build_results actually calls
-    them."""
+    raw scales, spread across 3 calendar quarters (enough rows per
+    (source, quarter) cell for the grouped rank to be well-behaved) --
+    exercises rank normalization, summary stats, quantile sort, and
+    Spearman IC together the way build_results actually calls them.
+
+    The signal is built directly from `compute_sue_rank_pct`'s own output
+    (the exact (source, quarter)-grouped, rounded rank that build_results
+    will recompute internally) rather than a simplified by-source-only
+    rank, so the monotonic relationship this fixture bakes in is guaranteed
+    to line up with what the production code actually ranks by.
+    """
     rng = np.random.default_rng(seed)
+    quarters = pd.to_datetime(["2004-02-15", "2004-05-15", "2004-08-15"])
     rows = []
     for source, scale in (("analyst", 9.0), ("seasonal", 3.0)):
         raw_sue = rng.normal(scale=scale, size=n_per_source)
+        anndats = quarters[rng.integers(0, len(quarters), size=n_per_source)]
         rows.append(pd.DataFrame({
             "sue_primary": raw_sue,
             "sue_source": source,
+            "anndats": anndats,
         }))
     df = pd.concat(rows, ignore_index=True)
-    rank = df.groupby("sue_source")["sue_primary"].rank(pct=True)
+    rank = bess.compute_sue_rank_pct(df)  # (source, quarter)-grouped, rounded -- matches production
     noise = rng.normal(scale=0.02, size=len(df))
     signal = (rank - 0.5) * 0.05  # monotonic in rank, same for every horizon here
     for h in bess.HORIZONS:
@@ -385,6 +507,7 @@ def test_main_end_to_end_against_real_data(tmp_path, monkeypatch, capsys):
 def test_load_day0_ok_events_filters_and_projects(tmp_path):
     path = tmp_path / "events.parquet"
     cols = {"sue_primary": [1.0, 2.0], "sue_source": ["analyst", "analyst"],
+            "anndats": pd.to_datetime(["2004-02-15", "2004-05-15"]),
             "permno_contested": [False, True], "n_events_same_permno_day0": [1, 2],
             "day0_status": ["ok", "no_trading_day_at_or_after_anndats"]}
     for h in bess.HORIZONS:
