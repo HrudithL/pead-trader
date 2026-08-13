@@ -1031,15 +1031,28 @@ def test_attach_share_basis_unavailable_permno_leaves_derived_columns_null():
 
 
 def test_real_nine_named_split_events_confirm_eps_basis_discriminator(real_event_table):
-    """Regression test for the eps_basis discriminator fix (the follow-up
-    to the original split-adjustment fix): 9 real, independently-verified
-    split events, three of them different fiscal quarters of the SAME
-    ticker (TRH) -- proving the discriminator separates events on their own
-    evidence rather than keying off a ticker-level artifact. Five are
-    anndats_basis_confirmed (the original unconditional post-step
-    assumption was right); four are prestep_basis_confirmed (it was wrong,
-    and is now corrected). Replaces the old, weaker "shrank by at least 3x"
-    MBI/BGH assertions with exact expected values from the fix spec.
+    """Regression test for the eps_basis discriminator's precision fix: 9
+    real, independently-verified split events, three of them different
+    fiscal quarters of the SAME ticker (TRH) -- proving the discriminator
+    separates events on their own evidence rather than keying off a
+    ticker-level artifact.
+
+    Five are anndats_basis_confirmed (the original unconditional post-step
+    assumption was right) -- UNCHANGED by the precision fix, since
+    confirming the post-step basis is the one direction this discriminator
+    still ever asserts (measured ~99.13% precise against Compustat `niq`).
+
+    The other four (FAMR 1998-06-30, TRH 1997-06-30, IVCR 1995-09-30, VRLN
+    1997-10-31) used to be prestep_basis_confirmed. These four are
+    independently confirmed via Compustat `niq` to genuinely BE pre-step
+    cases -- the OLD code's answer was actually right for these specific
+    four, unlike AMSY/ASF/AEOS (see the negative-control test below, where
+    the identical evidence pattern was wrong). But the rule that got these
+    four right is only ~18.9% precise in general and cannot reliably tell
+    them apart from AMSY/ASF/AEOS using only this ticker's own prior-
+    quarter data, so the pipeline now correctly withholds an assertion here
+    rather than guessing -- intentionally giving up four correct answers to
+    eliminate many more wrong ones.
 
     Runs the FULL real pipeline (via the real_event_table fixture) rather
     than a hand-built mini-panel, because the discriminator needs each
@@ -1048,28 +1061,24 @@ def test_real_nine_named_split_events_confirm_eps_basis_discriminator(real_event
     """
     panel, _stats = real_event_table
 
-    # ticker, fpedats, expected eps_basis_status, expected evidence ratio,
-    # expected cfacshr_eps_basis, expected sue_analyst BEFORE this fix (i.e.
-    # under commit 7dc0c83's unconditional-cfacshr_anndats formula -- not
-    # the fully-unadjusted raw value), expected sue_analyst AFTER.
-    events = [
-        ("FEMP", "2000-09-30", "anndats_basis_confirmed", 24.64, 1.0, 0.8750, 0.8750),
-        ("MBI", "1997-09-30", "anndats_basis_confirmed", 10.50, 1.5, -16.0000, -16.0000),
-        ("BGH", "2009-09-30", "anndats_basis_confirmed", 28.75, 1.0, 10.8000, 10.8000),
-        ("TRH", "2001-06-30", "anndats_basis_confirmed", float("inf"), 1.25, -1.0000, -1.0000),
-        ("TRH", "2004-06-30", "anndats_basis_confirmed", 5.60, 1.0, 0.1667, 0.1667),
-        ("FAMR", "1998-06-30", "prestep_basis_confirmed", 5.80, 3.0, 248.5000, 8.5000),
-        ("TRH", "1997-06-30", "prestep_basis_confirmed", 14.95, 2.8125, 92.2500, 4.5000),
-        ("IVCR", "1995-09-30", "prestep_basis_confirmed", 7.67, 2.0, 61.0000, 1.0000),
-        ("VRLN", "1997-10-31", "prestep_basis_confirmed", 4.25, 1.875, 48.0000, 9.0000),
+    # ticker, fpedats, expected evidence ratio, expected cfacshr_eps_basis,
+    # expected sue_analyst BEFORE this fix (i.e. under commit 7dc0c83's
+    # unconditional-cfacshr_anndats formula -- not the fully-unadjusted raw
+    # value), expected sue_analyst AFTER. Unchanged from before the
+    # precision fix.
+    confirmed_events = [
+        ("FEMP", "2000-09-30", 24.64, 1.0, 0.8750, 0.8750),
+        ("MBI", "1997-09-30", 10.50, 1.5, -16.0000, -16.0000),
+        ("BGH", "2009-09-30", 28.75, 1.0, 10.8000, 10.8000),
+        ("TRH", "2001-06-30", float("inf"), 1.25, -1.0000, -1.0000),
+        ("TRH", "2004-06-30", 5.60, 1.0, 0.1667, 0.1667),
     ]
-
-    for ticker, fped, exp_status, exp_ratio, exp_basis, exp_before, exp_after in events:
+    for ticker, fped, exp_ratio, exp_basis, exp_before, exp_after in confirmed_events:
         mask = (panel["ibes_ticker"] == ticker) & (panel["fpedats"] == pd.Timestamp(fped))
         assert mask.sum() == 1, f"expected exactly one real row for {ticker} {fped}"
         row = panel.loc[mask].iloc[0]
 
-        assert row["eps_basis_status"] == exp_status, f"{ticker} {fped}: eps_basis_status"
+        assert row["eps_basis_status"] == "anndats_basis_confirmed", f"{ticker} {fped}: eps_basis_status"
         if np.isinf(exp_ratio):
             assert np.isinf(row["eps_basis_evidence_ratio"]), f"{ticker} {fped}: expected an inf evidence ratio"
         else:
@@ -1090,46 +1099,257 @@ def test_real_nine_named_split_events_confirm_eps_basis_discriminator(real_event
         assert sue_before == pytest.approx(exp_before, abs=0.01), f"{ticker} {fped}: sue_analyst before this fix"
         assert row["sue_analyst"] == pytest.approx(exp_after, abs=0.01), f"{ticker} {fped}: sue_analyst after this fix"
 
+    # ticker, fpedats, expected evidence ratio -- still reported (via
+    # eps_basis_evidence_ratio) for transparency even though it is no
+    # longer acted on to set a basis.
+    now_undetermined_events = [
+        ("FAMR", "1998-06-30", 5.80),
+        ("TRH", "1997-06-30", 14.95),
+        ("IVCR", "1995-09-30", 7.67),
+        ("VRLN", "1997-10-31", 4.25),
+    ]
+    for ticker, fped, exp_ratio in now_undetermined_events:
+        mask = (panel["ibes_ticker"] == ticker) & (panel["fpedats"] == pd.Timestamp(fped))
+        assert mask.sum() == 1, f"expected exactly one real row for {ticker} {fped}"
+        row = panel.loc[mask].iloc[0]
+
+        assert row["eps_basis_status"] == "basis_undetermined_ambiguous", f"{ticker} {fped}: eps_basis_status"
+        assert row["eps_basis_evidence_ratio"] == pytest.approx(exp_ratio, abs=0.01), f"{ticker} {fped}: evidence ratio"
+        assert pd.isna(row["cfacshr_eps_basis"]), f"{ticker} {fped}: cfacshr_eps_basis must now be null"
+        assert pd.isna(row["sue_analyst"]), f"{ticker} {fped}: sue_analyst must now be null"
+
+
+def test_real_negative_controls_amsy_asf_aeos_no_longer_fabricate_prestep_surprises(real_event_table):
+    """Negative controls -- the most important new tests for this fix.
+
+    AMSY (fpedats 1995-12-31), ASF (fpedats 2000-09-30), and AEOS (fpedats
+    2001-01-31) are three real events, independently arbitrated against
+    Compustat's basis-free net income (`niq`, never seen by this pipeline),
+    where the OLD discriminator's prestep_basis_confirmed call was WRONG:
+    the ticker's own prior-quarter evidence decisively favored the
+    pre-step candidate, but `niq` confirms the actual was genuinely still
+    on the post-step basis -- exactly the "strong growth quarter looks
+    identical to a stale pre-split value" confound this fix's removal is
+    based on. Under the old code, ASF's sue_analyst was fabricated as
+    -11.50 and AEOS's as -15.00 -- extreme, fake surprises. This fix must
+    null all three rows outright, not merely change their value.
+    """
+    panel, _stats = real_event_table
+    events = [("AMSY", "1995-12-31"), ("ASF", "2000-09-30"), ("AEOS", "2001-01-31")]
+    old_fabricated_sue = {"ASF": -11.50, "AEOS": -15.00}
+
+    for ticker, fped in events:
+        mask = (panel["ibes_ticker"] == ticker) & (panel["fpedats"] == pd.Timestamp(fped))
+        assert mask.sum() == 1, f"expected exactly one real row for {ticker} {fped}"
+        row = panel.loc[mask].iloc[0]
+
+        assert row["eps_basis_status"] == "basis_undetermined_ambiguous", f"{ticker} {fped}: eps_basis_status"
+        assert pd.isna(row["cfacshr_eps_basis"]), f"{ticker} {fped}: cfacshr_eps_basis must be null"
+        assert pd.isna(row["eps_actual_adj"]), f"{ticker} {fped}: eps_actual_adj must be null"
+        # pd.isna already implies "not close to" any specific finite old
+        # fabricated value, but assert it explicitly too for documentation:
+        # a null sue_analyst can never resemble a specific fabricated number.
+        assert pd.isna(row["sue_analyst"]), f"{ticker} {fped}: sue_analyst must be null"
+        if ticker in old_fabricated_sue:
+            fabricated = old_fabricated_sue[ticker]
+            assert not (pd.notna(row["sue_analyst"]) and abs(row["sue_analyst"] - fabricated) < 1.0), (
+                f"{ticker} {fped}: sue_analyst must not resemble the old fabricated value {fabricated}"
+            )
+
+
+def test_real_cfacshr_eps_basis_never_adopts_prestep_when_it_differs(real_event_table):
+    """Structural invariant -- a strong guard against ever reintroducing
+    this bug class: no row in the full real output may have
+    cfacshr_eps_basis equal to cfacshr_prestep in any case where
+    cfacshr_prestep differs from cfacshr_anndats and is non-null. I.e. the
+    pipeline must never adopt the pre-step basis, structurally, not just
+    "doesn't today."
+    """
+    panel, _stats = real_event_table
+
+    prestep_differs = (
+        panel["cfacshr_prestep"].notna()
+        & panel["cfacshr_anndats"].notna()
+        & ~np.isclose(panel["cfacshr_prestep"], panel["cfacshr_anndats"])
+    )
+    candidates = panel[prestep_differs & panel["cfacshr_eps_basis"].notna()]
+    adopted_prestep = np.isclose(candidates["cfacshr_eps_basis"], candidates["cfacshr_prestep"])
+    assert not adopted_prestep.any(), (
+        f"{int(adopted_prestep.sum())} row(s) have cfacshr_eps_basis == cfacshr_prestep despite "
+        "cfacshr_prestep differing from cfacshr_anndats -- the pipeline adopted the pre-step "
+        "basis, which this fix is supposed to make structurally impossible."
+    )
+
+
+def test_real_null_cfacshr_eps_basis_propagates_to_all_derived_columns(real_event_table):
+    """Null-propagation invariant: every row with a null cfacshr_eps_basis
+    must also have null eps_actual_adj, sue_analyst, and sue_seasonal -- an
+    undetermined basis must never silently leave a derived surprise measure
+    looking computed.
+    """
+    panel, _stats = real_event_table
+    undetermined = panel["cfacshr_eps_basis"].isna()
+    assert panel.loc[undetermined, "eps_actual_adj"].isna().all()
+    assert panel.loc[undetermined, "sue_analyst"].isna().all()
+    assert panel.loc[undetermined, "sue_seasonal"].isna().all()
+
+
+def test_resolve_eps_basis_multi_candidate_disagreement_does_not_default_to_assumed():
+    """Fix 3 regression test: a synthetic multi-candidate-permno row where
+    the candidates disagree on the resolved step, and at least one of them
+    has a real step inside this row's own (fpedats, anndats] window, must
+    NOT come out as anndats_basis_assumed. A genuine step-date ambiguity
+    must never silently default to "no basis question here" just because
+    more than one candidate permno was on the table.
+    """
+    panel = pd.DataFrame({
+        "ibes_ticker": ["MULTI"],
+        "permno": ["900,901"],
+        "fpedats": [pd.Timestamp("2000-01-01")],
+        "anndats": [pd.Timestamp("2000-02-01")],
+        "eps_actual": [1.0],
+        "cfacshr_anndats": [1.0],
+        "share_basis_status": ["no_change"],
+    })
+    # candidate 900: real in-window step (prestep 2.0); candidate 901: also
+    # a real in-window step, but a DIFFERENT prestep (3.0) -- disagreement.
+    step = _step_table([
+        (900, "1990-01-01", 2.0), (900, "2000-01-15", 1.0),
+        (901, "1990-01-01", 3.0), (901, "2000-01-20", 1.0),
+    ])
+
+    result, _stats = clean.resolve_eps_basis(panel, step)
+
+    assert result.iloc[0]["eps_basis_status"] != "anndats_basis_assumed"
+    assert result.iloc[0]["eps_basis_status"] == "basis_undetermined_ambiguous"
+    assert pd.isna(result.iloc[0]["cfacshr_eps_basis"])
+    assert pd.isna(result.iloc[0]["cfacshr_step_date"])  # no single value survived the disagreement
+
+
+def test_resolve_eps_basis_multi_candidate_agreement_proceeds_through_normal_logic():
+    """Companion to the disagreement test above: when every CRSP-covered
+    candidate permno agrees on both the resolved step date and
+    prev_cfacshr, that agreed value is used and the row proceeds through
+    the exact same reference-based logic as an ordinary single-permno row
+    -- it is not automatically forced into basis_undetermined_ambiguous
+    just because the permno happened to be multi-candidate.
+    """
+    panel = pd.DataFrame({
+        "ibes_ticker": ["AGREE", "AGREE"],
+        "permno": ["902", "902,903"],
+        "fpedats": [pd.Timestamp("1999-10-01"), pd.Timestamp("2000-01-01")],
+        "anndats": [pd.Timestamp("1999-10-20"), pd.Timestamp("2000-02-01")],
+        "eps_actual": [2.0, 2.0],
+        "cfacshr_anndats": [1.0, 1.0],
+        "share_basis_status": ["no_change", "no_change"],
+    })
+    # Both 902 and 903 agree: a real in-window step on 2000-01-15 from 2.0
+    # to 1.0. Candidate 903 has no CRSP coverage before that (never
+    # observed), so it contributes no vote -- agreement is still exact.
+    step = _step_table([(902, "1990-01-01", 2.0), (902, "2000-01-15", 1.0), (903, "2000-01-15", 1.0)])
+
+    result, stats = clean.resolve_eps_basis(panel, step)
+    current = result[result["fpedats"] == pd.Timestamp("2000-01-01")].iloc[0]
+
+    assert pd.notna(current["cfacshr_step_date"])
+    assert current["cfacshr_prestep"] == pytest.approx(2.0)
+    # With a resolved value, this row proceeds through the exact same
+    # reference-based logic as any single-permno row: the prior quarter's
+    # own eps_actual/cfacshr_anndats (2.0/1.0 = 2.0) exactly matches the
+    # post-step candidate (2.0/1.0 = 2.0) and not the pre-step candidate
+    # (2.0/2.0 = 1.0), decisively confirming the post-step basis.
+    assert current["eps_basis_status"] == "anndats_basis_confirmed"
+    assert current["eps_basis_status"] != "anndats_basis_assumed"
+    # Confirms this took the NORMAL reference-based path, not Fix 3's
+    # special-cased disagreement route (there was no disagreement here).
+    assert stats["multi_candidate_forced_ambiguous_count"] == 0
+
 
 def test_real_step_in_report_window_structural_identity(real_event_table):
-    """Structural identity: the four in-window eps_basis_status counts
-    (anndats_basis_confirmed + prestep_basis_confirmed +
-    basis_undetermined_ambiguous + basis_undetermined_no_reference) must
-    sum to exactly the number of rows with a real cfacshr step inside their
-    own (fpedats, anndats] window -- there is no fifth in-window outcome
-    and no row double-counted. On the real pull this is 1,583, matching the
-    fix spec; independently recomputed here from the panel's own
-    eps_basis_status column, not merely re-reading the stats dict the
-    production code itself already reports this number from.
+    """Structural identity, independently recomputed from the panel's own
+    columns -- not merely re-reading the stats dict the production code
+    itself already reports these numbers from.
+
+    Before Fix 3, the four in-window eps_basis_status counts summed
+    exactly to a single strict "step falls in this row's own window"
+    boolean. Fix 3 deliberately breaks that single equality: it recovers a
+    handful of multi-candidate-permno rows into basis_undetermined_
+    ambiguous WITHOUT ever resolving a single cfacshr_step_date for them
+    (no value survived the candidates' disagreement). This test checks two
+    more precise sub-identities instead of one blunt total:
+
+    1. Every anndats_basis_confirmed/basis_undetermined_no_reference row,
+       and every basis_undetermined_ambiguous row with a non-null
+       cfacshr_step_date, satisfies the strict single-valued step-in-window
+       condition recomputed here from final output columns alone.
+    2. The remaining basis_undetermined_ambiguous rows (null
+       cfacshr_step_date) are exactly Fix 3's multi-candidate-disagreement
+       rows, matching resolve_eps_basis's own internal count.
+
+    On the real pull the strict in-window count is 1,644 and the
+    multi-candidate-forced-without-a-resolved-step count is 3, summing to
+    the reported step_in_report_window_total of 1,647. A mismatch here is a
+    stop-and-report condition, not something to silently adjust.
     """
     panel, stats = real_event_table
-    in_window_statuses = [
-        "anndats_basis_confirmed", "prestep_basis_confirmed",
-        "basis_undetermined_ambiguous", "basis_undetermined_no_reference",
-    ]
-    measured = int(panel["eps_basis_status"].isin(in_window_statuses).sum())
-    assert measured == stats["eps_basis"]["step_in_report_window_total"]
-    assert measured == 1583, (
-        f"measured step_in_report_window count is {measured}, expected 1583 per the fix spec -- "
+
+    unavailable = panel["share_basis_status"].astype(str).str.startswith("unavailable_")
+    strict_w = (
+        panel["cfacshr_step_date"].notna()
+        & (panel["cfacshr_step_date"] > panel["fpedats"])
+        & (panel["cfacshr_step_date"] <= panel["anndats"])
+        & panel["cfacshr_prestep"].notna()
+        & (panel["cfacshr_prestep"] > 0)
+        & panel["cfacshr_anndats"].notna()
+        & ~np.isclose(panel["cfacshr_prestep"], panel["cfacshr_anndats"])
+        & ~unavailable
+    )
+
+    confirmed_or_no_ref = panel["eps_basis_status"].isin(["anndats_basis_confirmed", "basis_undetermined_no_reference"])
+    assert strict_w[confirmed_or_no_ref].all(), (
+        "found an anndats_basis_confirmed/basis_undetermined_no_reference row that does not "
+        "satisfy the independently-recomputed strict step-in-window condition"
+    )
+    assert panel.loc[strict_w, "eps_basis_status"].isin(
+        ["anndats_basis_confirmed", "basis_undetermined_no_reference", "basis_undetermined_ambiguous"]
+    ).all(), "found a strictly-in-window row landing on a status other than the three expected outcomes"
+
+    ambiguous = panel["eps_basis_status"] == "basis_undetermined_ambiguous"
+    ambiguous_with_step = ambiguous & panel["cfacshr_step_date"].notna()
+    ambiguous_without_step = ambiguous & panel["cfacshr_step_date"].isna()
+    assert (ambiguous_with_step == (ambiguous & strict_w)).all()
+    assert int(ambiguous_without_step.sum()) == stats["eps_basis"]["multi_candidate_forced_ambiguous_count"]
+
+    measured_strict = int(strict_w.sum())
+    measured_total = measured_strict + int(ambiguous_without_step.sum())
+    assert measured_total == stats["eps_basis"]["step_in_report_window_total"]
+    assert measured_strict == 1644, (
+        f"measured strict step-in-window count is {measured_strict}, expected 1644 -- "
+        "stop and report rather than silently adjusting this expectation."
+    )
+    assert measured_total == 1647, (
+        f"measured total in-window-or-flagged count is {measured_total}, expected 1647 -- "
         "stop and report rather than silently adjusting this expectation."
     )
 
 
 def test_real_eps_basis_status_counts_match_fix_spec(real_event_table):
-    """The exact six-value eps_basis_status count table from the fix spec.
-    A mismatch here (beyond the spec's own small-drift caveat for numbers
-    derived on top of a shipped parquet rather than a full pipeline run) is
-    a stop-and-report condition, not something to paper over.
+    """The exact six-value eps_basis_status count table after the
+    precision fix (delete the pre-step-confirming direction; split the
+    unavailable_ambiguous_permno case out of basis_unverified_no_crsp into
+    its own basis_undetermined_ambiguous_permno status). A mismatch here
+    (beyond ordinary small drift from re-pulling underlying data) is a
+    stop-and-report condition, not something to paper over.
     """
     _panel, stats = real_event_table
     counts = stats["eps_basis"]
     expected = {
-        "anndats_basis_assumed": 281066,
-        "basis_unverified_no_crsp": 5195,
-        "anndats_basis_confirmed": 679,
-        "basis_undetermined_ambiguous": 430,
-        "prestep_basis_confirmed": 268,
-        "basis_undetermined_no_reference": 206,
+        "anndats_basis_assumed": 281002,
+        "basis_unverified_no_crsp": 3063,
+        "basis_undetermined_ambiguous_permno": 2132,
+        "anndats_basis_confirmed": 689,
+        "basis_undetermined_ambiguous": 723,
+        "basis_undetermined_no_reference": 235,
     }
     for status, expected_count in expected.items():
         assert counts.get(status, 0) == expected_count, f"{status}: expected {expected_count}, got {counts.get(status, 0)}"

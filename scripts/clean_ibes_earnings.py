@@ -48,11 +48,21 @@ this script's main()):
    share-adjustment factor (cfacshr).
 4. attach_share_basis() itself, per (3), unconditionally assumed a reported
    eps_actual is already on the POST-step basis whenever a cfacshr step
-   falls between a consensus snapshot and the announcement -- wrong on
-   ~30% of the narrow subset of rows where a step instead falls inside the
-   row's own (fpedats, anndats] reporting window. resolve_eps_basis()
-   discriminates that narrow subset using each ticker's own prior-quarter
-   actual as evidence, never a future quarter. See resolve_eps_basis() and
+   falls between a consensus snapshot and the announcement. An adversarial
+   review's initial small-sample estimate put this wrong on ~30% of the
+   narrow subset of rows where a step instead falls inside the row's own
+   (fpedats, anndats] reporting window; a later, more rigorous check
+   arbitrated against Compustat's basis-free net income (`niq`) found the
+   real base rate is much lower, ~5.4%. resolve_eps_basis() discriminates
+   that narrow subset using each ticker's own prior-quarter actual as
+   evidence, never a future quarter -- but only ever CONFIRMS the
+   post-step direction (measured ~99% precise); the direction that would
+   confirm the pre-step basis was measured only ~19% precise (companies
+   routinely split stock right after a strong growth quarter, which looks
+   identical to a stale pre-split value using only this evidence) and was
+   removed entirely rather than tuned. Rows where the evidence doesn't
+   clear the bar for the post-step direction are left explicitly
+   undetermined (null), never guessed. See resolve_eps_basis() and
    FINDINGS.md's `eps_basis_status` section.
 
 Usage:
@@ -136,20 +146,48 @@ _ZERO_STDEV_EPSILON = 1e-6
 #
 # The original split-adjustment fix (attach_share_basis, below) unconditionally
 # assumed a reported eps_actual is on the POST-step (cfacshr_anndats) basis.
-# An adversarial review found that assumption wrong on ~30% of the narrow
-# subset of rows where a real cfacshr step falls inside the row's own
-# (fpedats, anndats] reporting window -- fabricating new fake extreme
-# surprises as bad as the ones the original fix corrected. resolve_eps_basis()
-# below discriminates those in-window rows using each ticker's own
-# PRIOR-quarter actual (never a future quarter, to avoid introducing a new
-# look-ahead violation).
+# An adversarial review's initial small-sample estimate put that assumption
+# wrong on ~30% of the narrow subset of rows where a real cfacshr step falls
+# inside the row's own (fpedats, anndats] reporting window -- fabricating new
+# fake extreme surprises as bad as the ones the original fix corrected.
+# resolve_eps_basis() below discriminates those in-window rows using each
+# ticker's own PRIOR-quarter actual (never a future quarter, to avoid
+# introducing a new look-ahead violation).
+#
+# A later, independent arbitration against Compustat's basis-free net income
+# (`niq`, never seen anywhere else in this pipeline) found the discriminator's
+# two directions are NOT equally trustworthy: confirming the POST-step basis
+# is ~99.13% precise (effectively reliable), but confirming the PRE-step
+# basis is only ~18.9% precise -- wrong about 4 times out of 5. Root cause: a
+# ticker's own prior-quarter level cannot tell "this is a stale pre-split
+# value" apart from "this company's earnings genuinely grew a lot this
+# quarter," and companies routinely split their stock right after a strong
+# growth quarter -- the two look identical from this evidence alone. The same
+# analysis found the TRUE base rate of genuinely-pre-step cases is only
+# ~5.4% of the in-window population (not the ~30% the first, less rigorous
+# review assumed -- that ~30% was itself an artifact of the same
+# growth/stale-split confound). At a ~5.4% base rate, no discriminator built
+# only from this ticker's own prior-quarter EPS can reliably confirm the
+# pre-step direction -- a classic low-base-rate screening problem, not a
+# threshold-tuning problem, and verified mathematically infeasible rather
+# than merely difficult. The pre-step-confirming direction was therefore
+# REMOVED entirely rather than tuned; only the post-step-confirming direction
+# is ever asserted. Everything else in-window is tagged undetermined
+# (`basis_undetermined_ambiguous` / `basis_undetermined_no_reference` /
+# `basis_undetermined_ambiguous_permno`) rather than guessed, per this
+# project's "tag, don't filter" principle -- see
+# memory/phase1-equity-pead-plan.md.
 
 # Minimum ratio between the losing and winning candidate-basis distances
-# before the prior-quarter evidence is treated as decisive. Validated
-# against 9 known-ground-truth split events: the worst true-positive
-# margin is 4.25x, so 2.0 leaves a ~2x cushion while still rejecting
-# near-ties (where the two hypotheses differ by a factor of R_c and a
-# coin flip would be materially wrong).
+# before the prior-quarter evidence is treated as decisive enough to CONFIRM
+# the post-step basis. Left at 2.0, unchanged from the original
+# discriminator: its ~99.13% precision was measured at exactly this
+# threshold, so it is not re-tuned here. (This ratio is not what made the
+# pre-step direction unreliable, and raising or lowering it would not fix
+# that direction either -- no threshold choice can separate "stale
+# pre-split value" from "genuine quarter-over-quarter earnings growth" using
+# only this ticker's own prior-quarter EPS as evidence, which is why that
+# direction was removed instead of adjusted.)
 EPS_BASIS_DECISIVE_MIN_RATIO = 2.0
 
 # Day-count bounds for accepting the immediately-preceding panel row as
@@ -964,6 +1002,124 @@ def resolve_share_basis(
     return result_value, result_status
 
 
+def _resolve_multi_candidate_step(
+    step_table: pd.DataFrame, permno_raw: pd.Series, anndats: pd.Series, fpedats: pd.Series
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Per-candidate resolution of the most recent REAL cfacshr change (a
+    `step_table` row with `is_change=True`) at or before `anndats`, for each
+    row's `permno_raw` -- the same explode/merge_asof/agree pattern
+    resolve_share_basis() uses above for cfacshr_anndats, adapted here to
+    resolve a (step date, prev_cfacshr) PAIR instead of a single cfacshr
+    value, and to separately flag rows where candidates disagree but at
+    least one of them still has a real step inside this row's own
+    (fpedats, anndats].
+
+    resolve_eps_basis() used to resolve this with a single
+    `pd.to_numeric(permno_raw, errors="coerce")` cast, which silently turned
+    every comma-joined multi-candidate permno string to NaN and dropped it
+    from the in-window check entirely -- even on rows where
+    attach_share_basis()'s OWN candidate resolution (resolve_share_basis(),
+    above) had already agreed on cfacshr_anndats for that same row. This
+    function resolves every candidate independently instead.
+
+    A candidate "agrees" with another only if both its resolved step date
+    AND its prev_cfacshr match (prev_cfacshr rounded to 8 decimals, to avoid
+    a false disagreement from floating-point noise) -- matching on only one
+    of the two fields would not actually pin down a single (date,
+    prev_cfacshr) pair. A candidate with no resolvable prior real change at
+    all (by far the common case -- most permnos never split) is treated as
+    uninformative, not as disagreeing with an informative candidate, the
+    same way resolve_share_basis() treats an uncovered candidate as simply
+    not contributing a vote rather than as a disagreement.
+
+    Returns (step_date, prev_cfacshr, any_candidate_step_in_window), aligned
+    to permno_raw's index:
+      step_date, prev_cfacshr -- the single agreed value (both null if every
+        candidate has no resolvable prior real change, if permno_raw itself
+        is null/empty, or if candidates disagree -- see below).
+      any_candidate_step_in_window -- True if at least one candidate's OWN
+        resolved step lands inside this row's own (fpedats, anndats], even
+        when candidates disagree and step_date/prev_cfacshr above are
+        therefore both null. resolve_eps_basis() uses this to force
+        `basis_undetermined_ambiguous` rather than silently letting a
+        genuine step-date disagreement fall through to
+        `anndats_basis_assumed` just because no single agreed value
+        survived the disagreement.
+    """
+    idx = permno_raw.index
+    out_step_date = pd.Series(pd.NaT, index=idx, dtype="datetime64[ns]")
+    out_prev_cfacshr = pd.Series(np.nan, index=idx, dtype="float64")
+    out_any_in_window = pd.Series(False, index=idx, dtype="bool")
+
+    permno_str = permno_raw.astype("string")
+    has_permno = permno_str.notna() & (permno_str.str.len() > 0)
+    if not has_permno.any():
+        return out_step_date, out_prev_cfacshr, out_any_in_window
+
+    work = pd.DataFrame({
+        "_row_id": np.asarray(idx[has_permno]),
+        "_permno_str": permno_str[has_permno].to_numpy(),
+        "_anndats": pd.Series(np.asarray(anndats[has_permno]), dtype="datetime64[ns]"),
+        "_fpedats": pd.Series(np.asarray(fpedats[has_permno]), dtype="datetime64[ns]"),
+    })
+    work = work.assign(_candidate=work["_permno_str"].str.split(",")).explode("_candidate", ignore_index=True)
+    work["_candidate"] = pd.to_numeric(work["_candidate"], errors="coerce").astype("float64")
+    work = work.sort_values("_anndats", kind="mergesort")
+
+    right = (
+        step_table.loc[step_table["is_change"], ["permno", "date", "prev_cfacshr"]]
+        .rename(columns={"permno": "_candidate", "date": "_step_date"})
+        .sort_values("_step_date", kind="mergesort")
+    )
+    merged = pd.merge_asof(
+        work, right, left_on="_anndats", right_on="_step_date", by="_candidate", direction="backward"
+    )
+
+    # A candidate is "covered" (has a real, usable prior step to vote with)
+    # only if merge_asof found one AND it is strictly positive -- the same
+    # positivity guard as Fix 2 below, applied here so a zero/negative
+    # prev_cfacshr can never masquerade as a real candidate step either.
+    covered = merged["_step_date"].notna() & merged["prev_cfacshr"].notna() & (merged["prev_cfacshr"] > 0)
+
+    in_window = covered & (merged["_step_date"] > merged["_fpedats"]) & (merged["_step_date"] <= merged["_anndats"])
+    any_in_window = in_window.groupby(merged["_row_id"]).any()
+
+    covered_only = merged.loc[covered, ["_row_id", "_step_date", "prev_cfacshr"]].copy()
+    covered_only["_prev_cfacshr_r"] = covered_only["prev_cfacshr"].round(8)
+    # Number of DISTINCT (step date, rounded prev_cfacshr) pairs among this
+    # row's covered candidates: 0 (no candidate has a resolvable prior real
+    # change) and 1 (every covered candidate agrees -- this is also what a
+    # single, plain (non-comma) permno always reduces to, since it can only
+    # ever contribute one candidate) both resolve; 2+ is a genuine
+    # disagreement.
+    n_distinct = (
+        covered_only.drop_duplicates(["_row_id", "_step_date", "_prev_cfacshr_r"])
+        .groupby("_row_id").size()
+        .reindex(pd.Index(work["_row_id"].unique()), fill_value=0)
+    )
+
+    first = covered_only.groupby("_row_id")[["_step_date", "prev_cfacshr"]].first()
+    agreed_ids = n_distinct.index[n_distinct <= 1]
+    disagreed_ids = n_distinct.index[n_distinct > 1]
+    agreed_with_value = first.index.intersection(agreed_ids)
+    out_step_date.loc[agreed_with_value] = first.loc[agreed_with_value, "_step_date"].to_numpy()
+    out_prev_cfacshr.loc[agreed_with_value] = first.loc[agreed_with_value, "prev_cfacshr"].to_numpy()
+
+    # any_candidate_step_in_window is only meaningful -- and only ever set
+    # True -- for rows where candidates DISAGREED (disagreed_ids). An
+    # agreed row (including every ordinary single-candidate row, which by
+    # construction can never disagree with itself) already gets a single
+    # resolved step_date/prev_cfacshr above, and the normal
+    # step_in_report_window logic downstream handles it correctly on its
+    # own -- it must NOT also be flagged here, or it would wrongly force
+    # basis_undetermined_ambiguous onto rows that should instead be free to
+    # land on anndats_basis_confirmed or basis_undetermined_no_reference.
+    any_in_window_disagreed = any_in_window.reindex(disagreed_ids, fill_value=False)
+    out_any_in_window.loc[any_in_window_disagreed.index] = any_in_window_disagreed.to_numpy()
+
+    return out_step_date, out_prev_cfacshr, out_any_in_window
+
+
 def attach_share_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """Adds cfacshr_anndats, cfacshr_statpers, and share_basis_status to
     `panel` (which must already have `permno`, `anndats`,
@@ -975,16 +1131,24 @@ def attach_share_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[p
 
     Does NOT set `eps_actual_adj` -- an earlier version of this function
     unconditionally computed it as `eps_actual / cfacshr_anndats`, which an
-    adversarial review found wrong on ~30% of the narrow subset of rows
-    where a real cfacshr step falls inside the row's own (fpedats, anndats]
-    reporting window (it assumes the reported actual is always already on
-    the POST-step basis, which is not always true). That assignment moved
-    to resolve_eps_basis() (below, called immediately after this function
-    in build_event_table), which discriminates the in-window rows first and
+    adversarial review's initial estimate found wrong on ~30% of the narrow
+    subset of rows where a real cfacshr step falls inside the row's own
+    (fpedats, anndats] reporting window (it assumes the reported actual is
+    always already on the POST-step basis, which is not always true; a
+    later check arbitrated against Compustat found the real base rate is
+    ~5.4%, not 30%, but the unconditional assumption is still wrong often
+    enough to be worth correcting). That assignment moved to
+    resolve_eps_basis() (below, called immediately after this function in
+    build_event_table), which either CONFIRMS the post-step basis for the
+    in-window rows where the evidence decisively supports it, or leaves
+    `cfacshr_eps_basis` null (undetermined) otherwise -- it never asserts
+    the pre-step basis instead, since that direction was measured too
+    imprecise to trust (~19%; see resolve_eps_basis()'s own docstring). It
     sets `eps_actual_adj = eps_actual / cfacshr_eps_basis` -- the corrected
-    divisor -- for every row, not just the in-window ones. This function
-    still runs first because resolve_eps_basis() needs `cfacshr_anndats`
-    and `share_basis_status` as inputs.
+    divisor, null where undetermined -- for every row, not just the
+    in-window ones. This function still runs first because
+    resolve_eps_basis() needs `cfacshr_anndats` and `share_basis_status` as
+    inputs.
 
     share_basis_status describes the cfacshr_anndats resolution
     specifically: "no_change" if resolved and equal to 1.0 (CRSP resets
@@ -1032,9 +1196,10 @@ def resolve_eps_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[pd
     the row's own reporting window `(fpedats, anndats]` -- outside that
     window there is no ambiguity to resolve, and the prior assumption is
     kept as-is (`eps_basis_status="anndats_basis_assumed"`). An adversarial
-    review found the unconditional version wrong on ~30% of that narrow
-    in-window subset, fabricating fake extreme surprises as bad as the ones
-    the original split-adjustment fix (attach_share_basis) was fixing.
+    review's initial small-sample estimate put the unconditional version
+    wrong on ~30% of that narrow in-window subset, fabricating fake extreme
+    surprises as bad as the ones the original split-adjustment fix
+    (attach_share_basis) was fixing.
 
     Inside the window, this discriminates between two hypotheses -- the
     actual is already on the post-step basis (`cfacshr_anndats`), or it is
@@ -1044,34 +1209,74 @@ def resolve_eps_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[pd
     closer to that ticker's own recent normal scale. The prior quarter is
     used deliberately, never a future one: using the NEXT quarter to
     resolve row t's basis would let a later publication flip row t's
-    surprise sign, a real look-ahead violation. The two hypotheses are only
-    trusted apart when one fits decisively better (see
-    EPS_BASIS_DECISIVE_MIN_RATIO); otherwise the row is left explicitly
-    undetermined rather than guessed.
+    surprise sign, a real look-ahead violation.
+
+    **Only the post-step hypothesis can ever be CONFIRMED here.** An
+    independent arbitration of this exact discriminator against
+    Compustat's basis-free net income (`niq`) found its two directions are
+    not equally trustworthy: confirming the post-step basis (decisive
+    ratio, and the prior-quarter reference sits closer to the post-step
+    candidate) is ~99.13% precise, but confirming the pre-step basis
+    (decisive ratio, reference closer to the pre-step candidate) is only
+    ~18.9% precise -- wrong about 4 times out of 5, because a ticker's own
+    prior-quarter level cannot tell "this is a stale pre-split value" apart
+    from "this company's earnings genuinely grew a lot this quarter," and
+    companies routinely split their stock right after a strong growth
+    quarter. The same arbitration found the true base rate of genuinely
+    pre-step cases in this in-window population is only ~5.4% -- at that
+    base rate no discriminator built only from this ticker's own
+    prior-quarter EPS can reliably confirm the pre-step direction, so that
+    direction has been REMOVED entirely rather than tuned (see
+    EPS_BASIS_DECISIVE_MIN_RATIO's own comment -- no threshold adjustment
+    fixes this). A decisive ratio that favors the pre-step candidate is now
+    just one more way to land in `basis_undetermined_ambiguous`, tagged via
+    `eps_basis_evidence_ratio` for transparency but never acted on. Rows
+    are only ever confirmed post-step or left explicitly undetermined,
+    never guessed pre-step.
 
     Requires `panel` to already carry permno, fpedats, anndats, eps_actual,
     cfacshr_anndats, share_basis_status, and ibes_ticker (attach_share_basis
     must run first). Returns a copy of `panel` with five new columns:
       cfacshr_step_date, cfacshr_prestep -- the most recent REAL cfacshr
         change at or before anndats for this row's permno, and the cfacshr
-        in force immediately before it (both null if none/unresolvable).
+        in force immediately before it (both null if none/unresolvable, or
+        if permno is a comma-joined multi-candidate string whose candidates
+        do not all agree on both values -- see
+        _resolve_multi_candidate_step()). `cfacshr_prestep` is exported for
+        transparency (so a downstream user can reconstruct the pre-step
+        hypothesis themselves) but is NEVER used as the divisor for
+        `cfacshr_eps_basis` -- see `basis_undetermined_ambiguous` below.
       cfacshr_eps_basis -- the single divisor to use everywhere downstream
         for this row's eps_actual (null means undetermined).
       eps_basis_status -- one of six values: "anndats_basis_assumed" (out
         of window, prior behavior kept), "basis_unverified_no_crsp"
-        (share_basis_status is one of the "unavailable_*" statuses -- no
-        rescaling attempted, cfacshr_eps_basis=1.0, explicitly tagged
-        rather than silently defaulted), "basis_undetermined_no_reference"
-        (in window, but no usable prior-quarter reference),
-        "basis_undetermined_ambiguous" (in window, reference exists, but
-        the two hypotheses are not decisively separable),
+        (share_basis_status is "unavailable_no_permno",
+        "unavailable_no_target_date", or "unavailable_no_crsp_coverage" --
+        no rescaling attempted, cfacshr_eps_basis=1.0, explicitly tagged
+        rather than silently defaulted -- see build_event_table for why
+        this fail-open default is a disclosed tradeoff, not a silent one),
+        "basis_undetermined_ambiguous_permno" (share_basis_status is
+        specifically "unavailable_ambiguous_permno" -- multiple candidate
+        permnos disagree on cfacshr_anndats itself; cfacshr_eps_basis is
+        null here, NOT 1.0, since this is a real data ambiguity rather than
+        "nothing to rescale"), "basis_undetermined_no_reference" (in
+        window, but no usable prior-quarter reference),
         "anndats_basis_confirmed" (in window, decisive, current code was
-        right), "prestep_basis_confirmed" (in window, decisive, current
-        code was wrong -- the actual was still pre-step).
+        right), "basis_undetermined_ambiguous" (in window with a usable
+        reference,
+        but the evidence does not decisively confirm the post-step basis
+        -- including the case where it instead decisively favors the
+        pre-step candidate, which is recorded via `eps_basis_evidence_ratio`
+        but not acted on, per this function's own docstring above; also
+        covers a comma-joined multi-candidate permno whose candidates
+        disagree on the resolved step while at least one of them has a
+        real step inside this row's own window).
       eps_basis_evidence_ratio -- the decisiveness ratio (max/min distance
-        to the prior-quarter reference), non-null only where the
-        discriminator actually ran (i.e. the row is in-window with a usable
-        reference).
+        to the prior-quarter reference), non-null only where a single
+        candidate step was actually resolved and evaluated against a usable
+        reference (i.e. the row is in-window with a usable reference) --
+        null for the multi-candidate-disagreement rows above, since there
+        is no single cfacshr_prestep to compute a ratio against.
     Also sets `eps_actual_adj = eps_actual / cfacshr_eps_basis` here rather
     than in attach_share_basis (which runs before cfacshr_eps_basis exists)
     -- see attach_share_basis's docstring.
@@ -1081,31 +1286,23 @@ def resolve_eps_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[pd
     df = panel.copy()
 
     # --- 4.1: last real cfacshr change at or before anndats, per permno ---
-    # Cast permno to float64 to match the step table's dtype -- a raw
-    # string/int mismatch raises MergeError: incompatible merge keys.
-    # Multi-candidate (comma-joined) permno strings deliberately fail this
-    # cast to NaN rather than being resolved per candidate: they get null
-    # cfacshr_step_date/cfacshr_prestep and fall through to
-    # anndats_basis_assumed or basis_unverified_no_crsp below.
-    left = pd.DataFrame({
-        "_row_id": np.arange(len(df)),
-        "anndats": df["anndats"].to_numpy(),
-        "_permno": pd.to_numeric(df["permno"], errors="coerce").astype("float64").to_numpy(),
-    }).sort_values("anndats", kind="mergesort")
-
-    right = (
-        step_table.loc[step_table["is_change"], ["permno", "date", "prev_cfacshr"]]
-        .rename(columns={"permno": "_permno", "date": "_step_date"})
-        .sort_values("_step_date", kind="mergesort")
+    # Resolved per-candidate via _resolve_multi_candidate_step() (the same
+    # explode/merge_asof/agree pattern resolve_share_basis() uses for
+    # cfacshr_anndats) rather than a plain pd.to_numeric(errors="coerce")
+    # cast -- an earlier version of this function used that cast directly,
+    # which silently turned every comma-joined multi-candidate permno
+    # string to NaN and dropped it from the in-window check entirely, even
+    # on rows where attach_share_basis()'s own candidate resolution had
+    # already agreed on cfacshr_anndats for that same row (undercounting
+    # step_in_report_window by several dozen rows on the real pull -- see
+    # FINDINGS.md). `multi_candidate_ambiguous_step` (used in 4.2 below)
+    # catches the residual case: candidates that disagree on the step
+    # itself, where at least one of them still has a real step in window.
+    step_date, prev_cfacshr, multi_candidate_ambiguous_step = _resolve_multi_candidate_step(
+        step_table, df["permno"], df["anndats"], df["fpedats"]
     )
-
-    merged = (
-        pd.merge_asof(left, right, left_on="anndats", right_on="_step_date", by="_permno", direction="backward")
-        .set_index("_row_id")
-        .reindex(np.arange(len(df)))
-    )
-    df["cfacshr_step_date"] = merged["_step_date"].to_numpy()
-    df["cfacshr_prestep"] = merged["prev_cfacshr"].to_numpy()
+    df["cfacshr_step_date"] = step_date.to_numpy()
+    df["cfacshr_prestep"] = prev_cfacshr.to_numpy()
 
     # --- 4.2: row scope -- does a cfacshr step land in (fpedats, anndats]? ---
     unavailable = df["share_basis_status"].astype(str).str.startswith("unavailable_")
@@ -1114,11 +1311,29 @@ def resolve_eps_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[pd
         & (df["cfacshr_step_date"] > df["fpedats"])       # strictly after period end
         & (df["cfacshr_step_date"] <= df["anndats"])      # at or before announcement
         & df["cfacshr_prestep"].notna()
+        # Fix 2: positivity guard. _resolve_multi_candidate_step() above
+        # already excludes a non-positive prev_cfacshr from ever being
+        # "covered" (so any cfacshr_prestep reaching this line today is
+        # already positive) -- this check is deliberately kept anyway as a
+        # local, self-contained invariant on THIS mask, so its correctness
+        # never silently depends on a reader tracing through that other
+        # function's internals. Latent today; cheap and correct regardless.
+        & (df["cfacshr_prestep"] > 0)
         & df["cfacshr_anndats"].notna()
         & ~np.isclose(df["cfacshr_prestep"], df["cfacshr_anndats"])
         & ~unavailable
     )
     df["_step_in_report_window"] = step_in_report_window
+    # A multi-candidate permno row where the candidates disagree on the
+    # resolved step (so no single cfacshr_step_date/cfacshr_prestep
+    # survived 4.1 above, and step_in_report_window is therefore False for
+    # it) but at least one candidate's OWN step still falls inside this
+    # row's own (fpedats, anndats] -- gated by ~unavailable so it never
+    # overrides the unavailable_* handling in 4.6, which already produces
+    # an honest null-basis outcome for those rows via a different route.
+    # This must never silently fall through to anndats_basis_assumed: a
+    # genuine step-date ambiguity is not "no basis question here."
+    df["_multi_candidate_ambiguous_step"] = (multi_candidate_ambiguous_step & ~unavailable).to_numpy()
 
     # --- 4.3: prior-quarter reference (point-in-time safe: prior rows only) ---
     # The panel is NOT sorted by (ibes_ticker, fpedats) at this point in
@@ -1159,34 +1374,89 @@ def resolve_eps_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[pd
     status = pd.Series("anndats_basis_assumed", index=sorted_df.index, dtype=object)
     basis = sorted_df["cfacshr_anndats"].copy()
 
-    unavailable_sorted = sorted_df["share_basis_status"].astype(str).str.startswith("unavailable_")
+    # Fix 4: share_basis_status's "unavailable_*" umbrella used to map to a
+    # single blanket eps_basis_status ("basis_unverified_no_crsp",
+    # cfacshr_eps_basis=1.0) regardless of WHICH unavailable_* reason
+    # applied. "unavailable_ambiguous_permno" specifically means multiple
+    # candidate permnos disagreed on cfacshr_anndats itself -- a real data
+    # ambiguity, not "nothing to rescale" -- so it gets its own status and a
+    # null basis, split out below rather than defaulting to 1.0. The other
+    # three unavailable_* reasons (no permno, no target date, no CRSP
+    # coverage) genuinely have no basis information to work with at all;
+    # 1.0 (no rescaling) is the only sane default for them, disclosed as a
+    # fail-open tradeoff in build_event_table/FINDINGS.md rather than left
+    # unstated.
+    share_basis_status_sorted = sorted_df["share_basis_status"].astype(str)
+    unavailable_sorted = share_basis_status_sorted.str.startswith("unavailable_")
+    ambiguous_permno_sorted = share_basis_status_sorted == "unavailable_ambiguous_permno"
+
     status[unavailable_sorted] = "basis_unverified_no_crsp"
     basis[unavailable_sorted] = 1.0
+    status[ambiguous_permno_sorted] = "basis_undetermined_ambiguous_permno"
+    basis[ambiguous_permno_sorted] = np.nan
 
     sel = W & ~reference_ok
     status[sel] = "basis_undetermined_no_reference"
     basis[sel] = np.nan
 
-    sel = W & reference_ok & (ratio < EPS_BASIS_DECISIVE_MIN_RATIO)
-    status[sel] = "basis_undetermined_ambiguous"
-    basis[sel] = np.nan
+    # Fix 1: the pre-step-confirming direction is REMOVED. Only a decisive
+    # ratio THAT ALSO favors the post-step candidate (d_post < d_pre) is
+    # ever confirmed -- measured ~99.13% precise against Compustat `niq`.
+    # Everything else in-window with a usable reference (an indecisive
+    # ratio, OR a decisive ratio that instead favors the pre-step
+    # candidate) collapses into a single basis_undetermined_ambiguous
+    # outcome: that direction was measured only ~18.9% precise (wrong
+    # about 4 times out of 5, because a strong organic growth quarter looks
+    # identical to a stale pre-split value using only this ticker's own
+    # prior-quarter EPS) and is tagged, not acted on -- see this function's
+    # docstring and EPS_BASIS_DECISIVE_MIN_RATIO's comment for why no
+    # threshold adjustment fixes that direction.
+    post_step_confirmed = (ratio >= EPS_BASIS_DECISIVE_MIN_RATIO) & (d_post < d_pre)
 
-    sel = W & reference_ok & (ratio >= EPS_BASIS_DECISIVE_MIN_RATIO) & (d_post < d_pre)
+    sel = W & reference_ok & post_step_confirmed
     status[sel] = "anndats_basis_confirmed"
     basis[sel] = sorted_df.loc[sel, "cfacshr_anndats"]
 
-    sel = W & reference_ok & (ratio >= EPS_BASIS_DECISIVE_MIN_RATIO) & ~(d_post < d_pre)
-    status[sel] = "prestep_basis_confirmed"
-    basis[sel] = sorted_df.loc[sel, "cfacshr_prestep"]
+    sel = W & reference_ok & ~post_step_confirmed
+    status[sel] = "basis_undetermined_ambiguous"
+    basis[sel] = np.nan
+
+    # Diagnostic only -- does not affect status or basis. Of the rows just
+    # folded into basis_undetermined_ambiguous above, this is specifically
+    # the subset with a DECISIVE ratio that favors the pre-step candidate --
+    # i.e. exactly the population the removed prestep_basis_confirmed
+    # status used to claim. Reported in FINDINGS.md so the fix's impact is
+    # traceable to a concrete, freshly-measured row count.
+    would_have_been_prestep_confirmed = int((W & reference_ok & (ratio >= EPS_BASIS_DECISIVE_MIN_RATIO) & ~post_step_confirmed).sum())
+
+    # Fix 3: a comma-joined multi-candidate permno row whose candidates
+    # disagree on the resolved step (so W is False for it -- no single
+    # agreed cfacshr_step_date survived the disagreement in 4.1/4.2 above),
+    # but at least one candidate's own step still falls inside this row's
+    # own (fpedats, anndats]. Disjoint from every sel above by construction
+    # (_multi_candidate_ambiguous_step is only ever True where W is False),
+    # so this cannot overwrite a real confirmed/no-reference outcome -- it
+    # only catches rows that would otherwise silently fall through to the
+    # anndats_basis_assumed default despite a genuine step-date question.
+    sel = sorted_df["_multi_candidate_ambiguous_step"]
+    status[sel] = "basis_undetermined_ambiguous"
+    basis[sel] = np.nan
+    # Diagnostic only: how many rows landed in basis_undetermined_ambiguous
+    # specifically via this Fix-3 multi-candidate-disagreement route, as
+    # opposed to the reference-based route above -- reported in FINDINGS.md
+    # so the fix's real magnitude is traceable to a concrete row count.
+    multi_candidate_forced_ambiguous_count = int(sel.sum())
 
     sorted_df["eps_basis_status"] = status
     sorted_df["cfacshr_eps_basis"] = basis
     sorted_df["eps_actual_adj"] = sorted_df["eps_actual"] / sorted_df["cfacshr_eps_basis"]
 
     # --- restore the caller's original row order ---
-    out = sorted_df.reindex(df.index).drop(columns=["_step_in_report_window"])
+    out = sorted_df.reindex(df.index).drop(columns=["_step_in_report_window", "_multi_candidate_ambiguous_step"])
 
     stats = {str(k): int(v) for k, v in out["eps_basis_status"].value_counts(dropna=False).items()}
+    stats["prestep_direction_would_have_confirmed"] = would_have_been_prestep_confirmed
+    stats["multi_candidate_forced_ambiguous_count"] = multi_candidate_forced_ambiguous_count
     return out, stats
 
 
@@ -1386,12 +1656,27 @@ def build_event_table(
     # eps_basis: discriminates the narrow subset of rows where a real
     # cfacshr step falls inside (fpedats, anndats] -- see resolve_eps_basis
     # for why attach_share_basis's unconditional post-step assumption is
-    # wrong on ~30% of exactly that subset. Sets cfacshr_eps_basis (the
-    # corrected divisor used everywhere below) and eps_actual_adj.
+    # wrong on ~5.4% of exactly that subset (an adversarial review's initial
+    # small-sample estimate put this at ~30%; a later, Compustat-arbitrated
+    # check found the real base rate is much lower). Sets cfacshr_eps_basis
+    # (the corrected divisor used everywhere below) and eps_actual_adj. Only
+    # the post-step-confirming direction is ever asserted (~99% precise);
+    # the pre-step-confirming direction (~19% precise) was removed rather
+    # than tuned -- see resolve_eps_basis's own docstring.
     panel, eps_basis_stats = resolve_eps_basis(panel, cfacshr_step_table)
     stats["eps_basis"] = eps_basis_stats
+    # basis_undetermined_ambiguous now also covers the (disjoint, W=False)
+    # multi-candidate-permno-disagreement rows from Fix 3 -- see
+    # resolve_eps_basis's own docstring -- so this total is "in window, OR
+    # flagged ambiguous because at least one candidate permno's own step
+    # was in window but candidates disagreed," not a pure W-boolean sum.
+    # basis_undetermined_ambiguous_permno is deliberately EXCLUDED: it fires
+    # purely off share_basis_status (attach_share_basis's own multi-
+    # candidate agreement on cfacshr_anndats), independent of whether a step
+    # falls in this row's own window at all -- the same reason
+    # basis_unverified_no_crsp was already excluded before this fix.
     in_window_statuses = (
-        "anndats_basis_confirmed", "prestep_basis_confirmed",
+        "anndats_basis_confirmed",
         "basis_undetermined_ambiguous", "basis_undetermined_no_reference",
     )
     stats["eps_basis"]["step_in_report_window_total"] = sum(
@@ -1431,36 +1716,67 @@ def build_event_table(
     # pre-any-split-fix raw sue_analyst tracked elsewhere. Per the fix
     # spec's own caveat, this is reported honestly rather than oversold as
     # "shrinking the tail": the value of this fix is that the REMAINING
-    # large values are real actual-vs-consensus gaps, not basis artifacts,
-    # and the tail count can legitimately rise for some rows (e.g. a
-    # prestep_basis_confirmed row landing on a genuinely tiny analyst
-    # stdev).
+    # large values are real actual-vs-consensus gaps, not basis artifacts.
     cfacshr_ratio_old_unconditional = (panel["cfacshr_statpers"] / panel["cfacshr_anndats"]).fillna(1.0)
     sue_analyst_old_unconditional = compute_sue_analyst(
         panel["eps_actual"] * cfacshr_ratio_old_unconditional, panel["consensus_meanest"], panel["consensus_stdev"]
     )
     old_extreme10 = sue_analyst_old_unconditional.abs() > 10
     new_extreme10 = panel["sue_analyst"].abs() > 10
-    prestep_mask = panel["eps_basis_status"] == "prestep_basis_confirmed"
+    # Reconstructed from output columns alone: a basis_undetermined_ambiguous
+    # row with a DECISIVE evidence_ratio (>= EPS_BASIS_DECISIVE_MIN_RATIO)
+    # must be exactly the case that favored the pre-step candidate -- had it
+    # favored post-step instead, it would have been anndats_basis_confirmed,
+    # not ambiguous. This is exactly the population the removed
+    # prestep_basis_confirmed status used to claim -- must match
+    # resolve_eps_basis's own "prestep_direction_would_have_confirmed"
+    # diagnostic, asserted below as an internal consistency check.
+    would_have_been_prestep_mask = (
+        (panel["eps_basis_status"] == "basis_undetermined_ambiguous")
+        & (panel["eps_basis_evidence_ratio"] >= EPS_BASIS_DECISIVE_MIN_RATIO)
+    )
     stats["eps_basis_fix_tail"] = {
         "extreme10_left": int((old_extreme10 & ~new_extreme10).sum()),
         "extreme10_entered": int((~old_extreme10 & new_extreme10).sum()),
-        "prestep_extreme10_before": int((old_extreme10 & prestep_mask).sum()),
-        "prestep_extreme10_after": int((new_extreme10 & prestep_mask).sum()),
+        # Fix 1 removed the prestep-confirming direction entirely -- these
+        # rows are now NULLED (undetermined), never resolved to a specific
+        # value, so there is no "after" figure to report for them anymore.
+        # This is how many of them USED TO be an extreme value under the
+        # immediately-prior (prestep-confirming) code, before this fix.
+        "prestep_direction_nulled_count": int(would_have_been_prestep_mask.sum()),
+        "prestep_direction_extreme10_before_this_fix": int((old_extreme10 & would_have_been_prestep_mask).sum()),
     }
+    if stats["eps_basis_fix_tail"]["prestep_direction_nulled_count"] != eps_basis_stats["prestep_direction_would_have_confirmed"]:
+        raise AssertionError(
+            "build_event_table postcondition violated: the post-hoc "
+            "reconstruction of the removed prestep-confirming population "
+            "from output columns alone "
+            f"({stats['eps_basis_fix_tail']['prestep_direction_nulled_count']}) does not match "
+            "resolve_eps_basis's own internal count "
+            f"({eps_basis_stats['prestep_direction_would_have_confirmed']})"
+        )
 
     # FAMR (fpedats 1998-06-30) is FINDINGS.md's running illustrative
-    # example of a row the immediately-prior code state got wrong (it was a
-    # new entrant into the |sue_analyst|>100 extreme-tail set under that
-    # unconditional-assumption code) and this eps_basis fix gets right --
-    # looked up dynamically from this run's own output, not hardcoded, so
+    # example for this section: a real, CRSP-confirmed 3-for-1 split landing
+    # right at the consensus-to-announcement boundary. The immediately-prior
+    # unconditional-assumption code got it badly wrong (a new entrant into
+    # the |sue_analyst|>100 extreme-tail set). The (now-removed)
+    # prestep-confirming direction of the discriminator happened to get FAMR
+    # right (it is independently Compustat-confirmed to genuinely BE a
+    # pre-step case) -- but that direction was only ~19% precise overall and
+    # could not reliably tell FAMR apart from the ~4-in-5 cases where the
+    # identical evidence pattern was wrong (see AMSY/ASF/AEOS in the test
+    # suite), so this fix now withholds an assertion for FAMR too: one
+    # correct-by-luck answer given up for the sake of overall reliability.
+    # Looked up dynamically from this run's own output, not hardcoded, so
     # the narrative can never silently drift out of sync with a re-pull.
     famr_mask = (panel["ibes_ticker"] == "FAMR") & (panel["fpedats"] == pd.Timestamp("1998-06-30"))
     if famr_mask.any():
         famr_pos = panel.index[famr_mask][0]
+        famr_sue_after = panel.loc[famr_pos, "sue_analyst"]
         stats["famr_example"] = {
             "sue_analyst_before_this_fix": float(sue_analyst_old_unconditional.loc[famr_pos]),
-            "sue_analyst_after_this_fix": float(panel.loc[famr_pos, "sue_analyst"]),
+            "sue_analyst_after_this_fix": float(famr_sue_after) if pd.notna(famr_sue_after) else None,
             "eps_basis_status": panel.loc[famr_pos, "eps_basis_status"],
         }
     else:
@@ -1631,10 +1947,10 @@ def render_findings(panel: pd.DataFrame, stats: dict, statsumu_total_rows: int |
 
     eps_basis_status_labels = [
         ("anndats_basis_assumed", "Out of window: no cfacshr step falls in this row's own (fpedats, anndats] -- nothing to discriminate, the post-step assumption is kept as-is."),
-        ("basis_unverified_no_crsp", "cfacshr itself could not be resolved for this row at all (share_basis_status is one of the unavailable_* statuses) -- no rescaling attempted; cfacshr_eps_basis is explicitly set to 1.0 rather than silently defaulting."),
-        ("anndats_basis_confirmed", "In window, and the ticker's own prior-quarter history decisively confirms the actual is already on the post-step basis -- the original assumption was right here."),
-        ("basis_undetermined_ambiguous", "In window, a prior-quarter reference exists, but the two hypotheses are not decisively separable (includes small stock dividends -- see below)."),
-        ("prestep_basis_confirmed", "In window, and the evidence decisively shows the actual is STILL on the pre-step basis -- the original assumption was wrong here; this is the corrected subset."),
+        ("basis_unverified_no_crsp", "cfacshr itself could not be resolved for this row at all (share_basis_status is unavailable_no_permno, unavailable_no_target_date, or unavailable_no_crsp_coverage) -- no rescaling attempted; cfacshr_eps_basis is explicitly set to 1.0 rather than silently defaulting. This is a disclosed fail-open default, not a silent one -- see the caveat below."),
+        ("basis_undetermined_ambiguous_permno", "share_basis_status is specifically unavailable_ambiguous_permno: multiple candidate permnos disagree on cfacshr_anndats itself. Unlike the row above, this IS a real data ambiguity, not \"nothing to rescale\" -- cfacshr_eps_basis is null here, not 1.0."),
+        ("anndats_basis_confirmed", "In window, and the ticker's own prior-quarter history decisively confirms the actual is already on the post-step basis -- the original assumption was right here. Measured ~99.13% precise against Compustat `niq`; the only direction this discriminator ever asserts."),
+        ("basis_undetermined_ambiguous", "In window, a prior-quarter reference exists, but the evidence does not decisively confirm the post-step basis -- either the ratio is indecisive, or it is decisive but favors the PRE-step candidate instead (that direction was measured only ~18.9% precise -- wrong about 4 times out of 5 -- and is tagged via `eps_basis_evidence_ratio` for transparency but never acted on). Also covers a comma-joined multi-candidate permno whose candidates disagree on the resolved step while at least one of them has a real step in this row's own window. Includes small stock dividends -- see below."),
         ("basis_undetermined_no_reference", "In window, but no usable prior-quarter reference exists (missing prior quarter, gap outside the accepted day-count window, or the prior quarter is itself basis-ambiguous)."),
     ]
     eps_basis_status_rows = "\n".join(
@@ -1651,7 +1967,11 @@ def render_findings(panel: pd.DataFrame, stats: dict, statsumu_total_rows: int |
 
     if famr is not None:
         famr_before = f"sue_analyst {famr['sue_analyst_before_this_fix']:.2f}"
-        famr_after = f"sue_analyst {famr['sue_analyst_after_this_fix']:.2f}"
+        famr_after = (
+            f"sue_analyst {famr['sue_analyst_after_this_fix']:.2f}"
+            if famr["sue_analyst_after_this_fix"] is not None
+            else "sue_analyst null (undetermined, not guessed -- see below)"
+        )
         famr_status = famr["eps_basis_status"]
     else:
         famr_before = "sue_analyst 248.50 (from the review that first flagged it)"
@@ -1670,6 +1990,24 @@ def render_findings(panel: pd.DataFrame, stats: dict, statsumu_total_rows: int |
     qtr_ann_evidence_multiple = (
         qtr_ann["n_cases"] / OLD_QTR_ANN_N_CASES if qtr_ann["n_cases"] else 0.0
     )
+
+    # Historical reference points from immediately before the multi-
+    # candidate-permno fix (Fix 3) below -- there is no live code path that
+    # reproduces the old plain-pd.to_numeric behavior anymore, so these are
+    # recorded as fixed baselines, same pattern as OLD_QTR_ANN_N_CASES
+    # above. The "after" side and every delta are computed fresh from this
+    # run's own `stats` so they can never silently drift out of sync with
+    # what actually ran.
+    OLD_STEP_IN_REPORT_WINDOW_TOTAL = 1583
+    multi_candidate_recovered = eps_basis_step_in_window - OLD_STEP_IN_REPORT_WINDOW_TOTAL
+    # Precision-weighted split of the removed pre-step-confirming calls,
+    # using the ~99.13%/~18.9% figures measured by the Compustat
+    # arbitration described below -- illustrative, not re-derived from this
+    # run (that arbitration is not reproduced by this pipeline; see the
+    # "explicitly declined" scope note).
+    prestep_removed_n = eps_tail["prestep_direction_nulled_count"]
+    prestep_removed_likely_right = round(prestep_removed_n * 0.189)
+    prestep_removed_likely_wrong = prestep_removed_n - prestep_removed_likely_right
 
     return f"""# I/B/E/S Earnings Data: Findings
 
@@ -1845,22 +2183,23 @@ extreme set, while {extra['sue_analyst_extreme_entered']:,} newly ENTERED it{ent
 correction can occasionally reveal a DIFFERENT extreme where I/B/E/S's own analyst-estimate-vs-reported-actual basis
 convention is itself inconsistent around a split, not just fix the previously-known ones. (FAMR, fpedats 1998-06-30,
 was exactly this kind of new entrant under an earlier, intermediate version of this correction -- see the next
-section for why it is fully resolved, not merely relocated, in this output.)
+section: a later fix nulls FAMR's `sue_analyst` outright rather than resolving it to a specific value, which is why
+it no longer appears in the extreme tail at all, not because it was relocated to a different bucket.)
 
-## Fix: the post-step-basis assumption itself was wrong on ~30% of the rows it actually applied to
+## Fix: the post-step-basis assumption itself was wrong on part of the rows it applied to -- and the first fix for that was itself only half right
 
 The correction above assumes the reported `eps_actual` is already on the
 POST-step basis (`cfacshr_anndats`) whenever a split falls between the
 consensus snapshot and the announcement. A second, later adversarial review
-found that assumption applied unconditionally, and wrong on roughly 30% of
-the narrow subset of rows where a real `cfacshr` step falls strictly inside
-that row's own reporting window -- after the fiscal period ended but at or
-before the announcement (`(fpedats, anndats]`) -- fabricating new fake
-extreme surprises as bad as the ones the original fix corrected. FAMR
-(fpedats 1998-06-30) is exactly this: a real, CRSP-confirmed 3-for-1 split
-landing right at the consensus-to-announcement boundary, which the
-unconditional assumption got wrong ({famr_before}) and the
-discriminator below now gets right ({famr_after}, `{famr_status}`).
+found that assumption applied unconditionally, and -- per that review's own
+initial small-sample estimate -- wrong on roughly 30% of the narrow subset
+of rows where a real `cfacshr` step falls strictly inside that row's own
+reporting window -- after the fiscal period ended but at or before the
+announcement (`(fpedats, anndats]`) -- fabricating new fake extreme
+surprises as bad as the ones the original fix corrected. FAMR (fpedats
+1998-06-30) is exactly this: a real, CRSP-confirmed 3-for-1 split landing
+right at the consensus-to-announcement boundary, which the unconditional
+assumption got wrong ({famr_before}).
 
 **Why that specific window, and not simply "every row with a split
 anywhere nearby":** a step BEFORE the fiscal period ended means the
@@ -1871,39 +2210,88 @@ genuinely unknown: I/B/E/S sometimes restates a just-completed quarter's
 actual onto the new post-split basis before announcing it, and sometimes
 does not.
 
-**Fix:** `eps_basis_status` discriminates the in-window rows using each
-ticker's OWN prior-quarter actual as evidence -- never a future quarter,
-since using one would let a later publication flip an earlier row's
-surprise sign, a real look-ahead violation. Two candidate values are formed
-(actual assumed post-step vs. pre-step) and compared against that prior
-quarter's own EPS level; the two hypotheses are only trusted apart when one
-fits at least {EPS_BASIS_DECISIVE_MIN_RATIO:.1f}x better than the other (validated against 9
-known-ground-truth split events spanning three different quarters of a
-single ticker, TRH -- see the test suite -- where the worst true-positive
-margin was 4.25x). Six statuses result:
+**First attempt at a fix, and why it was itself wrong roughly 4 times out
+of 5 in one direction.** A discriminator was built to resolve the in-window
+rows using each ticker's OWN prior-quarter actual as evidence -- never a
+future quarter, since using one would let a later publication flip an
+earlier row's surprise sign, a real look-ahead violation. Two candidate
+values are formed (actual assumed post-step vs. pre-step), compared against
+that prior quarter's own EPS level, and trusted apart only when one fits at
+least {EPS_BASIS_DECISIVE_MIN_RATIO:.1f}x better than the other. That
+discriminator originally shipped with BOTH directions active: a decisive
+ratio could confirm either the post-step basis (original code was right) or
+the pre-step basis (original code was wrong, "corrected" to a specific
+pre-step value).
+
+**An independent arbitration against Compustat's basis-free net income
+(`niq` -- never otherwise seen by this pipeline, and not affected by a
+per-share basis question) found the two directions are not equally
+trustworthy.** Confirming the post-step basis is ~99.13% precise --
+effectively reliable. Confirming the pre-step basis is only ~18.9% precise
+-- **wrong about 4 times out of 5.** The root cause is a confound this
+ticker-only evidence cannot see through: a stale pre-split value and a
+genuinely large quarter-over-quarter earnings increase look IDENTICAL to
+this discriminator, and companies routinely split their stock right after a
+strong growth quarter, so "the actual looks much bigger than last quarter"
+is exactly as consistent with "still on the old, larger-denominator basis"
+as it is with "this company just had a great quarter." The same arbitration
+found the TRUE base rate of genuinely pre-step cases within this in-window
+population is only ~5.4% -- not the ~30% the first, less rigorous review
+assumed (that ~30% was itself an artifact of the same growth/stale-split
+confound). At a ~5.4% base rate, no discriminator built only from this
+ticker's own prior-quarter EPS can reliably confirm the pre-step direction:
+verified mathematically infeasible, a classic low-base-rate screening
+problem, not a threshold-tuning problem. Raising or lowering
+{EPS_BASIS_DECISIVE_MIN_RATIO:.1f} would not fix it either -- no ratio
+threshold separates "stale pre-split value" from "genuine earnings growth"
+using only this evidence.
+
+**Fix: the pre-step-confirming direction has been removed entirely, not
+tuned.** Only the post-step-confirming direction (~99% precise) is ever
+asserted; it is the sole reason `anndats_basis_confirmed` exists. Every
+other in-window row -- a decisive-but-wrong-direction ratio, an indecisive
+ratio, or (see the multi-candidate-permno fix below) an unresolvable
+step-date disagreement -- is left explicitly undetermined
+(`cfacshr_eps_basis` null, `eps_actual_adj` null, `sue_analyst` null,
+`sue_seasonal` null) rather than guessed, per this project's "tag, don't
+filter" principle. FAMR is one of the rows this costs: it is independently
+Compustat-confirmed to genuinely BE a pre-step case, and the removed
+direction happened to get it right ({famr_after}, `{famr_status}`) -- but
+that direction could not reliably tell FAMR apart from the ~4-in-5 cases
+where the identical evidence pattern was wrong, so this fix now withholds
+an assertion for FAMR too, the same as every other row that direction used
+to decide. This is a deliberate, evidence-based trade: giving up
+{prestep_removed_n:,} calls the removed direction would have made (an
+estimated ~{prestep_removed_likely_right:,} of them probably right and
+~{prestep_removed_likely_wrong:,} probably wrong, at its measured ~18.9%
+precision) in exchange for never again fabricating an extreme surprise like
+FEMP/MBI/BGH above. {eps_tail['prestep_direction_extreme10_before_this_fix']:,}
+of the {prestep_removed_n:,} nulled rows had `|sue_analyst| > 10` under the
+immediately-prior code; they are honestly null now instead.
+
+Six statuses result:
 
 | `eps_basis_status` | Count | % of events | Meaning |
 |---|---|---|---|
 {eps_basis_status_rows}
 
-{eps_basis_step_in_window:,} events ({pct(eps_basis_step_in_window, cov['total_events'])}) actually fall inside the ambiguity window at all -- confirming this is a narrow, targeted fix, not a wholesale rework: `anndats_basis_confirmed` ({eps_basis.get('anndats_basis_confirmed', 0):,}) means the original assumption was right; `prestep_basis_confirmed` ({eps_basis.get('prestep_basis_confirmed', 0):,}) means it was wrong and is now corrected; the remaining {eps_basis.get('basis_undetermined_ambiguous', 0) + eps_basis.get('basis_undetermined_no_reference', 0):,} are left explicitly undetermined (`cfacshr_eps_basis` null, `sue_analyst` null) rather than guessed. Because `anndats_basis_assumed` is its own distinct value, a downstream analysis that wants to drop every row with any basis question at all can do so with `eps_basis_status != "anndats_basis_assumed"`, without needing a separate boolean flag column.
+{eps_basis_step_in_window:,} events ({pct(eps_basis_step_in_window, cov['total_events'])}) fall inside the ambiguity window (or are treated as if they might -- see the multi-candidate-permno fix below) -- confirming this is a narrow, targeted fix, not a wholesale rework: `anndats_basis_confirmed` ({eps_basis.get('anndats_basis_confirmed', 0):,}) means the original assumption was right; the remaining {eps_basis.get('basis_undetermined_ambiguous', 0) + eps_basis.get('basis_undetermined_no_reference', 0):,} are left explicitly undetermined rather than guessed. `basis_undetermined_ambiguous_permno` is deliberately excluded from this window total -- it fires purely off `share_basis_status` (whether multiple candidate permnos agreed on `cfacshr_anndats` at all), independent of whether a step falls in this row's own window, the same reason `basis_unverified_no_crsp` was already excluded before this fix. Because `anndats_basis_assumed` is its own distinct value, a downstream analysis that wants to drop every row with any basis question at all can do so with `eps_basis_status != "anndats_basis_assumed"`, without needing a separate boolean flag column.
 
 Of the {eps_basis.get('basis_undetermined_ambiguous', 0):,} `basis_undetermined_ambiguous` rows, {eps_basis['small_stock_dividend_ambiguous_rows']:,} have a `cfacshr_prestep`/`cfacshr_anndats` ratio between 1/1.3 and 1.3 -- small stock dividends, not full splits. These need no special handling: the discriminator has no statistical power at that magnitude (the two candidate bases sit too close together relative to normal quarter-to-quarter EPS movement to tell apart), so they land in `basis_undetermined_ambiguous` automatically, which is the correct, honest outcome.
+
+**Fix: `basis_unverified_no_crsp`'s fail-open default is a disclosed tradeoff, not a silent one.** Rows where cfacshr could not be resolved at all fall back to `cfacshr_eps_basis = 1.0` (no rescaling) rather than being left null -- otherwise a single unresolvable row would cascade into nulling `sue_seasonal` for every later quarter that looks it up as a year-ago reference (see the seasonal-window fix below). This IS a real, disclosed tradeoff: for a row that genuinely did straddle an unresolvable split, `1.0` is simply wrong, silently understating or overstating the true surprise. It is accepted here because these rows ({eps_basis.get('basis_unverified_no_crsp', 0):,} of them, all specifically `unavailable_no_permno`/`unavailable_no_target_date`/`unavailable_no_crsp_coverage` -- no CRSP data exists for them at all) are typically dropped downstream anyway for lack of CRSP price data to compute a return against, and the alternative (nulling `cfacshr_eps_basis` here too) would only propagate the same unresolvable gap further downstream instead of fixing it. A DIFFERENT unavailable case -- `unavailable_ambiguous_permno`, where CRSP data exists but multiple candidate permnos disagree on `cfacshr_anndats` -- does NOT get this fail-open default: it is a real data ambiguity, not "nothing to rescale," so it now gets its own status (`basis_undetermined_ambiguous_permno`, {eps_basis.get('basis_undetermined_ambiguous_permno', 0):,} rows) with `cfacshr_eps_basis` null, the same honest treatment as any other undetermined row.
+
+**Fix: a multi-candidate (comma-joined) permno row's own in-window step detection used to be silently skipped entirely.** `permno` is occasionally a comma-joined multi-candidate string (an upstream identifier resolution left more than one candidate PERMNO on the table -- see Identifiers, below). The in-window step-date lookup used to cast this string straight through `pd.to_numeric(errors="coerce")`, which turns any comma-joined value to `NaN` and drops the row from the in-window check entirely -- even on a row where `cfacshr_anndats` itself had already been resolved from the SAME candidates elsewhere in this pipeline. The fix resolves each candidate permno independently (the same explode/agree pattern used for `cfacshr_anndats`): if every CRSP-covered candidate agrees on both the step date and the pre-step `cfacshr`, that agreed value is used and the row proceeds through the exact same logic as any other row above; if candidates disagree, the row's step date/pre-step `cfacshr` are left null as before, but if at least one candidate has a real step inside this row's own window, the row is force-flagged `basis_undetermined_ambiguous` rather than silently defaulting to `anndats_basis_assumed` -- a genuine step-date question must never disappear just because more than one candidate permno was on the table. This recovers {multi_candidate_recovered:,} rows from `anndats_basis_assumed` into the in-window population ({eps_basis_step_in_window:,} vs. a previous {OLD_STEP_IN_REPORT_WINDOW_TOTAL:,}); most of them have every candidate agreeing and land wherever the normal reference-based logic above puts them, and {eps_basis['multi_candidate_forced_ambiguous_count']:,} are specifically the candidates-disagree-but-at-least-one-was-in-window case this fix's load-bearing check exists for.
 
 **This fix's value is NOT shrinking the extreme tail -- it is making the
 REMAINING large values trustworthy.** At the `|sue_analyst| > 10` threshold
 (a lower bar than the `> 100` tail tracked above, chosen because this fix's
 population is narrower and subtler than the original three-event fix):
-{eps_tail['extreme10_left']:,} events left that tail and {eps_tail['extreme10_entered']:,} newly entered it --
-a roughly even trade, not a one-directional shrinkage. Among the
-`prestep_basis_confirmed` rows specifically, {eps_tail['prestep_extreme10_before']:,} were already over the
-threshold before this fix and {eps_tail['prestep_extreme10_after']:,} are after -- reverting to the
-pre-step basis (and, with it, `R_c=1.0` against the point-in-time
-consensus) can itself land on a genuinely tiny analyst stdev and produce a
-large standardized value. That is not a bug: it means the surprise is now
-computed against the correct per-share basis, and whatever tail remains
-reflects real actual-vs-consensus gaps rather than an arithmetic artifact
-of comparing two numbers on different per-share bases.
+{eps_tail['extreme10_left']:,} events left that tail and {eps_tail['extreme10_entered']:,} newly entered it.
+That is not a bug: it means the surprise is now computed against the
+correct per-share basis (or honestly left null when it cannot be), and
+whatever tail remains reflects real actual-vs-consensus gaps rather than an
+arithmetic artifact of comparing two numbers on different per-share bases.
 
 **Caveat carried forward, not solved here: `cfacshr` is cumulative to the
 end of the CRSP file on disk (2014-06-30), not to the end of this
