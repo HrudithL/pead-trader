@@ -1043,16 +1043,23 @@ def test_real_nine_named_split_events_confirm_eps_basis_discriminator(real_event
     still ever asserts (measured ~99.13% precise against Compustat `niq`).
 
     The other four (FAMR 1998-06-30, TRH 1997-06-30, IVCR 1995-09-30, VRLN
-    1997-10-31) used to be prestep_basis_confirmed. These four are
-    independently confirmed via Compustat `niq` to genuinely BE pre-step
-    cases -- the OLD code's answer was actually right for these specific
-    four, unlike AMSY/ASF/AEOS (see the negative-control test below, where
-    the identical evidence pattern was wrong). But the rule that got these
-    four right is only ~18.9% precise in general and cannot reliably tell
-    them apart from AMSY/ASF/AEOS using only this ticker's own prior-
-    quarter data, so the pipeline now correctly withholds an assertion here
-    rather than guessing -- intentionally giving up four correct answers to
-    eliminate many more wrong ones.
+    1997-10-31) used to be prestep_basis_confirmed. Three of these (FAMR,
+    TRH 1997-06-30, IVCR) are independently confirmed via Compustat `niq`
+    to genuinely BE pre-step cases -- the OLD code's answer was actually
+    right for these three, unlike AMSY/ASF/AEOS (see the negative-control
+    test below, where the identical evidence pattern was wrong). The
+    fourth, VRLN, does NOT reproduce as confirmed under independent
+    re-arbitration -- a round-4 review built two independent Compustat-
+    based arbiters and they disagreed with each other on VRLN specifically
+    (one leaning post-step, one leaning pre-step), so it is genuinely
+    ambiguous rather than a clean hit for the old code, which if anything
+    strengthens rather than weakens the case for withholding here. Either
+    way, the rule that got FAMR/TRH-1997/IVCR right is only ~18.9% precise
+    in general and cannot reliably tell them apart from AMSY/ASF/AEOS using
+    only this ticker's own prior-quarter data, so the pipeline now
+    correctly withholds an assertion for all four rather than guessing --
+    intentionally giving up some correct answers to eliminate many more
+    wrong ones.
 
     Runs the FULL real pipeline (via the real_event_table fixture) rather
     than a hand-built mini-panel, because the discriminator needs each
@@ -1413,6 +1420,29 @@ def test_real_eps_basis_status_counts_match_fix_spec(real_event_table):
     for status, expected_count in expected.items():
         assert counts.get(status, 0) == expected_count, f"{status}: expected {expected_count}, got {counts.get(status, 0)}"
     assert sum(expected.values()) == 287844
+
+
+def test_real_ambiguous_permno_seasonal_cascade_is_disclosed(real_event_table):
+    """Regression test for a round-4 review finding: nulling
+    basis_undetermined_ambiguous_permno rows (a real data ambiguity, unlike
+    basis_unverified_no_crsp's disclosed 1.0 fail-open) has the identical
+    sue_seasonal cascade cost the fail-open default exists to avoid, and
+    that cost wasn't being measured or disclosed anywhere. Locks in that
+    both numbers are actually computed (not estimated) and are strictly
+    positive -- the cascade is real, not hypothetical.
+    """
+    panel, stats = real_event_table
+    counts = stats["eps_basis"]
+
+    direct = counts["ambiguous_permno_direct_seasonal_lost"]
+    downstream = counts["ambiguous_permno_downstream_seasonal_lost"]
+
+    # Every ambiguous-permno row has a null basis, so it must have a null
+    # sue_seasonal -- the "direct" cost is the entire population.
+    assert direct == counts["basis_undetermined_ambiguous_permno"]
+    # The downstream (year-ago-reference) cost is a real, separate effect,
+    # not zero and not double-counting the direct one.
+    assert downstream > 0
 
 
 # ---------------------------------------------------------------------------
