@@ -1265,6 +1265,65 @@ def test_resolve_eps_basis_multi_candidate_agreement_proceeds_through_normal_log
     assert stats["multi_candidate_forced_ambiguous_count"] == 0
 
 
+def test_resolve_eps_basis_multi_candidate_forced_ambiguous_prior_row_excluded_as_reference():
+    """Regression test for a gap found in code review while building Fix 3:
+    a quarter whose OWN basis is genuinely in question via the multi-
+    candidate-disagreement route (basis_undetermined_ambiguous, but with
+    W=_step_in_report_window False -- no single cfacshr_step_date survived
+    the disagreement) must NOT be usable as a later quarter's "clean"
+    prior-quarter reference, exactly like a reference-based ambiguous prior
+    row already cannot be (see
+    test_resolve_eps_basis_prior_row_itself_in_window_excludes_reference).
+
+    Before this fix, the prior-quarter-reference safety check only read
+    _step_in_report_window, which is False by construction for a Fix-3
+    forced-ambiguous row -- so such a row would pass as a "clean" reference
+    for the very next quarter, relocating exactly the kind of fabricated-
+    surprise risk this whole discriminator exists to eliminate, one quarter
+    later. Verified latent on the real 1995-2014 pull today (zero of the 3
+    real forced-ambiguous rows have a following quarter that is itself
+    in-window), but a real, reachable gap on different data -- fixed
+    regardless, the same "cheap, correct, add it regardless" reasoning as
+    Fix 2's positivity guard.
+    """
+    panel = pd.DataFrame({
+        "ibes_ticker": ["CHAIN", "CHAIN"],
+        "permno": ["800,801", "802"],
+        "fpedats": [pd.Timestamp("2000-01-01"), pd.Timestamp("2000-04-01")],
+        "anndats": [pd.Timestamp("2000-02-01"), pd.Timestamp("2000-04-20")],
+        "eps_actual": [5.0, 5.0],
+        "cfacshr_anndats": [1.0, 1.0],
+        "share_basis_status": ["no_change", "no_change"],
+    })
+    step = _step_table([
+        (800, "1990-01-01", 2.0), (800, "2000-01-15", 1.0),  # candidate 800: in-window step, prestep 2.0
+        (801, "1990-01-01", 3.0), (801, "2000-01-20", 1.0),  # candidate 801: in-window step, prestep 3.0 -- disagrees
+        (802, "1990-01-01", 2.0), (802, "2000-04-10", 1.0),  # quarter 2's own single-candidate in-window step
+    ])
+
+    result, stats = clean.resolve_eps_basis(panel, step)
+
+    prior = result[result["fpedats"] == pd.Timestamp("2000-01-01")].iloc[0]
+    current = result[result["fpedats"] == pd.Timestamp("2000-04-01")].iloc[0]
+
+    # Sanity check the fixture actually exercises what it claims to: the
+    # prior quarter must be the Fix-3 forced-ambiguous case, not the
+    # ordinary reference-based one.
+    assert prior["eps_basis_status"] == "basis_undetermined_ambiguous"
+    assert pd.isna(prior["cfacshr_step_date"])  # W was False for it -- disagreement, not a resolved value
+    assert stats["multi_candidate_forced_ambiguous_count"] == 1
+
+    # The real assertion: quarter 2 must NOT have used quarter 1 (eps_actual
+    # 5.0 / cfacshr_anndats 1.0 = a reference of 5.0) to decisively confirm
+    # its own basis -- eps_actual is also 5.0 here specifically so that an
+    # exact-match (ratio=inf, decisive) confirmation would result if the
+    # bug were still present. With the prior quarter correctly excluded and
+    # no other prior row available, quarter 2 must land on
+    # basis_undetermined_no_reference instead.
+    assert current["eps_basis_status"] == "basis_undetermined_no_reference"
+    assert pd.isna(current["cfacshr_eps_basis"])
+
+
 def test_real_step_in_report_window_structural_identity(real_event_table):
     """Structural identity, independently recomputed from the panel's own
     columns -- not merely re-reading the stats dict the production code

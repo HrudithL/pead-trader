@@ -1334,6 +1334,18 @@ def resolve_eps_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[pd
     # This must never silently fall through to anndats_basis_assumed: a
     # genuine step-date ambiguity is not "no basis question here."
     df["_multi_candidate_ambiguous_step"] = (multi_candidate_ambiguous_step & ~unavailable).to_numpy()
+    # Combined "this row's OWN basis is genuinely in question" flag, used
+    # below (4.3) to decide whether a row is trustworthy as some LATER
+    # quarter's prior-quarter reference. Before Fix 3, _step_in_report_
+    # window alone was a faithful proxy for this -- every way a row's own
+    # basis could be in question required W=True. Fix 3 added a second way
+    # (a multi-candidate permno with a disagreeing-but-in-window step) that
+    # deliberately has W=False (no single cfacshr_step_date survived the
+    # disagreement), so W alone would silently let such a row be used as a
+    # "clean" reference for the next quarter -- relocating exactly the kind
+    # of fabricated-surprise risk this whole discriminator exists to
+    # eliminate, one quarter later.
+    df["_basis_in_question"] = df["_step_in_report_window"] | df["_multi_candidate_ambiguous_step"]
 
     # --- 4.3: prior-quarter reference (point-in-time safe: prior rows only) ---
     # The panel is NOT sorted by (ibes_ticker, fpedats) at this point in
@@ -1345,7 +1357,7 @@ def resolve_eps_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[pd
     prev_eps = g["eps_actual"].shift(1)
     prev_fpedats = g["fpedats"].shift(1)
     prev_basis = g["cfacshr_anndats"].shift(1)
-    prev_inwin = g["_step_in_report_window"].shift(1)
+    prev_inwin = g["_basis_in_question"].shift(1)
     gap_days = (sorted_df["fpedats"] - prev_fpedats).dt.days
 
     reference_ok = (
@@ -1452,7 +1464,9 @@ def resolve_eps_basis(panel: pd.DataFrame, step_table: pd.DataFrame) -> tuple[pd
     sorted_df["eps_actual_adj"] = sorted_df["eps_actual"] / sorted_df["cfacshr_eps_basis"]
 
     # --- restore the caller's original row order ---
-    out = sorted_df.reindex(df.index).drop(columns=["_step_in_report_window", "_multi_candidate_ambiguous_step"])
+    out = sorted_df.reindex(df.index).drop(
+        columns=["_step_in_report_window", "_multi_candidate_ambiguous_step", "_basis_in_question"]
+    )
 
     stats = {str(k): int(v) for k, v in out["eps_basis_status"].value_counts(dropna=False).items()}
     stats["prestep_direction_would_have_confirmed"] = would_have_been_prestep_confirmed
