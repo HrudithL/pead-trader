@@ -11,6 +11,7 @@ convention), by building the report against a small synthetic dataframe
 whose expected figures can be computed by hand.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -18,6 +19,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import pytest
 import weasyprint
@@ -33,45 +35,70 @@ REAL_DATA_PATH = (
 )
 
 
-def _make_synthetic_df(n_per_year: int = 20) -> pd.DataFrame:
+def _make_synthetic_df() -> pd.DataFrame:
     """A small, hand-computable stand-in for the real cleaned earnings
-    table -- covers the columns the report script actually reads, with
-    values chosen so per-year/per-status shares are easy to check by hand."""
+    table -- covers the columns the report script actually reads, built so
+    that every value a test cares about is unambiguous by construction:
+
+    - All six `eps_basis_status` categories get distinct counts (13/9/7/6/
+      3/2, summing to 40) -- so a mislabeled or reordered bar in the
+      data-quality chart is actually detectable by a test (tied counts
+      would let two bars swap without any test noticing).
+    - The two years' `sue_source` splits differ from each other (2000 is
+      60% analyst/25% seasonal/15% none; 2001 is 40%/40%/20%) -- so a
+      year/source mixup in the coverage-by-year chart is detectable too.
+    - The analyst and seasonal `sue_primary` subsets sit on visibly
+      different scales/signs (analyst ~1 to 25, seasonal ~-1 to -30), each
+      with exactly one value outside the +/-20 display-clip range -- so
+      the per-source median/tail/excluded-pct stats (and the pooled-vs-
+      per-source distinction they test) are meaningfully different, not
+      coincidentally similar.
+    """
+    # Six distinct counts, summing to 40 -- assigned to rows independently
+    # of source/value below, since eps_basis_status is a separate axis.
+    basis_statuses_expanded = (
+        ["anndats_basis_assumed"] * 13
+        + ["anndats_basis_confirmed"] * 9
+        + ["basis_unverified_no_crsp"] * 7
+        + ["basis_undetermined_ambiguous_permno"] * 6
+        + ["basis_undetermined_ambiguous"] * 3
+        + ["basis_undetermined_no_reference"] * 2
+    )
+    assert len(basis_statuses_expanded) == 40
+
+    year_specs = {
+        2000: {
+            "analyst": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 25.0],
+            "seasonal": [-1.0, -2.0, -3.0, -4.0, -5.0],
+            "none": [None, None, None],
+        },
+        2001: {
+            "analyst": [12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0],
+            "seasonal": [-6.0, -7.0, -8.0, -9.0, -10.0, -11.0, -12.0, -30.0],
+            "none": [None, None, None, None],
+        },
+    }
+
     rows = []
-    rng_values = [-15.0, -3.0, -1.0, 0.0, 0.5, 1.0, 2.5, 5.0, 8.0, 30.0]
-    basis_statuses = [
-        "anndats_basis_assumed",
-        "anndats_basis_confirmed",
-        "basis_unverified_no_crsp",
-        "basis_undetermined_ambiguous_permno",
-        "basis_undetermined_ambiguous",
-        "basis_undetermined_no_reference",
-    ]
-    for year in (2000, 2001):
-        for i in range(n_per_year):
-            # Half the rows each year get a real analyst estimate, a
-            # quarter get only the seasonal fallback, the rest get neither
-            # -- an easy-to-verify split.
-            if i % 4 < 2:
-                source, sue_analyst, sue_seasonal = "analyst", rng_values[i % len(rng_values)], None
-            elif i % 4 == 2:
-                source, sue_analyst, sue_seasonal = "seasonal", None, rng_values[i % len(rng_values)]
-            else:
-                source, sue_analyst, sue_seasonal = "none", None, None
-            sue_primary = sue_analyst if sue_analyst is not None else sue_seasonal
-            rows.append(
-                {
-                    "anndats": pd.Timestamp(year=year, month=(i % 12) + 1, day=1),
-                    "sue_analyst": sue_analyst,
-                    "sue_seasonal": sue_seasonal,
-                    "sue_primary": sue_primary,
-                    "sue_source": source,
-                    "identifier_ambiguous": i % 5 == 0,
-                    "eps_basis_status": basis_statuses[i % len(basis_statuses)],
-                    "n_lookahead_excluded": i % 3,
-                    "consensus_staleness_days": float(3 + (i % 20)),
-                }
-            )
+    i = 0
+    for year, by_source in year_specs.items():
+        for source in ("analyst", "seasonal", "none"):
+            for value in by_source[source]:
+                rows.append(
+                    {
+                        "anndats": pd.Timestamp(year=year, month=(i % 12) + 1, day=1),
+                        "sue_analyst": value if source == "analyst" else None,
+                        "sue_seasonal": value if source == "seasonal" else None,
+                        "sue_primary": value,
+                        "sue_source": source,
+                        "identifier_ambiguous": i % 5 == 0,
+                        "eps_basis_status": basis_statuses_expanded[i],
+                        "n_lookahead_excluded": i % 3,
+                        "consensus_staleness_days": float(3 + (i % 20)),
+                    }
+                )
+                i += 1
+    assert i == 40
     return pd.DataFrame(rows)
 
 
@@ -97,44 +124,65 @@ def test_build_report_produces_valid_multi_chart_pdf_from_synthetic_data(tmp_pat
 
 def test_coverage_by_year_chart_reflects_real_per_year_shares():
     """Regression guard against hardcoding: build the coverage-by-year
-    figure from the synthetic dataframe (whose per-year analyst/seasonal/
-    none split is known by construction: 50%/25%/25%) and confirm the
-    actual bar heights, in draw order, match that shape for both years."""
+    figure from the synthetic dataframe and confirm every (year, source)
+    bar's actual height matches that same (year, source) share computed
+    directly from the fixture's own value_counts -- a mapping check, not a
+    positional list of hardcoded numbers, so a year/source mislabel or
+    reorder in the chart actually fails this test."""
     df = _make_synthetic_df()
     fig = report._make_coverage_by_year_chart(df)
     try:
-        assert fig is not None
         ax = fig.axes[0]
-        # Two years in the synthetic data -> six bar segments (3 sources x
-        # 2 years) stacked into 2 x-axis positions. Draw order is all
-        # "analyst" bars, then all "seasonal" bars, then all "none" bars
-        # (one bar per year within each source), matching the loop order in
-        # _make_coverage_by_year_chart.
-        assert len(ax.patches) == 6
-        heights = [patch.get_height() for patch in ax.patches]
-        assert heights == pytest.approx([50.0, 50.0, 25.0, 25.0, 25.0, 25.0])
-    finally:
-        import matplotlib.pyplot as plt
+        years = sorted(df["anndats"].dt.year.unique())
+        sources = ["analyst", "seasonal", "none"]
+        n_years = len(years)
+        assert len(ax.patches) == len(sources) * n_years
 
+        expected = {
+            (year, source): 100.0 * (df.loc[df["anndats"].dt.year == year, "sue_source"] == source).mean()
+            for source in sources
+            for year in years
+        }
+        # Draw order: _make_coverage_by_year_chart loops sources in a fixed
+        # order (analyst, seasonal, none) and calls ax.bar(years, ...) once
+        # per source, so ax.patches is source-major, year-minor.
+        actual = {
+            (year, source): ax.patches[src_idx * n_years + year_idx].get_height()
+            for src_idx, source in enumerate(sources)
+            for year_idx, year in enumerate(years)
+        }
+        for key, expected_height in expected.items():
+            assert actual[key] == pytest.approx(expected_height), key
+
+        # Sanity: the two years' splits must actually differ by
+        # construction, or a year mixup wouldn't be detectable at all.
+        assert expected[(years[0], "analyst")] != pytest.approx(expected[(years[1], "analyst")])
+    finally:
         plt.close(fig)
 
 
 def test_surprise_distribution_chart_reports_correct_excluded_fraction():
-    """One synthetic value (30.0) sits outside the [-20, 20] display range
-    used by _make_surprise_distribution_chart; confirm the excluded
-    percentage returned is computed from the real data, not a placeholder."""
+    """Each source's excluded fraction (share of that source's full
+    sue_primary subset falling outside the [-20, 20] display range) must be
+    computed from that source's own data, not a pooled or hardcoded value.
+    The synthetic fixture has exactly one out-of-range value in each of the
+    analyst and seasonal subsets."""
     df = _make_synthetic_df()
-    non_null = df["sue_primary"].dropna()
-    expected_excluded_pct = 100.0 * (non_null.abs() > 20).sum() / len(non_null)
 
     fig, stats = report._make_surprise_distribution_chart(df)
     try:
-        assert stats["n_total"] == len(non_null)
-        assert stats["excluded_pct"] == pytest.approx(expected_excluded_pct)
-        assert stats["excluded_pct"] > 0  # sanity: the synthetic outlier is actually excluded
+        assert stats["n_total"] == df["sue_primary"].notna().sum()
+        for source in ("analyst", "seasonal"):
+            full_subset = df.loc[df["sue_source"] == source, "sue_primary"].dropna()
+            expected_excluded_pct = 100.0 * (full_subset.abs() > 20).sum() / len(full_subset)
+            assert stats[f"excluded_pct_{source}"] == pytest.approx(expected_excluded_pct)
+            # Sanity: the synthetic outlier in each source is actually excluded.
+            assert stats[f"excluded_pct_{source}"] > 0
+        # The two sources' excluded fractions must not coincidentally match
+        # (1/20 = 5% for analyst vs. 1/13 ~= 7.7% for seasonal), guarding
+        # against a future re-pooling of this stat.
+        assert stats["excluded_pct_analyst"] != pytest.approx(stats["excluded_pct_seasonal"])
     finally:
-        import matplotlib.pyplot as plt
-
         plt.close(fig)
 
 
@@ -159,34 +207,112 @@ def test_surprise_distribution_chart_splits_sample_sizes_by_source():
         assert expected_n_analyst > 0
         assert expected_n_seasonal > 0
     finally:
-        import matplotlib.pyplot as plt
+        plt.close(fig)
 
+
+def test_surprise_distribution_chart_reports_correct_per_source_stats():
+    """Fix 5's per-source median/tail stats must each match a direct
+    computation from that source's own full subset in the fixture, and the
+    analyst and seasonal values must NOT be equal to each other -- guarding
+    against a future re-pooling of these scale-sensitive statistics (the
+    exact bug class round 2 found: a chart split by source, but prose/stats
+    computed pooled)."""
+    df = _make_synthetic_df()
+
+    fig, stats = report._make_surprise_distribution_chart(df)
+    try:
+        for source in ("analyst", "seasonal"):
+            full_subset = df.loc[df["sue_source"] == source, "sue_primary"].dropna()
+            assert stats[f"median_{source}"] == pytest.approx(float(full_subset.median()))
+            assert stats[f"low_tail_{source}"] == pytest.approx(float(full_subset.quantile(0.001)))
+            assert stats[f"high_tail_{source}"] == pytest.approx(float(full_subset.quantile(0.999)))
+
+        assert stats["median_analyst"] != pytest.approx(stats["median_seasonal"])
+        assert stats["low_tail_analyst"] != pytest.approx(stats["low_tail_seasonal"])
+        assert stats["high_tail_analyst"] != pytest.approx(stats["high_tail_seasonal"])
+        # No pooled variant of any of these should be returned at all.
+        assert "median_sue" not in stats
+        assert "low_tail" not in stats
+        assert "high_tail" not in stats
+        assert "excluded_pct" not in stats
+    finally:
         plt.close(fig)
 
 
 def test_data_quality_chart_covers_all_basis_statuses():
-    """Regression guard against hardcoding: with the synthetic fixture's
-    i % 6 status cycle over 40 rows (8/8/6/6/6/6 per status), confirm the
-    two-panel chart's actual bar heights match the hand-computed shares."""
+    """Regression guard against hardcoding: build the two-panel chart from
+    the synthetic fixture (whose six eps_basis_status categories all have
+    distinct counts by construction) and confirm every bar's label maps to
+    the correct height, via a label -> height mapping built from
+    `_basis_status_breakdown` itself rather than a positional list of
+    hardcoded numbers -- so a mislabeled/reordered bar actually fails."""
     df = _make_synthetic_df()
+    breakdown = report._basis_status_breakdown(df)
+
+    # Sanity: this is what makes a swapped bar detectable at all.
+    counts = breakdown["counts"]
+    assert len(set(counts.values.tolist())) == len(counts)
+
     fig = report._make_data_quality_chart(df)
     try:
         assert len(fig.axes) == 2
         left_ax, right_ax = fig.axes
-        # Left panel: 2 bars -- "no basis question" (assumed, 8/40) vs.
-        # "some basis question" (the other 32/40), as % of all 40 rows.
-        assert len(left_ax.patches) == 2
-        left_heights = [patch.get_height() for patch in left_ax.patches]
-        assert left_heights == pytest.approx([20.0, 80.0])
-        # Right panel: the 5 non-assumed statuses, each as % of all 40 rows
-        # (confirmed=8, the other four=6 each).
-        assert len(right_ax.patches) == 5
-        right_heights = [patch.get_height() for patch in right_ax.patches]
-        assert right_heights == pytest.approx([20.0, 15.0, 15.0, 15.0, 15.0])
-    finally:
-        import matplotlib.pyplot as plt
 
+        left_expected = {
+            "No basis\nquestion": breakdown["pct_no_question"],
+            "Some kind of\nbasis question": breakdown["pct_some_question"],
+        }
+        left_actual = {
+            tick.get_text(): patch.get_height()
+            for tick, patch in zip(left_ax.get_xticklabels(), left_ax.patches)
+        }
+        assert left_actual.keys() == left_expected.keys()
+        for label, expected_pct in left_expected.items():
+            assert left_actual[label] == pytest.approx(expected_pct)
+
+        non_assumed = [s for s in report._BASIS_STATUS_ORDER if s != "anndats_basis_assumed"]
+        right_expected = {
+            report._BASIS_STATUS_LABELS[s]: float(breakdown["pct"][s]) for s in non_assumed
+        }
+        right_actual = {
+            tick.get_text(): patch.get_height()
+            for tick, patch in zip(right_ax.get_xticklabels(), right_ax.patches)
+        }
+        assert right_actual.keys() == right_expected.keys()
+        for label, expected_pct in right_expected.items():
+            assert right_actual[label] == pytest.approx(expected_pct)
+    finally:
         plt.close(fig)
+
+
+def test_basis_status_breakdown_partitions_are_internally_consistent():
+    """Regression guard against finding 1's bug class recurring: the
+    in-window (real split-timing) population and the never-checked-at-all
+    population must be mutually exclusive, correctly composed of their
+    constituent statuses, and -- together with the assumed count -- must
+    account for every row."""
+    df = _make_synthetic_df()
+    breakdown = report._basis_status_breakdown(df)
+
+    assert breakdown["n_in_window"] == breakdown["n_confirmed"] + breakdown["n_in_window_undetermined"]
+
+    counts = breakdown["counts"]
+    # n_in_window must equal EXACTLY the sum of the three real in-window
+    # statuses -- if it accidentally also included basis_unverified_no_crsp
+    # or basis_undetermined_ambiguous_permno (the round-1 bug class), this
+    # equality would fail since those two statuses have nonzero, distinct
+    # counts (7 and 6) in the fixture.
+    assert breakdown["n_in_window"] == (
+        int(counts["anndats_basis_confirmed"])
+        + int(counts["basis_undetermined_ambiguous"])
+        + int(counts["basis_undetermined_no_reference"])
+    )
+
+    assert breakdown["n_never_checked"] == (
+        int(counts["basis_unverified_no_crsp"]) + int(counts["basis_undetermined_ambiguous_permno"])
+    )
+
+    assert breakdown["n_in_window"] + breakdown["n_never_checked"] + breakdown["n_assumed"] == len(df)
 
 
 @pytest.mark.skipif(
@@ -206,6 +332,45 @@ def test_build_report_runs_end_to_end_against_real_data(tmp_path):
 
     pages = weasyprint.HTML(filename=str(out)).render().pages
     assert len(pages) >= 3
+
+
+def test_chart_numbering_and_cross_references_are_internally_consistent(tmp_path, monkeypatch):
+    """Every chart's caption must start with the correct sequential
+    "Chart N -- " prefix matching its position in the charts list, and
+    every "Chart <number>" reference anywhere in the section bodies must
+    point to a chart that actually exists. Intercepts the call to
+    report_builder.build_pdf_report so this can be checked without
+    actually rendering a PDF."""
+    df = _make_synthetic_df()
+    input_path = tmp_path / "synthetic_earnings.parquet"
+    df.to_parquet(input_path)
+
+    captured = {}
+
+    def _fake_build_pdf_report(*, title, output_path, summary=None, sections=(), charts=(), dpi=None):
+        captured["sections"] = sections
+        captured["charts"] = charts
+        out_path = Path(output_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"%PDF-1.4\n%%EOF")
+        return out_path
+
+    monkeypatch.setattr(report.report_builder, "build_pdf_report", _fake_build_pdf_report)
+
+    report.build_earnings_data_report(tmp_path / "report.pdf", input_path)
+
+    charts = captured["charts"]
+    sections = captured["sections"]
+    assert len(charts) >= 1
+
+    for i, (_, caption) in enumerate(charts, start=1):
+        assert caption.startswith(f"Chart {i} -- "), caption[:40]
+
+    chart_refs = set()
+    for _, body in sections:
+        chart_refs.update(int(n) for n in re.findall(r"Chart (\d+)", body))
+    assert chart_refs, "expected at least one 'Chart N' cross-reference in the section prose"
+    assert chart_refs <= set(range(1, len(charts) + 1)), chart_refs
 
 
 if __name__ == "__main__":
