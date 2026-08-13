@@ -44,7 +44,10 @@ credentials.json
 # symlinked directory deletes the symlink outright, disconnecting that
 # worktree from all of data/metadata/. A `merge=union` driver doesn't help
 # either -- both failure modes are one-sided adds over an ignored/symlinked
-# path, so no merge driver ever runs.
+# path, so no merge driver ever runs. The same reasoning applies to any
+# other file under data/ (e.g. a slice's FINDINGS.md) -- no exceptions, no
+# matter how static a given file looks today: put durable, reviewable
+# write-ups in reports/ instead, which has no symlink-sharing hazard.
 /data/
 mlruns/
 experiments/
