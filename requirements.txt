@@ -39,3 +39,10 @@ matplotlib>=3.11.1
 # fine but `HTML(...).write_pdf(...)` fails at render time with no warning
 # at pip-install time.
 weasyprint>=69.0
+
+# Dependency for the event-study-statistics slice (scripts/build_event_study_stats.py):
+# scipy.stats.t for finite-sample confidence intervals and scipy.stats.spearmanr
+# for the rank-correlation IC. Human-approved addition for this slice (see that
+# script's own module docstring). Floor matches this project's pinning style --
+# a recent scipy compatible with the pandas/numpy versions already pinned above.
+scipy>=1.13
