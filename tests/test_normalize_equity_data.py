@@ -14,6 +14,7 @@ import sys
 import warnings
 from pathlib import Path
 
+import duckdb
 import numpy as np
 import pandas as pd
 import pytest
@@ -237,6 +238,59 @@ def test_clean_dsf_year_output_schema():
     assert cleaned["date"].dtype.kind == "M"
 
 
+def test_clean_dsf_year_dividend_and_scale_counters():
+    # Pull-wide evidence classify_adjustment_status's dividend and
+    # return-scale checks need (see round-3 review findings 1 and 2):
+    # computed here, on the post-sentinel-mapping, post-dedup frame.
+    raw = pd.DataFrame({
+        "permno": [1, 1, 1],
+        "date": ["2010-01-04", "2010-01-05", "2010-01-06"],
+        # Day 2 is a real dividend day (ret includes it, retx doesn't).
+        # Day 3 is a big raw move (>20%), unrelated to the dividend check.
+        "ret": [0.01, 0.05, 0.30],
+        "retx": [0.01, 0.02, 0.30],
+        "prc": [10.0, 10.5, 13.5],
+        "shrout": [100.0, 100.0, 100.0],
+        "cfacpr": [1.0, 1.0, 1.0],
+        "cfacshr": [1.0, 1.0, 1.0],
+        "vol": [1000.0, 1000.0, 1000.0],
+    })
+    sn = pd.DataFrame({
+        "permno": [1], "namedt": pd.to_datetime(["2000-01-01"]),
+        "nameenddt": pd.to_datetime(["2020-01-01"]), "ticker": ["AAA"],
+    })
+    _cleaned, stats = neq.clean_dsf_year(raw, resolved_permnos=[1], stocknames=sn)
+    assert stats["ret_nonnull_rows"] == 3
+    assert stats["ret_and_retx_nonnull_rows"] == 3
+    assert stats["ret_ne_retx_rows"] == 1  # only day 2 (0.05 vs 0.02)
+    assert stats["ret_lt_retx_rows"] == 0  # ret > retx on the dividend day -- the expected direction
+    assert stats["ret_abs_gt_big_move_rows"] == 1  # only day 3 (0.30 > 0.20)
+
+
+def test_clean_dsf_year_ret_lt_retx_flags_wrong_direction():
+    # A dividend is a cash inflow, so `ret` should almost never be LESS
+    # than `retx` -- this directional sanity check exists to catch
+    # ret/retx being mislabeled or swapped, not just "do they differ".
+    raw = pd.DataFrame({
+        "permno": [1, 1],
+        "date": ["2010-01-04", "2010-01-05"],
+        "ret": [0.01, 0.01],
+        "retx": [0.01, 0.05],
+        "prc": [10.0, 10.1],
+        "shrout": [100.0, 100.0],
+        "cfacpr": [1.0, 1.0],
+        "cfacshr": [1.0, 1.0],
+        "vol": [1000.0, 1000.0],
+    })
+    sn = pd.DataFrame({
+        "permno": [1], "namedt": pd.to_datetime(["2000-01-01"]),
+        "nameenddt": pd.to_datetime(["2020-01-01"]), "ticker": ["AAA"],
+    })
+    _cleaned, stats = neq.clean_dsf_year(raw, resolved_permnos=[1], stocknames=sn)
+    assert stats["ret_ne_retx_rows"] == 1
+    assert stats["ret_lt_retx_rows"] == 1
+
+
 # ---------------------------------------------------------------------------
 # aggregate_year_stats
 # ---------------------------------------------------------------------------
@@ -289,6 +343,26 @@ def test_clean_dsi_drops_duplicate_dates():
     assert stats["duplicate_date_rows_dropped"] == 1
     assert len(cleaned) == 2
     assert not cleaned["date"].duplicated().any()
+
+
+def test_clean_dsi_maps_missing_return_sentinel_codes():
+    # Round-3 review finding: clean_dsi previously skipped the same CRSP
+    # missing-return sentinel mapping clean_dsf_year applies to dsf.ret/
+    # dsf.retx -- a sentinel surviving into market_benchmark.parquet is
+    # strictly worse than one surviving in dsf, since every downstream
+    # abnormal-return calculation subtracts this series.
+    raw = pd.DataFrame({
+        "date": ["1995-01-03", "1995-01-04"],
+        "vwretd": [0.01, 0.02],
+        "sprtrn": [0.01, -99.0],  # CRSP's documented missing-return sentinel
+        "vwretx": [0.01, 0.02],
+        "ewretd": [0.01, 0.02],
+        "ewretx": [0.01, 0.02],
+    })
+    cleaned, stats = neq.clean_dsi(raw)
+    assert stats["sentinel_rows_mapped_to_null"] == 1
+    assert pd.isna(cleaned.loc[cleaned["date"] == pd.Timestamp("1995-01-04"), "sprtrn"].iloc[0])
+    assert stats["null_value_rows"] == 1  # counted as missing, not as a literal -99.0
 
 
 # ---------------------------------------------------------------------------
@@ -392,31 +466,100 @@ def _events_df(n_big, frac_matches_naive):
     return pd.DataFrame({"naive_ret": naive, "ret": ret})
 
 
+def _dsf_stats_fixture(**overrides):
+    """dsf_stats fields classify_adjustment_status needs for its dividend
+    and return-scale checks, defaulted so both read "adjusted"/"plausible"
+    (real-pull-like ratios: 0.7% ret!=retx, 0.4% |ret|>20%) -- lets a test
+    override just the one dimension it's exercising without having to
+    restate every field."""
+    base = {
+        "ret_and_retx_nonnull_rows": 1_000_000,
+        "ret_ne_retx_rows": 7_000,
+        "ret_lt_retx_rows": 0,
+        "ret_nonnull_rows": 1_000_000,
+        "ret_abs_gt_big_move_rows": 4_000,
+    }
+    base.update(overrides)
+    return base
+
+
 def test_classify_adjustment_status_adjusted():
     stats = neq.summarize_adjustment_events(_events_df(40, 0.0))
-    assert neq.classify_adjustment_status(stats) == "adjusted"
+    result = neq.classify_adjustment_status(stats, _dsf_stats_fixture())
+    assert result["split_status"] == "adjusted"
+    assert result["dividend_status"] == "adjusted"
+    assert result["ret_scale_status"] == "plausible"
+    assert result["overall"] == "adjusted"
+    assert result["reasons"] == []
 
 
 def test_classify_adjustment_status_not_adjusted():
     stats = neq.summarize_adjustment_events(_events_df(40, 1.0))
-    assert neq.classify_adjustment_status(stats) == "not_adjusted"
+    result = neq.classify_adjustment_status(stats, _dsf_stats_fixture())
+    assert result["split_status"] == "not_adjusted"
+    assert result["overall"] == "flagged"
+    assert any("split check" in r for r in result["reasons"])
 
 
 def test_classify_adjustment_status_mixed():
     stats = neq.summarize_adjustment_events(_events_df(40, 0.5))
-    assert neq.classify_adjustment_status(stats) == "mixed"
+    result = neq.classify_adjustment_status(stats, _dsf_stats_fixture())
+    assert result["split_status"] == "mixed"
+    assert result["overall"] == "flagged"
 
 
 def test_classify_adjustment_status_inconclusive_when_no_events():
     stats = neq.summarize_adjustment_events(pd.DataFrame(columns=["naive_ret", "ret"]))
-    assert neq.classify_adjustment_status(stats) == "inconclusive"
+    result = neq.classify_adjustment_status(stats, _dsf_stats_fixture())
+    assert result["split_status"] == "inconclusive"
+    assert result["overall"] == "inconclusive"
 
 
 def test_classify_adjustment_status_inconclusive_when_too_few_big_events():
     # Below ADJUSTMENT_VERDICT_MIN_EVENTS even though ret always matches
     # naive -- too small a sample to assert "not_adjusted" confidently.
     stats = neq.summarize_adjustment_events(_events_df(5, 1.0))
-    assert neq.classify_adjustment_status(stats) == "inconclusive"
+    result = neq.classify_adjustment_status(stats, _dsf_stats_fixture())
+    assert result["split_status"] == "inconclusive"
+    assert result["overall"] == "inconclusive"
+
+
+def test_classify_adjustment_status_dividend_not_adjusted_when_ret_equals_retx():
+    # Round-3 review finding: a pull where `ret` was mistakenly populated
+    # with `retx`'s values (i.e. NOT dividend-adjusted) previously
+    # classified as fully "adjusted", since the only discriminator that
+    # ran was the split check -- cfacpr can't see dividends at all.
+    stats = neq.summarize_adjustment_events(_events_df(40, 0.0))  # split evidence: clean
+    dsf = _dsf_stats_fixture(ret_ne_retx_rows=0)  # ret and retx never disagree
+    result = neq.classify_adjustment_status(stats, dsf)
+    assert result["split_status"] == "adjusted"
+    assert result["dividend_status"] == "not_adjusted"
+    assert result["overall"] == "flagged"
+    assert any("dividend check" in r for r in result["reasons"])
+
+
+def test_classify_adjustment_status_scale_implausible_when_ret_mis_scaled():
+    # A `ret` column delivered in percent units (1.0 meaning +100%) is
+    # maximally FAR from the naive move, so the split check alone would
+    # call this "adjusted" -- the scale check exists specifically to catch
+    # a unit/magnitude bug the split check structurally cannot see.
+    stats = neq.summarize_adjustment_events(_events_df(40, 0.0))
+    dsf = _dsf_stats_fixture(ret_abs_gt_big_move_rows=800_000)  # 80% of rows "big" -- not a plausible daily return
+    result = neq.classify_adjustment_status(stats, dsf)
+    assert result["split_status"] == "adjusted"
+    assert result["ret_scale_status"] == "implausible"
+    assert result["overall"] == "flagged"
+    assert any("scale check" in r for r in result["reasons"])
+
+
+def test_classify_adjustment_status_dividend_and_scale_inconclusive_below_row_floor():
+    stats = neq.summarize_adjustment_events(_events_df(40, 0.0))
+    dsf = _dsf_stats_fixture(ret_and_retx_nonnull_rows=10, ret_nonnull_rows=10)
+    result = neq.classify_adjustment_status(stats, dsf)
+    assert result["split_status"] == "adjusted"
+    assert result["dividend_status"] == "inconclusive"
+    assert result["ret_scale_status"] == "inconclusive"
+    assert result["overall"] == "inconclusive"
 
 
 # ---------------------------------------------------------------------------
@@ -709,7 +852,13 @@ def test_read_master_stock_raw_reordered_header_maps_by_name(tmp_path):
 def test_read_master_stock_raw_renamed_column_raises(tmp_path):
     csv_path = tmp_path / "master_stock.csv"
     csv_path.write_text("Symbol,Date,Price\nAAA,2011-01-03,10.5\n")
-    with pytest.raises(Exception):
+    # duckdb.BinderException specifically (not a bare Exception, which
+    # would also pass on an unrelated failure like an import error) --
+    # "column not found" is exactly the clear, actionable error the
+    # NAME-based SELECT in read_master_stock_raw's docstring promises for
+    # a renamed column, as opposed to the old positional-columns override
+    # silently mislabeling data with no error at all.
+    with pytest.raises(duckdb.BinderException, match="Tic"):
         neq.read_master_stock_raw(csv_path)
 
 
@@ -818,6 +967,27 @@ def test_clean_master_stock_frame_end_date_window():
     assert set(cleaned["ticker"]) == {"AAA", "BBB"}
 
 
+def test_clean_master_stock_frame_price_quality_counters_respect_window():
+    # Round-3 review finding: missing/infinite/negative price counters
+    # must describe only the window this check actually uses (FINDINGS.md
+    # has always claimed this) -- a bad price on a row the window filter
+    # excludes anyway must not be counted. An earlier version of this
+    # function computed these counters BEFORE the window filter ran,
+    # benign only by coincidence (the upstream DuckDB read already
+    # excludes most out-of-window ISO-dated rows).
+    raw = pd.DataFrame({
+        "ticker": ["AAA", "AAA"],
+        "date_text": ["2011-01-03", "2020-01-01"],
+        "price_text": ["10.5", "-inf"],  # the bad price sits OUTSIDE the window
+    })
+    cleaned, stats = neq.clean_master_stock_frame(raw, end_date="2011-01-03")
+    assert stats["rows_after_window_filter"] == 1
+    assert stats["infinite_price_rows"] == 0  # the -inf row was already excluded by the window filter
+    assert stats["missing_price_rows"] == 0
+    assert stats["negative_price_rows"] == 0
+    assert len(cleaned) == 1
+
+
 # ---------------------------------------------------------------------------
 # compute_return_from_prices
 # ---------------------------------------------------------------------------
@@ -865,8 +1035,8 @@ def test_cross_validate_master_stock_basic_match():
         crsp, master, pd.Timestamp("2011-01-01"), pd.Timestamp("2011-12-31")
     )
     assert stats["matched_rows"] == 5
-    assert stats["tickers_quarantined_misaligned"] == 0
-    assert stats["tickers_quarantined_too_few_prices"] == 0
+    assert stats["segments_quarantined_misaligned"] == 0
+    assert stats["segments_quarantined_too_few_prices"] == 0
     assert stats["return_correlation"] == pytest.approx(1.0)
     assert len(merged) == 5
 
@@ -930,7 +1100,7 @@ def test_cross_validate_master_stock_trims_extreme_outlier_correlation():
     stats, _merged = neq.cross_validate_master_stock(
         crsp, master, dates.min(), dates.max()
     )
-    assert stats["tickers_quarantined_misaligned"] == 0  # one bad day doesn't move the ticker's median much
+    assert stats["segments_quarantined_misaligned"] == 0  # one bad day doesn't move the ticker's median much
     assert stats["return_extreme_diff_rows"] >= 1
     assert stats["return_correlation_excl_extreme"] > stats["return_correlation"]
 
@@ -958,8 +1128,8 @@ def test_cross_validate_master_stock_price_ratio_gate_ignores_return_convention(
     stats, _merged = neq.cross_validate_master_stock(
         crsp, master, dates.min(), dates.max()
     )
-    assert stats["tickers_quarantined_misaligned"] == 0
-    assert stats["tickers_quarantined_too_few_prices"] == 0
+    assert stats["segments_quarantined_misaligned"] == 0
+    assert stats["segments_quarantined_too_few_prices"] == 0
     assert stats["return_correlation"] == pytest.approx(1.0)
 
 
@@ -981,10 +1151,10 @@ def test_cross_validate_master_stock_quarantines_genuinely_misaligned_ticker():
     stats, _merged = neq.cross_validate_master_stock(
         crsp, master, dates.min(), dates.max()
     )
-    assert stats["tickers_quarantined_misaligned"] == 1
+    assert stats["segments_quarantined_misaligned"] == 1
     assert stats["rows_quarantined_misaligned"] == 6
     assert stats["return_comparison_rows_retained"] == 0
-    example_tickers = [e[0] for e in stats["quarantined_ticker_examples"]]
+    example_tickers = [e[0] for e in stats["quarantined_segment_examples"]]
     assert "WRONG" in example_tickers
 
 
@@ -1000,9 +1170,132 @@ def test_cross_validate_master_stock_too_few_price_pairs_quarantined_separately(
     stats, _merged = neq.cross_validate_master_stock(
         crsp, master, pd.Timestamp("2012-01-01"), pd.Timestamp("2012-01-31")
     )
-    assert stats["tickers_quarantined_misaligned"] == 0
-    assert stats["tickers_quarantined_too_few_prices"] == 1
+    assert stats["segments_quarantined_misaligned"] == 0
+    assert stats["segments_quarantined_too_few_prices"] == 1
     assert stats["rows_quarantined_too_few_prices"] == 1
+
+
+def test_cross_validate_master_stock_single_pair_ticker_is_too_few_not_misaligned():
+    # Round-3 review finding: without a minimum-pairs guard on the
+    # "misaligned" mask, a segment with exactly ONE comparable price pair
+    # whose one step happens to disagree would be classified "misaligned"
+    # (a confident, wrong-company claim from a single data point) instead
+    # of "too few to judge". TICKER_ALIGNMENT_MIN_PRICE_PAIRS == 2, so one
+    # pair must land in "too few", never "misaligned", and must not be
+    # named as a misaligned example.
+    dates = pd.to_datetime(["2012-01-03", "2012-01-04"])
+    crsp = pd.DataFrame({
+        "permno": 1, "ticker": "ONE", "date": dates,
+        "prc": [10.0, 10.1], "ret": [0.0, 0.01], "retx": [0.0, 0.01],
+    })
+    # A single price pair, disagreeing by a lot -- would clear the
+    # misaligned threshold on its own if the n_pairs guard were missing.
+    master = pd.DataFrame({"ticker": "ONE", "date": dates, "price": [10.0, 40.0]})
+    stats, _merged = neq.cross_validate_master_stock(
+        crsp, master, dates.min(), dates.max()
+    )
+    assert stats["segments_quarantined_misaligned"] == 0
+    assert stats["segments_quarantined_too_few_prices"] == 1
+    examples = stats.get("quarantined_segment_examples") or []
+    assert all(e[0] != "ONE" for e in examples)
+
+
+def test_cross_validate_master_stock_ticker_spanning_two_permnos_quarantines_only_bad_segment():
+    # Round-3 review BLOCKER: master_stock.csv labels history with a
+    # ticker's CURRENT symbol, so a ticker that hands off from one permno
+    # to another mid-window (real example: "SAN" = Banco Santander Chile,
+    # then Banco Santander S.A.) must be judged PER (ticker, permno), not
+    # pooled per ticker -- otherwise a well-aligned majority segment
+    # dilutes a genuinely misaligned minority segment below the
+    # quarantine threshold.
+    dates_a = pd.to_datetime(["2012-01-03", "2012-01-04", "2012-01-05", "2012-01-06"])
+    dates_b = pd.to_datetime(["2012-06-04", "2012-06-05", "2012-06-06", "2012-06-07", "2012-06-08"])
+    # Segment A (permno 100, the MINORITY of matched rows): CRSP and
+    # master price levels are unrelated -- a different company under the
+    # same symbol.
+    crsp_a_prices = [10.0, 10.5, 9.8, 10.2]
+    master_a_prices = [50.0, 30.0, 80.0, 20.0]
+    # Segment B (permno 200, the MAJORITY of matched rows): CRSP and
+    # master agree exactly -- the correct company.
+    crsp_b_prices = [20.0, 20.5, 19.8, 20.2, 20.1]
+    master_b_prices = list(crsp_b_prices)
+
+    crsp = pd.DataFrame({
+        "permno": [100] * 4 + [200] * 5,
+        "ticker": "SPAN",
+        "date": list(dates_a) + list(dates_b),
+        "prc": crsp_a_prices + crsp_b_prices,
+    })
+    # Varying (not constant) so return_correlation isn't a 0/0 no-op --
+    # this test is about which SEGMENT gets quarantined, not about the
+    # return-agreement numbers themselves.
+    crsp["retx"] = crsp.groupby("permno")["prc"].pct_change().fillna(0.0)
+    crsp["ret"] = crsp["retx"]
+    master = pd.DataFrame({
+        "ticker": "SPAN",
+        "date": list(dates_a) + list(dates_b),
+        "price": master_a_prices + master_b_prices,
+    })
+    stats, merged = neq.cross_validate_master_stock(crsp, master, dates_a.min(), dates_b.max())
+
+    assert stats["tickers_spanning_multiple_permnos"] == 1
+    assert stats["segments_quarantined_misaligned"] == 1
+    assert stats["rows_quarantined_misaligned"] == 4  # only segment A's rows, not segment B's 5
+    examples = stats["quarantined_segment_examples"]
+    assert len(examples) == 1
+    assert examples[0][0] == "SPAN"
+    assert examples[0][1] == 100  # the bad segment's own permno, not a ticker-pooled statistic
+    # Segment B's rows must still be present in the join output, not
+    # silently dropped just because the ticker as a whole has a problem.
+    assert set(merged["permno"]) == {100, 200}
+
+
+def test_cross_validate_master_stock_excludes_permno_handoff_row_from_return_comparison():
+    # The single day a ticker hands off from one permno to another is
+    # excluded from the return-agreement stats regardless of either
+    # segment's own alignment verdict: master_stock.csv's day-over-day
+    # return on that specific day is computed across the handoff itself
+    # (comparing two different companies' price LEVELS) and describes
+    # neither company individually. Uses adjacent trading days (gap well
+    # under compute_return_from_prices' own max_gap_days=4) so this is
+    # only caught by the explicit is_permno_handoff exclusion, not by the
+    # pre-existing calendar-gap tolerance.
+    dates_a = pd.to_datetime(["2012-01-03", "2012-01-04", "2012-01-05", "2012-01-06"])  # Tue-Fri
+    dates_b = pd.to_datetime(["2012-01-09", "2012-01-10", "2012-01-11", "2012-01-12"])  # following Mon-Thu
+
+    # Segment A (permno 100) and segment B (permno 200) each individually
+    # match master exactly, day to day -- but the two segments sit at
+    # completely different price LEVELS, so a "return" computed ACROSS
+    # the boundary (master's Jan-9 price versus its own Jan-6 price)
+    # would be wildly wrong and would corrupt the comparison if not
+    # excluded.
+    crsp_a = [10.0, 10.1, 10.2, 10.3]
+    crsp_b = [50.0, 45.0, 49.5, 48.0]
+    crsp = pd.DataFrame({
+        "permno": [100] * 4 + [200] * 4,
+        "ticker": "HAND",
+        "date": list(dates_a) + list(dates_b),
+        "prc": crsp_a + crsp_b,
+    })
+    crsp["retx"] = crsp.groupby("permno")["prc"].pct_change().fillna(0.0)
+    crsp["ret"] = crsp["retx"]
+    master = pd.DataFrame({
+        "ticker": "HAND",
+        "date": list(dates_a) + list(dates_b),
+        "price": crsp_a + crsp_b,  # matches CRSP exactly within each segment
+    })
+    stats, _merged = neq.cross_validate_master_stock(crsp, master, dates_a.min(), dates_b.max())
+
+    assert stats["segments_quarantined_misaligned"] == 0  # both segments individually match perfectly
+    assert stats["segments_quarantined_too_few_prices"] == 0
+    assert stats["tickers_spanning_multiple_permnos"] == 1
+    assert stats["segment_boundary_rows_excluded"] == 1
+    # 8 matched rows; Jan-3 drops for the usual first-day-has-no-prior-
+    # return reason, Jan-9 (the handoff day) drops via is_permno_handoff.
+    assert stats["return_comparison_rows"] == 6
+    assert stats["return_comparison_rows_retained"] == 6
+    # A still-included handoff day would corrupt this to well below 1.0.
+    assert stats["return_correlation"] == pytest.approx(1.0)
 
 
 def test_cross_validate_master_stock_quarantined_example_handles_all_null_prc():
@@ -1024,7 +1317,7 @@ def test_cross_validate_master_stock_quarantined_example_handles_all_null_prc():
         crsp, master, dates.min(), dates.max()
     )
     # prc is all-null -> zero valid price pairs -> "too few", not "misaligned"
-    assert stats["tickers_quarantined_too_few_prices"] == 1
+    assert stats["segments_quarantined_too_few_prices"] == 1
 
 
 def test_cross_validate_master_stock_return_comparison_uses_retx_not_ret():
@@ -1098,10 +1391,17 @@ def _minimal_findings_ctx(crossval_skipped=False, adjustment_status="adjusted"):
         "input_rows": 100, "output_rows": 99, "nonnull_prc_rows": 90, "negative_prc_rows": 1,
         "ret_sentinel_rows_mapped_to_null": 0, "retx_sentinel_rows_mapped_to_null": 0,
         "cfacpr_zero_rows": 0, "rows_with_no_ticker_on_record": 2,
+        "rows_permno_not_in_resolved_universe": 0, "duplicate_permno_date_rows_dropped": 1,
+        # classify_adjustment_status's dividend/scale discriminators, sized
+        # so both read "adjusted"/"plausible" by default (real-pull-like
+        # ratios: 0.7% ret!=retx, 0.4% |ret|>20%) -- a test exercising the
+        # split-status branches doesn't also need to think about these.
+        "ret_and_retx_nonnull_rows": 1_000_000, "ret_ne_retx_rows": 7_000, "ret_lt_retx_rows": 0,
+        "ret_nonnull_rows": 1_000_000, "ret_abs_gt_big_move_rows": 4_000,
     }
     dsi_stats = {
         "rows": 10, "date_min": pd.Timestamp("1995-01-03"), "date_max": pd.Timestamp("2014-06-30"),
-        "null_value_rows": 0, "duplicate_date_rows_dropped": 0,
+        "null_value_rows": 0, "duplicate_date_rows_dropped": 0, "sentinel_rows_mapped_to_null": 0,
     }
     delist_stats = {
         "rows": 5, "date_min": pd.Timestamp("1996-01-01"), "date_max": pd.Timestamp("2013-01-01"),
@@ -1141,8 +1441,10 @@ def _minimal_findings_ctx(crossval_skipped=False, adjustment_status="adjusted"):
         "crsp_distinct_tickers_in_window": 3, "master_distinct_tickers_in_window": 3,
         "crsp_ticker_date_collisions_dropped": 0,
         "master_ticker_date_collisions_dropped": 0, "master_ticker_date_collision_tickers": 0,
-        "tickers_quarantined_misaligned": 0, "rows_quarantined_misaligned": 0,
-        "tickers_quarantined_too_few_prices": 0, "rows_quarantined_too_few_prices": 0,
+        "segments_quarantined_misaligned": 0, "rows_quarantined_misaligned": 0,
+        "segments_quarantined_too_few_prices": 0, "rows_quarantined_too_few_prices": 0,
+        "tickers_spanning_multiple_permnos": 0, "segment_boundary_rows_excluded": 0,
+        "ticker_gate_worst_retained_median_diff": 6.9e-4, "ticker_gate_closest_quarantined_median_diff": None,
         "return_comparison_rows": 10, "return_comparison_rows_retained": 10,
         "return_mean_abs_diff": 0.0, "return_median_abs_diff": 0.0, "return_frac_within_1pct": 1.0,
         "return_correlation": 0.99, "return_correlation_before_ticker_gate": 0.99,
@@ -1181,13 +1483,13 @@ def test_build_findings_markdown_normal_case_has_expected_sections():
 
 def test_build_findings_markdown_normal_case_reports_ticker_gate_and_verdict():
     ctx = _minimal_findings_ctx()
-    ctx["crossval_stats"]["tickers_quarantined_misaligned"] = 4
+    ctx["crossval_stats"]["segments_quarantined_misaligned"] = 4
     ctx["crossval_stats"]["rows_quarantined_misaligned"] = 40
-    # (ticker, median_price_step_diff, crsp_price_median, master_price_median)
-    ctx["crossval_stats"]["quarantined_ticker_examples"] = [("ZZZZ", 0.05, 10.0, 200.0)]
+    # (ticker, permno, median_price_step_diff, crsp_price_median, master_price_median)
+    ctx["crossval_stats"]["quarantined_segment_examples"] = [("ZZZZ", 99999, 0.05, 10.0, 200.0)]
     ctx["crossval_stats"]["return_comparison_rows_retained"] = 50  # clear the positive-verdict sample-size bar
     md = neq.build_findings_markdown(ctx)
-    assert "4 tickers (40 rows)" in md
+    assert "4 segments (40 rows)" in md
     assert "`ZZZZ`" in md
     assert "**Verdict: this is a secondary, non-blocking check" in md
 
@@ -1202,8 +1504,12 @@ def test_build_findings_markdown_negative_verdict_when_agreement_weak():
 def test_build_findings_markdown_handles_skipped_crossval():
     md = neq.build_findings_markdown(_minimal_findings_ctx(crossval_skipped=True))
     assert "no overlapping data to compare" in md
-    # must not have tried to format fields that don't exist when skipped
-    assert "tickers set aside this way" not in md
+    # Must not have tried to format fields that don't exist when skipped --
+    # asserting on a string _crossval_detail_lines actually emits (a
+    # previous version of this test asserted on a string that appeared
+    # nowhere in the module at all, so it would have passed even if the
+    # entire crossval detail block leaked into the skipped-run report).
+    assert "single most important finding of this cross-check" not in md
     assert "could not run this time" in md
 
 
@@ -1318,7 +1624,7 @@ def test_main_skips_crossval_gracefully_when_no_overlap_years(tmp_path, monkeypa
     assert (out_dir / "equity_2009.parquet").exists()
 
 
-def test_main_end_to_end_exercises_adjustment_evidence_branch(tmp_path, monkeypatch):
+def test_main_end_to_end_exercises_adjustment_evidence_branch(tmp_path, monkeypatch, capsys):
     """The other two main() e2e tests use a single dsf_2011.parquet with
     cfacpr == 1.0 throughout, so detect_adjustment_events finds nothing and
     both AAPL spot-check tables stay empty -- the "evidence" half of the
@@ -1326,7 +1632,16 @@ def test_main_end_to_end_exercises_adjustment_evidence_branch(tmp_path, monkeypa
     test adds a second year, 2005, with a real cfacpr change for AAPL's
     permno straddling AAPL_SPLIT_YEAR_DATES[2005], so main() has to
     populate a non-empty events table and a non-empty aapl_2005 spot-check
-    table for real."""
+    table for real.
+
+    All three main() e2e fixtures are small enough that dividend/scale
+    row counts and the event count both stay far below classify_adjustment_
+    status's PULL_WIDE_VERDICT_MIN_ROWS/ADJUSTMENT_VERDICT_MIN_EVENTS
+    floors, so `overall` always comes back "inconclusive" here and the
+    terminal escalation banner in main() fires on every one of these
+    tests -- this test is the one that actually asserts on it, covering a
+    path that was previously exercised (all three fixtures print it) but
+    never checked."""
     monkeypatch.setattr(neq, "ARCHIVE_END_DATE", "2013-12-31")
     monkeypatch.setattr(neq, "CROSSVAL_YEARS", (2011,))
     out_dir = _write_main_fixtures(tmp_path, monkeypatch)
@@ -1360,3 +1675,15 @@ def test_main_end_to_end_exercises_adjustment_evidence_branch(tmp_path, monkeypa
     assert "0 such adjustment events" not in findings_text
     # The AAPL 2005 spot-check table is populated (not the empty placeholder).
     assert "2005-02-28" in findings_text
+
+    # This fixture's single real event is far below ADJUSTMENT_VERDICT_MIN_
+    # EVENTS, and its row counts are far below PULL_WIDE_VERDICT_MIN_ROWS,
+    # so every one of the three checks comes back "inconclusive" and the
+    # terminal banner fires -- assert on it directly rather than just on
+    # "DONE." (which every run prints regardless of adjustment status).
+    captured = capsys.readouterr()
+    assert "ADJUSTMENT STATUS: INCONCLUSIVE" in captured.out
+    assert "split check:" in captured.out
+    assert "dividend check:" in captured.out
+    assert "scale check:" in captured.out
+    assert "DONE." in captured.out

@@ -118,6 +118,28 @@ NAIVE_RET_BIG_MOVE_THRESHOLD = 0.20
 UNADJUSTED_RET_MATCH_TOL = 0.01
 ADJUSTMENT_VERDICT_MIN_EVENTS = 30
 
+# classify_adjustment_status's dividend and return-scale discriminators
+# (added after round-3 review found the single split-based discriminator
+# above could not speak to dividends at all, or to a mis-scaled `ret`
+# column -- see classify_adjustment_status's docstring for the measured
+# margins behind each threshold below).
+#
+# cfacpr never changes for an ordinary cash dividend (it's a split/
+# distribution factor), so the split discriminator above is structurally
+# blind to dividends -- the only pull-wide dividend signal in this data is
+# `ret` disagreeing with `retx` at all. And separately, "is `ret` adjusted"
+# is a different question from "is `ret` even a plausible fractional daily
+# return" -- a discriminator built only around "does ret match the naive
+# move" cannot catch a `ret` column delivered in the wrong units (e.g.
+# percent, 1.0 meaning +100%), since that failure mode is maximally FAR
+# from the naive move either way.
+PULL_WIDE_VERDICT_MIN_ROWS = 100_000  # this pull: 20,244,672 non-null ret/retx rows, 202x over
+DIVIDEND_EVIDENCE_MIN_DIFF = 1e-9  # also used by cross_validate_master_stock's ex_div filter
+DIVIDEND_EVIDENCE_MIN_FRACTION = 1e-4  # this pull: 6.706e-03 (0.67%), 67x over; a ret-copied-from-retx pull measures exactly 0
+RET_PLAUSIBLE_MIN_FRAC_ABS_GT_BIG_MOVE = 1e-4  # this pull: 3.842e-03 (0.38%), 38x over; an all-zero/constant ret column measures 0
+RET_PLAUSIBLE_MAX_FRAC_ABS_GT_BIG_MOVE = 0.05  # this pull: 3.842e-03, 13x under; a percent-units ret column (1.0 == 100%) measures ~0.8-1.0
+RET_PLAUSIBLE_MAX_EVENT_ABS_MEDIAN = 0.10  # this pull's event-day median |ret|: 0.0217, 4.6x under; percent-units measures ~1.0
+
 # A single-day return difference bigger than this between CRSP and
 # master_stock.csv is not plausibly "the same real trading day, measured
 # slightly differently" -- it's used only to separate out a small number of
@@ -167,6 +189,12 @@ TICKER_ALIGNMENT_MAX_MEDIAN_PRICE_STEP_DIFF = 1e-3
 # treated as unverifiable and quarantined separately from "misaligned"
 # rather than folded into the same headline count.
 TICKER_ALIGNMENT_MIN_PRICE_PAIRS = 2
+
+# _crossval_detail_lines' positive/negative verdict gate -- a sample-size
+# floor, numerically the same as ADJUSTMENT_VERDICT_MIN_EVENTS today but a
+# distinct constant since the two thresholds guard unrelated checks and
+# have no reason to move together.
+CROSSVAL_VERDICT_MIN_RETAINED_ROWS = 30
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +434,22 @@ def clean_dsf_year(raw: pd.DataFrame, resolved_permnos, stocknames: pd.DataFrame
     df["ret"] = ret_clean
     df["retx"] = retx_clean
 
+    # Pull-wide dividend and return-scale evidence for classify_adjustment_
+    # status (see its docstring): computed here, on the post-sentinel-
+    # mapping, post-dedup frame, so a sentinel code or a duplicate row can
+    # never fake a ret/retx disagreement or a big-move count.
+    ret_nonnull = df["ret"].notna()
+    both_nonnull = ret_nonnull & df["retx"].notna()
+    ret_minus_retx = df["ret"] - df["retx"]
+    stats["ret_nonnull_rows"] = int(ret_nonnull.sum())
+    stats["ret_and_retx_nonnull_rows"] = int(both_nonnull.sum())
+    stats["ret_ne_retx_rows"] = int((both_nonnull & (ret_minus_retx.abs() > DIVIDEND_EVIDENCE_MIN_DIFF)).sum())
+    # Directional sanity check: a real dividend is a cash inflow, so `ret`
+    # (total return) should very rarely be LESS than `retx` (price-only) --
+    # a sizeable count here would mean ret/retx are mislabeled or swapped.
+    stats["ret_lt_retx_rows"] = int((both_nonnull & (-ret_minus_retx > DIVIDEND_EVIDENCE_MIN_DIFF)).sum())
+    stats["ret_abs_gt_big_move_rows"] = int((ret_nonnull & (df["ret"].abs() > NAIVE_RET_BIG_MOVE_THRESHOLD)).sum())
+
     cfacpr = df["cfacpr"].astype("float64")
     # No derived split-adjusted price column is stored here (see
     # FINDINGS.md's adjustment-status section): cfacpr is a CUMULATIVE
@@ -469,9 +513,21 @@ def clean_dsi(raw: pd.DataFrame):
     stats["duplicate_date_rows_dropped"] = int(dup.sum())
     df = df.loc[~dup].reset_index(drop=True)
 
+    # Same CRSP missing-return sentinel mapping clean_dsf_year applies to
+    # dsf.ret/dsf.retx (see CRSP_MISSING_RETURN_CODES) -- dsi's return
+    # columns use the same CRSP convention, and market_benchmark.parquet is
+    # the series every downstream abnormal-return calculation subtracts, so
+    # a sentinel surviving here is strictly worse than one surviving in
+    # dsf. Applied before null_value_rows below so a sentinel is counted as
+    # the missing value it actually represents.
     value_cols = ["vwretd", "sprtrn", "vwretx", "ewretd", "ewretx"]
+    n_sentinel = 0
     for col in value_cols:
         df[col] = df[col].astype("float64")
+        cleaned_col, n = map_missing_return_codes(df[col])
+        df[col] = cleaned_col
+        n_sentinel += n
+    stats["sentinel_rows_mapped_to_null"] = n_sentinel
     stats["rows"] = len(df)
     stats["null_value_rows"] = int(df[value_cols].isna().any(axis=1).sum())
     stats["date_min"] = df["date"].min()
@@ -612,38 +668,162 @@ def summarize_adjustment_events(events: pd.DataFrame) -> dict:
     return stats
 
 
-def classify_adjustment_status(event_stats: dict) -> str:
-    """Whether CRSP's returns in THIS pull appear split/dividend-adjusted,
-    derived from summarize_adjustment_events' output rather than assumed.
-    Returns one of "adjusted" / "not_adjusted" / "mixed" / "inconclusive".
+def classify_adjustment_status(event_stats: dict, dsf_stats: dict) -> dict:
+    """Whether CRSP's returns in THIS pull appear split-adjusted,
+    dividend-adjusted, AND scaled as an ordinary fractional daily return --
+    three separate claims, each derived from its own evidence rather than
+    assumed, and rather than one discriminator standing in for all three
+    (round-3 review finding: a single split-based check cannot say anything
+    about dividends, and cannot catch a `ret` column delivered in
+    nonsensical units, since that failure mode is maximally FAR from the
+    split discriminator's "matches the naive move" signal either way).
 
-    The discriminator is frac_big_naive_events_ret_equals_naive: among
-    events where the raw price alone implies a move bigger than
-    NAIVE_RET_BIG_MOVE_THRESHOLD (a real split/distribution, not day-to-day
-    noise), what fraction of the time does CRSP's actual `ret` land within
-    UNADJUSTED_RET_MATCH_TOL of that same raw move? If `ret` is already
-    adjusted, it should almost never land there (this project's real pull:
-    1 of 5,363 such events, 1.86e-04); if `ret` were simply the raw,
-    unadjusted price change, it would land there essentially always (a
-    synthetic ret=naive_ret pull measures 1.0); a pull that's a 50/50 mix
-    of adjusted and unadjusted names measures 0.504; even a pull that's
-    just 10% unadjusted measures 0.099 -- two clear orders of magnitude
-    above the real, fully-adjusted pull's 1.86e-04. ADJUSTMENT_VERDICT_MIN_EVENTS
-    guards against a small pull (or a data window with few real corporate
-    actions) producing a confident-sounding verdict off a handful of
-    events; below it, the check is honestly reported as not having run
-    rather than defaulting to "adjusted".
+    Returns a dict:
+      - "split_status": "adjusted" / "not_adjusted" / "mixed" / "inconclusive"
+      - "dividend_status": "adjusted" / "not_adjusted" / "inconclusive"
+      - "ret_scale_status": "plausible" / "implausible" / "inconclusive"
+      - "overall": "adjusted" only if all three of the above confirm
+        cleanly; "flagged" if any of them actively contradicts adjustment
+        or plausibility; "inconclusive" otherwise (not enough evidence
+        either way on at least one check, but nothing actively wrong).
+      - "reasons": one human-readable string per check that did not
+        confirm "adjusted"/"plausible", naming the check and the number
+        behind it.
+
+    1. split_status. The discriminator is frac_big_naive_events_ret_equals_
+       naive: among events where the raw price alone implies a move bigger
+       than NAIVE_RET_BIG_MOVE_THRESHOLD (a real split/distribution, not
+       day-to-day noise), what fraction of the time does CRSP's actual
+       `ret` land within UNADJUSTED_RET_MATCH_TOL of that same raw move?
+       If `ret` is already adjusted, it should almost never land there
+       (this project's real pull: 1 of 5,363 such events, 1.86e-04); if
+       `ret` were simply the raw, unadjusted price change, it would land
+       there essentially always (a synthetic ret=naive_ret pull measures
+       1.0); a pull that's a 50/50 mix of adjusted and unadjusted names
+       measures 0.504; even a pull that's just 10% unadjusted measures
+       0.099 -- two clear orders of magnitude above the real, fully-
+       adjusted pull's 1.86e-04. ADJUSTMENT_VERDICT_MIN_EVENTS guards
+       against a small pull (or a data window with few real corporate
+       actions) producing a confident-sounding verdict off a handful of
+       events.
+
+    2. dividend_status. `cfacpr` never changes for an ordinary cash
+       dividend (it's a split/distribution factor), so split_status's
+       event-based check above is structurally blind to dividends -- the
+       only pull-wide dividend signal in this data is `ret` disagreeing
+       with `retx` at all. If `ret` truly reinvests dividends and `retx`
+       truly excludes them, the two columns must disagree on genuine
+       ex-dividend days and agree everywhere else. This project's real
+       pull: they disagree on 0.6706% of rows with both populated -- 67x
+       DIVIDEND_EVIDENCE_MIN_FRACTION's floor. A pull where `ret` was
+       mistakenly populated with `retx`'s values (i.e. NOT dividend-
+       adjusted) measures exactly 0 here.
+
+    3. ret_scale_status. Independent of whether `ret` is adjusted, is it
+       even a plausible fractional daily return? Two checks: the fraction
+       of all `ret` values bigger than NAIVE_RET_BIG_MOVE_THRESHOLD in
+       absolute value must sit in a plausible band (this pull: 0.38424%;
+       a percent-units column, e.g. 1.0 meaning +100%, would put nearly
+       every value above that band's ceiling, and an all-zero or constant
+       column would sit below its floor); and, when split_status is
+       judgeable, the event-day |ret| median must not be absurdly large
+       (this pull's real event-day median: 2.17%; a percent-units column's
+       event-day |ret| values are themselves ~100x too big).
     """
+    reasons = []
+
     n_events = event_stats.get("n_events", 0)
     n_big = event_stats.get("n_events_with_big_naive_move", 0)
     if n_events == 0 or n_big < ADJUSTMENT_VERDICT_MIN_EVENTS:
-        return "inconclusive"
-    frac = event_stats["frac_big_naive_events_ret_equals_naive"]
-    if frac <= 0.01:
-        return "adjusted"
-    if frac >= 0.99:
-        return "not_adjusted"
-    return "mixed"
+        split_status = "inconclusive"
+        reasons.append(
+            f"split check: only {n_big} big-raw-move adjustment event(s) found across the "
+            f"whole pull (need at least {ADJUSTMENT_VERDICT_MIN_EVENTS}), so split-adjustment "
+            f"status could not be checked directly"
+        )
+    else:
+        frac = event_stats["frac_big_naive_events_ret_equals_naive"]
+        if frac <= 0.01:
+            split_status = "adjusted"
+        elif frac >= 0.99:
+            split_status = "not_adjusted"
+            reasons.append(
+                f"split check: `ret` matches the raw, unadjusted price move on {frac:.1%} of "
+                f"big-raw-move events -- consistent with `ret` NOT being split-adjusted"
+            )
+        else:
+            split_status = "mixed"
+            reasons.append(
+                f"split check: `ret` matches the raw, unadjusted price move on {frac:.1%} of "
+                f"big-raw-move events -- neither cleanly adjusted nor cleanly unadjusted"
+            )
+
+    both_nonnull = dsf_stats.get("ret_and_retx_nonnull_rows", 0)
+    if both_nonnull < PULL_WIDE_VERDICT_MIN_ROWS:
+        dividend_status = "inconclusive"
+        reasons.append(
+            f"dividend check: only {both_nonnull} row(s) with both `ret` and `retx` populated "
+            f"(need at least {PULL_WIDE_VERDICT_MIN_ROWS}), so dividend-adjustment status "
+            f"could not be checked directly"
+        )
+    else:
+        frac_ne = dsf_stats.get("ret_ne_retx_rows", 0) / both_nonnull
+        if frac_ne < DIVIDEND_EVIDENCE_MIN_FRACTION:
+            dividend_status = "not_adjusted"
+            reasons.append(
+                f"dividend check: `ret` and `retx` disagree on only {frac_ne:.4%} of rows with "
+                f"both populated -- too rare to be real dividends, consistent with `ret` NOT "
+                f"including dividends"
+            )
+        else:
+            dividend_status = "adjusted"
+
+    ret_nonnull = dsf_stats.get("ret_nonnull_rows", 0)
+    if ret_nonnull < PULL_WIDE_VERDICT_MIN_ROWS:
+        ret_scale_status = "inconclusive"
+        reasons.append(
+            f"scale check: only {ret_nonnull} non-null `ret` row(s) (need at least "
+            f"{PULL_WIDE_VERDICT_MIN_ROWS}), so `ret`'s scale could not be checked directly"
+        )
+    else:
+        frac_big_ret = dsf_stats.get("ret_abs_gt_big_move_rows", 0) / ret_nonnull
+        if not (RET_PLAUSIBLE_MIN_FRAC_ABS_GT_BIG_MOVE <= frac_big_ret <= RET_PLAUSIBLE_MAX_FRAC_ABS_GT_BIG_MOVE):
+            ret_scale_status = "implausible"
+            reasons.append(
+                f"scale check: {frac_big_ret:.4%} of all `ret` values are bigger than "
+                f"{NAIVE_RET_BIG_MOVE_THRESHOLD:.0%} in size, outside the "
+                f"[{RET_PLAUSIBLE_MIN_FRAC_ABS_GT_BIG_MOVE:.2%}, "
+                f"{RET_PLAUSIBLE_MAX_FRAC_ABS_GT_BIG_MOVE:.0%}] band a plausible fractional "
+                f"daily return column should fall in"
+            )
+        elif (
+            split_status != "inconclusive"
+            and event_stats.get("actual_ret_abs_median", 0.0) > RET_PLAUSIBLE_MAX_EVENT_ABS_MEDIAN
+        ):
+            ret_scale_status = "implausible"
+            reasons.append(
+                f"scale check: on the big-raw-move event days above, `ret`'s own median size "
+                f"is {event_stats['actual_ret_abs_median']:.1%}, beyond the "
+                f"{RET_PLAUSIBLE_MAX_EVENT_ABS_MEDIAN:.0%} an ordinary daily return (even on a "
+                f"split date) should stay under"
+            )
+        else:
+            ret_scale_status = "plausible"
+
+    if split_status == "adjusted" and dividend_status == "adjusted" and ret_scale_status == "plausible":
+        overall = "adjusted"
+    elif split_status in ("not_adjusted", "mixed") or dividend_status == "not_adjusted" or ret_scale_status == "implausible":
+        overall = "flagged"
+    else:
+        overall = "inconclusive"
+
+    return {
+        "split_status": split_status,
+        "dividend_status": dividend_status,
+        "ret_scale_status": ret_scale_status,
+        "overall": overall,
+        "reasons": reasons,
+    }
 
 
 def summarize_prc_adj_lookahead_risk(first_year_df: pd.DataFrame, final_cfacpr_per_permno: pd.DataFrame, price_threshold: float = 5.0) -> dict:
@@ -852,6 +1032,24 @@ def clean_master_stock_frame(raw: pd.DataFrame, end_date=None):
     stats["shape_matched_but_invalid_date_rows"] = int((iso_mask | mdy_mask).sum() - parsed_date.notna().sum())
     df = df.loc[df["date"].notna()].copy()
 
+    # The end_date window filter runs HERE -- before the price-quality
+    # counters just below, not after them -- so that missing_price_rows /
+    # infinite_price_rows / negative_price_rows (and distinct_tickers /
+    # date_min / date_max) genuinely describe only the window this check
+    # actually uses, matching how FINDINGS.md describes them. An earlier
+    # version of this function computed those counters BEFORE this filter
+    # while still labeling them "narrowed to just the window" -- benign
+    # only by coincidence, since read_master_stock_raw's own ISO-shaped
+    # pushdown (see its docstring) already excludes most out-of-window
+    # rows before this function ever sees them. The date-FORMAT counters
+    # above (iso_date_rows/mdy_date_rows/unrecognized_date_format_rows/
+    # shape_matched_but_invalid_date_rows) deliberately stay computed
+    # before this filter: they describe every non-blank-ticker row the
+    # read returned, not just the window, since a date has to be
+    # classified before a date-based filter can even be applied to it.
+    if end_date is not None:
+        df = df.loc[df["date"] <= pd.Timestamp(end_date)].copy()
+
     price_text = df["price_text"].astype("string").str.replace(",", "", regex=False)
     price = pd.to_numeric(price_text, errors="coerce")
     is_null_field = df["price_text"].isna() | (df["price_text"].astype("string").str.strip() == "")
@@ -872,9 +1070,6 @@ def clean_master_stock_frame(raw: pd.DataFrame, end_date=None):
     stats["distinct_tickers"] = int(df["ticker"].nunique())
     stats["date_min"] = df["date"].min()
     stats["date_max"] = df["date"].max()
-
-    if end_date is not None:
-        df = df.loc[df["date"] <= pd.Timestamp(end_date)].copy()
     stats["rows_after_window_filter"] = len(df)
 
     out = df[["ticker", "date", "price"]].reset_index(drop=True)
@@ -923,13 +1118,28 @@ def cross_validate_master_stock(crsp_df: pd.DataFrame, master_df: pd.DataFrame, 
     different company over the years (e.g. "WOLF": Great Wolf Resorts in
     CRSP's history for this permno, Wolfspeed/Cree in master_stock.csv's
     current labeling) then joins two unrelated companies' prices on the
-    same symbol. This is caught PER TICKER, after the join, with a
-    price-ratio-step test -- see TICKER_ALIGNMENT_MAX_MEDIAN_PRICE_STEP_DIFF's
-    module-level comment for what this measures and why it replaced an
-    earlier return-based version of this same gate (three confirmed false
-    positives). Tickers failing that test, and tickers with too few
-    consecutive-date price pairs to judge at all, are both quarantined out
-    of the pooled statistics below, tracked as two separate reasons.
+    same symbol -- concretely including a ticker that maps to two
+    DIFFERENT CRSP permnos sequentially within this very window (e.g.
+    "SAN": Banco Santander Chile, then Banco Santander S.A., a >10x price-
+    level difference). This is caught PER (TICKER, PERMNO) SEGMENT, not
+    per ticker alone -- CRSP's own identity for a security is the permno,
+    not the mutable ticker label, so a per-ticker-only median would just
+    average a wrong-company segment together with a right-company one and
+    let the larger segment hide the smaller one entirely (verified: this
+    happened in round-3 review for exactly this reason). The gate itself
+    is a price-ratio-step test -- see
+    TICKER_ALIGNMENT_MAX_MEDIAN_PRICE_STEP_DIFF's module-level comment for
+    what this measures and why it replaced an earlier return-based version
+    of this same gate (three confirmed false positives). Segments failing
+    that test, and segments with too few consecutive-date price pairs to
+    judge at all, are both quarantined out of the pooled statistics below,
+    tracked as two separate reasons. The single day where a ticker hands
+    off from one permno to another is additionally excluded from the
+    return-agreement statistics regardless of either segment's own
+    verdict (see `is_permno_handoff` below): master_stock.csv's own
+    day-over-day return on that specific day is computed across the
+    handoff itself (it has no permno of its own to key on) and so
+    describes neither company individually.
 
     The return-agreement statistics themselves compare `retx` (CRSP's
     price-only return), not `ret` (CRSP's total return, dividends
@@ -943,6 +1153,19 @@ def cross_validate_master_stock(crsp_df: pd.DataFrame, master_df: pd.DataFrame, 
     headline metric.
     """
     stats = {"window_start": window_start, "window_end": window_end}
+
+    def _in_segments(df, segments):
+        """Boolean mask: does each row's (ticker, permno) pair appear in
+        `segments` (a set of (ticker, permno) tuples)? Isolated as a
+        helper since this exact membership test is needed against four
+        different frames below (merged, full_ret_cmp, retained's source,
+        retained_merged)."""
+        if not segments:
+            return pd.Series(False, index=df.index)
+        return pd.Series(
+            pd.MultiIndex.from_frame(df[["ticker", "permno"]]).isin(list(segments)),
+            index=df.index,
+        )
 
     crsp_w = crsp_df.loc[
         (crsp_df["date"] >= window_start) & (crsp_df["date"] <= window_end) & crsp_df["ticker"].notna()
@@ -979,61 +1202,99 @@ def cross_validate_master_stock(crsp_df: pd.DataFrame, master_df: pd.DataFrame, 
         master_w[["ticker", "date", "price", "master_ret"]].rename(columns={"price": "master_price"}),
         on=["ticker", "date"], how="inner",
     )
+    merged = merged.sort_values(["ticker", "date"]).reset_index(drop=True)
     stats["matched_rows"] = int(len(merged))
     stats["matched_distinct_tickers"] = int(merged["ticker"].nunique())
 
-    # --- Per-ticker alignment gate: price-ratio-step test -----------------
+    # A ticker whose matched rows span more than one permno within this
+    # window (see docstring) -- flagged here so the report can name it
+    # explicitly, and so the one row where the permno changes ("the
+    # handoff day") can be excluded from the return-agreement stats below.
+    segments_per_ticker = merged[["ticker", "permno"]].drop_duplicates().groupby("ticker").size()
+    stats["tickers_spanning_multiple_permnos"] = int((segments_per_ticker > 1).sum())
+    prev_permno = merged.groupby("ticker")["permno"].shift(1)
+    merged["is_permno_handoff"] = prev_permno.notna() & (merged["permno"] != prev_permno)
+    stats["segment_boundary_rows_excluded"] = int(merged["is_permno_handoff"].sum())
+
+    # --- Per-(ticker, permno) alignment gate: price-ratio-step test -------
     # Both sides of each step span the exact same pair of matched dates, so
     # a master_stock.csv coverage gap can never masquerade as a price
     # disagreement the way it could in a return-based gate (see module
     # comment). Only positive prices are used (a price of 0 or a sign
     # convention on either side would make pct_change meaningless).
+    # Grouping by permno as well as ticker (rather than ticker alone) is
+    # what lets this test see a wrong-company segment that's a MINORITY of
+    # a ticker's matched rows -- see docstring.
     pairs = merged.dropna(subset=["prc", "master_price"])
-    pairs = pairs.loc[(pairs["prc"] > 0) & (pairs["master_price"] > 0)].sort_values(["ticker", "date"])
-    g = pairs.groupby("ticker")
+    pairs = pairs.loc[(pairs["prc"] > 0) & (pairs["master_price"] > 0)].sort_values(["ticker", "permno", "date"])
+    g = pairs.groupby(["ticker", "permno"])
     step_diff = (g["master_price"].pct_change(fill_method=None) - g["prc"].pct_change(fill_method=None)).abs()
     step_cmp = pairs.assign(step_diff=step_diff).dropna(subset=["step_diff"])
-    per_ticker = step_cmp.groupby("ticker")["step_diff"].agg(n_pairs="count", median_diff="median")
+    per_segment = step_cmp.groupby(["ticker", "permno"])["step_diff"].agg(n_pairs="count", median_diff="median")
 
-    all_matched_tickers = set(merged["ticker"].unique())
-    judged_tickers = set(per_ticker.index)
-    # A ticker with ZERO valid consecutive-date pairs (e.g. only one row
+    all_matched_segments = set(map(tuple, merged[["ticker", "permno"]].drop_duplicates().itertuples(index=False, name=None)))
+    judged_segments = set(per_segment.index)
+    # A segment with ZERO valid consecutive-date pairs (e.g. only one row
     # total, or no two rows close enough together) never appears in
-    # per_ticker at all -- unjudgeable the same way as "too few pairs".
-    zero_pair_tickers = all_matched_tickers - judged_tickers
+    # per_segment at all -- unjudgeable the same way as "too few pairs".
+    zero_pair_segments = all_matched_segments - judged_segments
 
-    misaligned_mask = per_ticker["median_diff"] > TICKER_ALIGNMENT_MAX_MEDIAN_PRICE_STEP_DIFF
-    too_few_mask = per_ticker["n_pairs"] < TICKER_ALIGNMENT_MIN_PRICE_PAIRS
-    misaligned_tickers = set(per_ticker.index[misaligned_mask])
-    too_few_tickers = (set(per_ticker.index[too_few_mask]) - misaligned_tickers) | zero_pair_tickers
+    # The n_pairs guard on misaligned_mask (not just too_few_mask) matters:
+    # without it, a segment with a single price pair whose one step
+    # happens to disagree would be classified "misaligned" (a confident-
+    # sounding, wrong-company claim) rather than "too few to judge" -- see
+    # TICKER_ALIGNMENT_MIN_PRICE_PAIRS's docstring. Guarding here means the
+    # two resulting sets are disjoint by construction, with no need to
+    # subtract one from the other.
+    misaligned_mask = (per_segment["median_diff"] > TICKER_ALIGNMENT_MAX_MEDIAN_PRICE_STEP_DIFF) & (
+        per_segment["n_pairs"] >= TICKER_ALIGNMENT_MIN_PRICE_PAIRS
+    )
+    too_few_mask = per_segment["n_pairs"] < TICKER_ALIGNMENT_MIN_PRICE_PAIRS
+    misaligned_segments = set(per_segment.index[misaligned_mask])
+    too_few_segments = set(per_segment.index[too_few_mask]) | zero_pair_segments
 
-    stats["tickers_quarantined_misaligned"] = len(misaligned_tickers)
-    stats["tickers_quarantined_too_few_prices"] = len(too_few_tickers)
-    stats["rows_quarantined_misaligned"] = int(merged["ticker"].isin(misaligned_tickers).sum())
-    stats["rows_quarantined_too_few_prices"] = int(merged["ticker"].isin(too_few_tickers).sum())
+    stats["segments_quarantined_misaligned"] = len(misaligned_segments)
+    stats["segments_quarantined_too_few_prices"] = len(too_few_segments)
+    stats["rows_quarantined_misaligned"] = int(_in_segments(merged, misaligned_segments).sum())
+    stats["rows_quarantined_too_few_prices"] = int(_in_segments(merged, too_few_segments).sum())
+    # How thin is the gap TICKER_ALIGNMENT_MAX_MEDIAN_PRICE_STEP_DIFF sits
+    # in, on this actual pull -- surfaced (not just a code comment) so a
+    # future refresh can see whether the margin has narrowed.
+    retained_mask = ~misaligned_mask & ~too_few_mask
+    stats["ticker_gate_worst_retained_median_diff"] = (
+        _nan_to_none(per_segment.loc[retained_mask, "median_diff"].max()) if retained_mask.any() else None
+    )
+    stats["ticker_gate_closest_quarantined_median_diff"] = (
+        _nan_to_none(per_segment.loc[misaligned_mask, "median_diff"].min()) if misaligned_mask.any() else None
+    )
 
-    if misaligned_tickers:
+    if misaligned_segments:
         examples = []
-        top = per_ticker.loc[sorted(misaligned_tickers), "median_diff"].sort_values(ascending=False).head(5)
-        for ticker, metric in top.items():
-            sub = merged.loc[merged["ticker"] == ticker]
+        top = per_segment.loc[sorted(misaligned_segments), "median_diff"].sort_values(ascending=False).head(5)
+        for (ticker, permno), metric in top.items():
+            sub = merged.loc[(merged["ticker"] == ticker) & (merged["permno"] == permno)]
             examples.append((
-                ticker, float(metric),
+                ticker, int(permno), float(metric),
                 _nan_to_none(sub["prc"].median()), _nan_to_none(sub["master_price"].median()),
             ))
-        stats["quarantined_ticker_examples"] = examples
+        stats["quarantined_segment_examples"] = examples
 
-    quarantined_tickers = misaligned_tickers | too_few_tickers
-    retained_merged = merged.loc[~merged["ticker"].isin(quarantined_tickers)]
+    quarantined_segments = misaligned_segments | too_few_segments
+    # Handoff rows are excluded here too (not just from full_ret_cmp below):
+    # a handoff row's OWN segment might be perfectly well-aligned, but its
+    # master_ret still reflects a step across the boundary into a
+    # different company's price level -- see docstring.
+    retained_merged = merged.loc[~_in_segments(merged, quarantined_segments) & ~merged["is_permno_handoff"]]
 
-    # --- Return agreement, on the retained (correctly-aligned) tickers ----
+    # --- Return agreement, on the retained (correctly-aligned) segments ---
     full_ret_cmp = merged.dropna(subset=["retx", "master_ret"]).copy()
+    full_ret_cmp = full_ret_cmp.loc[~full_ret_cmp["is_permno_handoff"]].copy()
     stats["return_comparison_rows"] = int(len(full_ret_cmp))
     if len(full_ret_cmp) == 0:
         return stats, merged
     full_ret_cmp["abs_diff"] = (full_ret_cmp["retx"] - full_ret_cmp["master_ret"]).abs()
 
-    retained = full_ret_cmp.loc[~full_ret_cmp["ticker"].isin(quarantined_tickers)]
+    retained = full_ret_cmp.loc[~_in_segments(full_ret_cmp, quarantined_segments)]
     stats["return_comparison_rows_retained"] = int(len(retained))
     if len(retained) == 0:
         return stats, merged
@@ -1074,7 +1335,7 @@ def cross_validate_master_stock(crsp_df: pd.DataFrame, master_df: pd.DataFrame, 
     if len(ret_cmp_also) > 0:
         stats["return_mean_abs_diff_total_ret"] = float((ret_cmp_also["ret"] - ret_cmp_also["master_ret"]).abs().mean())
     ex_div = retained_merged.dropna(subset=["ret", "retx", "master_ret"])
-    ex_div = ex_div.loc[(ex_div["ret"] - ex_div["retx"]).abs() > 1e-9]
+    ex_div = ex_div.loc[(ex_div["ret"] - ex_div["retx"]).abs() > DIVIDEND_EVIDENCE_MIN_DIFF]
     stats["n_ex_dividend_days"] = int(len(ex_div))
     if len(ex_div) > 0:
         stats["ex_dividend_median_abs_diff_ret"] = float((ex_div["ret"] - ex_div["master_ret"]).abs().median())
@@ -1102,6 +1363,13 @@ def profile_master_stock_file(csv_path) -> dict:
     """
     con = duckdb.connect()
     try:
+        # row_number() OVER () below has no explicit ORDER BY, so its
+        # meaning as "position in the file" depends on DuckDB preserving
+        # the CSV reader's natural scan order through the window function
+        # -- true by default, but pinned explicitly here (rather than
+        # relied on implicitly) since the blank-ticker-block-is-
+        # contiguous-at-the-end claim in FINDINGS.md is load-bearing.
+        con.execute("SET preserve_insertion_order = true")
         row = con.execute(
             f"""
             WITH raw AS (
@@ -1357,6 +1625,15 @@ def build_findings_markdown(ctx: dict) -> str:
         f"delisted for good. These rows keep everything else (price, return, and so on); only "
         f"`ticker` is blank, since making one up would be worse than leaving it blank."
     )
+    lines.append(
+        f"- **Row accounting.** The raw pull had {_fmt_int(dsf['input_rows'])} (permno, date) "
+        f"rows; {_fmt_int(dsf['output_rows'])} made it into the cleaned output. The "
+        f"difference is exactly {_fmt_int(dsf['rows_permno_not_in_resolved_universe'])} rows "
+        f"for a permno outside the resolved universe (unexpected, since crsp.dsf was pulled "
+        f"pre-filtered to it -- worth a second look if this number is ever nonzero) plus "
+        f"{_fmt_int(dsf['duplicate_permno_date_rows_dropped'])} duplicate (permno, date) "
+        f"rows -- no other rows are dropped anywhere in this cleaning step."
+    )
     lines.append("")
 
     # ---- Adjustment finding ---------------------------------------------
@@ -1374,52 +1651,137 @@ def build_findings_markdown(ctx: dict) -> str:
         "checked it directly rather than assuming."
     )
     lines.append("")
-    adjustment_status = classify_adjustment_status(events)
-    if adjustment_status == "adjusted":
+    adjustment = classify_adjustment_status(events, dsf)
+    overall = adjustment["overall"]
+
+    lines.append(
+        "Three separate things have to be true for `ret`/`retx` to be safe to use as-is "
+        "downstream: splits and other distributions have to be backed out, dividends have "
+        "to be handled consistently between the two columns, and `ret` itself has to "
+        "actually be a plausible fractional daily return (not, say, delivered in the wrong "
+        "units). Each is checked independently below, against this pull's actual numbers, "
+        "regardless of which way the verdict that follows comes out."
+    )
+    lines.append("")
+
+    # --- Check 1: splits and distributions (see classify_adjustment_status) --
+    n_events = events.get("n_events", 0)
+    n_big = events.get("n_events_with_big_naive_move", 0)
+    if n_events and n_big:
+        actual_median = events.get("actual_ret_abs_median", 0.0)
+        if actual_median <= RET_PLAUSIBLE_MAX_EVENT_ABS_MEDIAN:
+            scale_clause = "ordinary daily return territory, consistent with a plausible fractional return"
+        else:
+            scale_clause = (
+                f"far too large to be an ordinary daily return -- a plausible fractional "
+                f"daily return's typical size, even on a split date, should stay well under "
+                f"{_fmt_pct(RET_PLAUSIBLE_MAX_EVENT_ABS_MEDIAN, 0)}"
+            )
         lines.append(
-            "**Short answer: `ret`/`retx` (the return columns) are already adjusted for both "
-            "splits and dividends.** `prc` (the raw price column) is not adjusted for splits "
-            "at all -- it shows the actual traded price level, which jumps on a split date."
-        )
-    elif adjustment_status == "not_adjusted":
-        lines.append(
-            f"> **FLAG FOR ESCALATION: in this pull, `ret`/`retx` do NOT appear to be "
-            f"split/dividend-adjusted.** This contradicts CRSP's standard, well-documented "
-            f"convention and must be resolved (confirm with WRDS/CRSP documentation for this "
-            f"specific pull, or apply a manual adjustment) before any return calculation "
-            f"downstream of this slice is trusted. Evidence: among "
-            f"{_fmt_int(events.get('n_events_with_big_naive_move', 0))} days where the raw, "
-            f"unadjusted price implies a move bigger than "
-            f"{_fmt_pct(NAIVE_RET_BIG_MOVE_THRESHOLD, 0)} (almost always a real stock split or "
-            f"distribution, not ordinary volatility), CRSP's own reported `ret` matches that "
-            f"same raw move (within {_fmt_pct(UNADJUSTED_RET_MATCH_TOL, 0)}) "
+            f"- **Splits and distributions.** Every time CRSP's own adjustment factor "
+            f"(`cfacpr`) changed for a stock -- a signal that a split or similar event "
+            f"happened -- we compared two numbers for that day: the \"naive\" return you'd "
+            f"get from just dividing the raw price by the previous day's raw price, and "
+            f"CRSP's actual reported return. {_fmt_int(n_events)} such adjustment events "
+            f"happened across the whole universe and window; {_fmt_int(n_big)} of them had a "
+            f"naive move bigger than {_fmt_pct(NAIVE_RET_BIG_MOVE_THRESHOLD, 0)} (median naive "
+            f"size {_fmt_pct(events['naive_ret_abs_median'])}, "
+            f"{_fmt_pct(events['frac_naive_ret_gt_20pct'])} of them over 20% -- consistent "
+            f"with a real split or distribution, not day-to-day noise). Among exactly those "
+            f"big-move days, CRSP's actual reported `ret` lands within "
+            f"{_fmt_pct(UNADJUSTED_RET_MATCH_TOL, 0)} of that same naive move "
             f"{_fmt_pct(events.get('frac_big_naive_events_ret_equals_naive', 0.0))} of the "
-            f"time -- consistent with `ret` being the raw, unadjusted price change rather "
-            f"than a split-adjusted return."
-        )
-    elif adjustment_status == "mixed":
-        lines.append(
-            f"> **FLAG FOR ESCALATION: this pull's evidence is MIXED, not cleanly \"adjusted\" "
-            f"or \"not adjusted.\"** Among "
-            f"{_fmt_int(events.get('n_events_with_big_naive_move', 0))} days where the raw "
-            f"price implies a big move, CRSP's own `ret` matches that raw, unadjusted move "
-            f"{_fmt_pct(events.get('frac_big_naive_events_ret_equals_naive', 0.0))} of the "
-            f"time -- neither close to 0% (fully adjusted) nor close to 100% (fully "
-            f"unadjusted). This needs a closer look (e.g. whether specific securities or "
-            f"date ranges are unadjusted while others are fine) before trusting return "
-            f"calculations downstream of this slice across the board."
+            f"time -- a fully unadjusted return column would measure close to 100% here. "
+            f"This pull's actual `ret` has its own median size of {_fmt_pct(actual_median)} "
+            f"on those same days ({_fmt_pct(events.get('frac_actual_ret_gt_20pct', 0.0))} "
+            f"exceed 20%) -- {scale_clause}."
         )
     else:
         lines.append(
-            "**This pull did not have enough real adjustment events to check split/dividend "
-            "adjustment status directly** (see the whole-universe check below), so this is "
-            "reported as unverified for this run rather than assumed. CRSP's own "
-            "documentation states that `ret`/`retx` are split- and dividend-adjusted as a "
-            "matter of standard convention, and `prc` is not adjusted for splits -- but "
-            "that's what we'd expect to find, not what this run actually confirmed."
+            f"- **Splits and distributions.** Only {_fmt_int(n_big)} big-raw-move adjustment "
+            f"event(s) found across the whole pull (need at least "
+            f"{ADJUSTMENT_VERDICT_MIN_EVENTS} to draw a conclusion), so this check could not "
+            f"run."
+        )
+
+    # --- Check 2: dividends (cfacpr can't see them -- see docstring) ---------
+    both_nonnull = dsf.get("ret_and_retx_nonnull_rows", 0)
+    if both_nonnull >= PULL_WIDE_VERDICT_MIN_ROWS:
+        n_ne = dsf.get("ret_ne_retx_rows", 0)
+        frac_ne = _safe_div(n_ne, both_nonnull)
+        lines.append(
+            f"- **Dividends.** `cfacpr` never changes for an ordinary cash dividend, so the "
+            f"split check above can't see dividends at all -- this needs its own evidence. "
+            f"If `ret` truly reinvests dividends and `retx` truly excludes them, the two "
+            f"columns must disagree on genuine ex-dividend days and agree everywhere else. "
+            f"Across {_fmt_int(both_nonnull)} rows with both populated, they disagree on "
+            f"{_fmt_int(n_ne)} ({_fmt_pct(frac_ne, 4)}) -- a pull where `ret` was mistakenly "
+            f"populated with `retx`'s values (i.e. NOT dividend-adjusted) would measure "
+            f"exactly 0% here. As a directional sanity check (a dividend is a cash inflow, "
+            f"so `ret` should almost never be LESS than `retx`), `retx` exceeds `ret` on "
+            f"{_fmt_int(dsf.get('ret_lt_retx_rows', 0))} of those rows."
+        )
+    else:
+        lines.append(
+            f"- **Dividends.** Only {_fmt_int(both_nonnull)} row(s) have both `ret` and "
+            f"`retx` populated (need at least {_fmt_int(PULL_WIDE_VERDICT_MIN_ROWS)}), so "
+            f"this check could not run."
+        )
+
+    # --- Check 3: is `ret` even a plausible daily return? --------------------
+    ret_nonnull = dsf.get("ret_nonnull_rows", 0)
+    if ret_nonnull >= PULL_WIDE_VERDICT_MIN_ROWS:
+        frac_big_ret = _safe_div(dsf.get("ret_abs_gt_big_move_rows", 0), ret_nonnull)
+        frac_big_ret_desc = _fmt_pct(frac_big_ret, 4) if frac_big_ret is not None else "an unknown fraction"
+        lines.append(
+            f"- **Is `ret` even a plausible daily return?** Independent of whether it's "
+            f"adjusted, `ret` has to actually be a small fractional daily return -- not, "
+            f"say, delivered in percent units, where +2% would show up as `2.0` instead of "
+            f"`0.02`. Across {_fmt_int(ret_nonnull)} non-null values, {frac_big_ret_desc} "
+            f"exceed {_fmt_pct(NAIVE_RET_BIG_MOVE_THRESHOLD, 0)} in size -- a percent-units "
+            f"column would put nearly all of them above that line; an all-zero or constant "
+            f"column would put none."
+        )
+    else:
+        lines.append(
+            f"- **Is `ret` even a plausible daily return?** Only {_fmt_int(ret_nonnull)} "
+            f"non-null `ret` row(s) (need at least {_fmt_int(PULL_WIDE_VERDICT_MIN_ROWS)}), "
+            f"so this check could not run."
         )
     lines.append("")
-    if ctx.get("aapl_last_cfacpr") is not None:
+
+    if overall == "adjusted":
+        lines.append(
+            "**Short answer: `ret`/`retx` (the return columns) are already adjusted for both "
+            "splits and dividends, and both check out as plausible fractional daily "
+            "returns.** `prc` (the raw price column) is not adjusted for splits at all -- it "
+            "shows the actual traded price level, which jumps on a split date."
+        )
+    elif overall == "flagged":
+        lines.append(
+            "> **FLAG FOR ESCALATION: in this pull, `ret`/`retx` do not cleanly pass every "
+            "check above.** This contradicts CRSP's standard, well-documented convention (or "
+            "reveals a data-quality problem specific to this pull) and must be resolved "
+            "(confirm with WRDS/CRSP documentation for this specific pull, or apply a manual "
+            "fix) before any return calculation downstream of this slice is trusted. "
+            "Specifically:"
+        )
+        for reason in adjustment["reasons"]:
+            lines.append(f"> - {reason}")
+    else:
+        lines.append(
+            "**This pull did not have enough evidence to confirm adjustment status and "
+            "return-scale plausibility on one or more of the checks above** (see whichever "
+            "of them fell short just above), so this is reported as unverified for this run "
+            "rather than assumed. CRSP's own documentation states that `ret`/`retx` are "
+            "split- and dividend-adjusted as a matter of standard convention, and `prc` is "
+            "not adjusted for splits -- but that's what we'd expect to find, not what this "
+            "run actually confirmed. Specifically:"
+        )
+        for reason in adjustment["reasons"]:
+            lines.append(f"- {reason}")
+    lines.append("")
+    if ctx.get("aapl_last_cfacpr") is not None and ctx["aapl_last_cfacpr"] != 1:
         aapl_cfacpr_example = (
             f"Apple, for example, has `cfacpr` = {ctx['aapl_last_cfacpr']:.1f} on our last "
             f"pulled date, {_fmt_date(ctx['aapl_last_date'])} -- but that's because of a "
@@ -1448,6 +1810,17 @@ def build_findings_markdown(ctx: dict) -> str:
         f"not whether `ret` happens to already be adjusted.)"
     )
     lines.append("")
+    if overall == "adjusted":
+        ret_retx_safe_clause = (
+            "for comparing returns across a split safely, use `ret`/`retx`, which don't "
+            "have this particular problem (see the evidence above)"
+        )
+    else:
+        ret_retx_safe_clause = (
+            "`ret`/`retx` don't have this particular look-ahead problem either way -- but "
+            "see the evidence above for this run's actual adjustment-status finding before "
+            "treating them as safe to use as-is"
+        )
     lines.append(
         f"We can show concretely how much this would matter. Taking "
         f"{ctx['prc_adj_risk']['n_permnos_total']:,} permnos with data anywhere in the pull, "
@@ -1464,58 +1837,14 @@ def build_findings_markdown(ctx: dict) -> str:
         f"wrongly included -- {_fmt_int(ctx['prc_adj_risk']['permnos_affected'])} different "
         f"stocks affected, in {ctx['year_min']} alone. `prc` (the actual price) and `cfacpr` "
         f"(as CRSP reported it) are both still in the output for anyone who wants "
-        f"`prc / cfacpr` with that caveat in view; for comparing returns across a split "
-        f"safely, use `ret`/`retx`, which don't have this problem (see the evidence below)."
+        f"`prc / cfacpr` with that caveat in view; {ret_retx_safe_clause}."
     )
-    lines.append("")
-    lines.append("**Evidence, whole-universe check.** Every time CRSP's own adjustment factor changes "
-                  "for a stock (a signal that a split or similar event happened), we compared two "
-                  "numbers for that same day: the \"naive\" return you'd get from just dividing "
-                  "the raw price by the previous day's raw price, and CRSP's actual reported "
-                  "return.")
-    lines.append("")
-    lines.append(
-        f"- {_fmt_int(events['n_events'])} such adjustment events happened across the whole "
-        f"universe and window."
-    )
-    if events["n_events"]:
-        lines.append(
-            f"- The naive (unadjusted) return on those days has a median size of "
-            f"{_fmt_pct(events['naive_ret_abs_median'])}, and "
-            f"{_fmt_pct(events['frac_naive_ret_gt_20pct'])} of them look like a move bigger "
-            f"than 20% in a single day -- consistent with a real stock split or "
-            f"distribution, not day-to-day noise."
-        )
-        actual_interpretation = {
-            "adjusted": (
-                "ordinary daily return territory. This is the direct evidence that the "
-                "return column already backs out the split."
-            ),
-            "not_adjusted": (
-                "landing close to the naive move above far more often than chance would "
-                "explain. This is the direct evidence behind the escalation flagged above: "
-                "the return column does NOT appear to back out the split in this pull."
-            ),
-            "mixed": (
-                "a mix of ordinary daily moves and moves that land close to the naive "
-                "figure above. See the escalation flagged above."
-            ),
-            "inconclusive": (
-                "too few such events in this pull to characterize with confidence either "
-                "way."
-            ),
-        }[adjustment_status]
-        lines.append(
-            f"- CRSP's actual reported return on those same days has a median size of "
-            f"{_fmt_pct(events['actual_ret_abs_median'])}, and "
-            f"{_fmt_pct(events['frac_actual_ret_gt_20pct'])} exceed 20% -- {actual_interpretation}"
-        )
     lines.append("")
 
     aapl_tables_populated = len(ctx["aapl_2000"]) > 0 or len(ctx["aapl_2005"]) > 0
     if aapl_tables_populated:
         lines.append(
-            "**Evidence, two named examples.** Apple (permno "
+            "**Named example: Apple's two splits.** Apple (permno "
             f"{ctx['aapl_permno']}) did 2-for-1 stock splits on 2000-06-21 and 2005-02-28. "
             "The rows actually pulled for this run, around each split date, are shown below "
             "-- read the `prc` and `ret` columns directly rather than taking a description "
@@ -1531,53 +1860,77 @@ def build_findings_markdown(ctx: dict) -> str:
             lines.append(aapl_2005_table)
             lines.append("")
     if len(ctx["msft_div"]) > 0:
+        msft_split_note = ""
+        if len(ctx["msft_div"]) > 1:
+            m = ctx["msft_div"].sort_values("date").reset_index(drop=True)
+            both_changed = (m["cfacpr"].diff() < 0) & (m["shrout"].diff() > 0)
+            idx = m.index[both_changed]
+            if len(idx) > 0:
+                i = idx[0]
+                prev_row, cur_row = m.loc[i - 1], m.loc[i]
+                msft_split_note = (
+                    f" (It also shows `shrout` rising from {_fmt_int(prev_row['shrout'])} to "
+                    f"{_fmt_int(cur_row['shrout'])} and `cfacpr` falling from "
+                    f"{_fmt_float(prev_row['cfacpr'], 1)} to "
+                    f"{_fmt_float(cur_row['cfacpr'], 1)} a day earlier, on "
+                    f"{_fmt_date(cur_row['date'])} -- Microsoft's last-ever 2-for-1 stock "
+                    f"split happened to take effect the day before this dividend, so both "
+                    f"events are visible in the same short window; this is real history, "
+                    f"not a mistake.)"
+                )
         lines.append(
+            "**Named example: Microsoft's first dividend.** "
             f"Microsoft (permno {ctx['msft_permno']}) paid its first-ever regular quarterly "
             f"dividend, with an ex-dividend date of 2003-02-19 (the first day a buyer no "
             f"longer receives that payment). If `ret` truly includes dividends and `retx` "
             f"truly excludes them, `ret` should be noticeably higher than `retx` on exactly "
-            f"that one day and identical every other day -- again, read the table directly. "
-            f"(It also shows `shrout` doubling and `cfacpr` halving a day earlier, on "
-            f"2003-02-18 -- Microsoft's last-ever 2-for-1 stock split happened to take "
-            f"effect the day before this dividend, so both events are visible in the same "
-            f"short window; this is real history, not a mistake.)"
+            f"that one day and identical every other day -- again, read the table directly."
+            f"{msft_split_note}"
         )
         lines.append("")
         lines.append(msft_table)
         lines.append("")
 
-    closing = {
-        "adjusted": (
-            "No case of unadjusted returns was found anywhere in this check, so there is "
-            "nothing here to escalate as a surprise finding -- this is the standard, "
-            "well-documented CRSP convention, confirmed directly against this specific "
-            "pull rather than assumed."
-        ),
-        "not_adjusted": (
+    if overall == "adjusted":
+        closing = (
+            "No case of unadjusted returns, missing dividend adjustment, or an implausible "
+            "return scale was found anywhere in this check, so there is nothing here to "
+            "escalate as a surprise finding -- this is the standard, well-documented CRSP "
+            "convention, confirmed directly against this specific pull rather than assumed."
+        )
+    elif overall == "flagged":
+        closing = (
             "**This finding is flagged for escalation above and should be resolved before "
             "trusting any return calculation downstream of this slice.**"
-        ),
-        "mixed": (
-            "**This finding is flagged for escalation above and should be resolved before "
-            "trusting any return calculation downstream of this slice.**"
-        ),
-        "inconclusive": (
-            "Adjustment status could not be verified directly in this run for lack of real "
-            "adjustment events -- treated as an open question, not assumed to be fine."
-        ),
-    }[adjustment_status]
+        )
+    else:
+        closing = (
+            "Adjustment status could not be verified directly in this run for lack of "
+            "sufficient evidence on one or more of the checks above -- treated as an open "
+            "question, not assumed to be fine."
+        )
     lines.append(closing)
     lines.append("")
 
     # ---- Benchmark -------------------------------------------------------
     lines.append("## Market benchmark (crsp.dsi)")
     lines.append("")
-    if dsi["null_value_rows"] == 0 and dsi["duplicate_date_rows_dropped"] == 0:
+    if (
+        dsi["null_value_rows"] == 0
+        and dsi["duplicate_date_rows_dropped"] == 0
+        and dsi.get("sentinel_rows_mapped_to_null", 0) == 0
+    ):
         quality_note = "with no missing values in any of its return columns and no duplicated trading days"
     else:
         parts = []
         if dsi["null_value_rows"]:
             parts.append(f"{_fmt_int(dsi['null_value_rows'])} row(s) with a missing return value")
+        if dsi.get("sentinel_rows_mapped_to_null"):
+            parts.append(
+                f"{_fmt_int(dsi['sentinel_rows_mapped_to_null'])} of those from CRSP's "
+                f"documented missing-return sentinel codes (same convention as dsf -- see "
+                f"above), mapped to null rather than kept as a literal value"
+            )
         if dsi["duplicate_date_rows_dropped"]:
             parts.append(f"{_fmt_int(dsi['duplicate_date_rows_dropped'])} duplicated trading-day row(s) dropped")
         quality_note = "with " + " and ".join(parts)
@@ -1712,14 +2065,19 @@ def build_findings_markdown(ctx: dict) -> str:
         f"as invalid and left blank rather than guessed at."
     )
     lines.append(
-        f"A few more integrity checks on the {window_desc} window, expected to read as zero "
-        f"or near it -- the point of naming them is that they'd stop being zero if a future "
-        f"refresh of this file changed shape in a way this cleaning code doesn't already "
-        f"handle: {_fmt_int(master_clean['unrecognized_date_format_rows'])} rows with a date "
-        f"in neither ISO nor `mm/dd/yyyy` format, "
+        f"A few more integrity checks, expected to read as zero or near it -- the point of "
+        f"naming them is that they'd stop being zero if a future refresh of this file "
+        f"changed shape in a way this cleaning code doesn't already handle. These two are "
+        f"counted across every non-blank-ticker row this read returned, not just the "
+        f"{window_desc} window (a date has to be classified before it can be filtered by "
+        f"window at all, and read_master_stock_raw's own pushdown -- see its docstring -- "
+        f"already excludes most out-of-window rows before this function ever sees them): "
+        f"{_fmt_int(master_clean['unrecognized_date_format_rows'])} rows with a date "
+        f"in neither ISO nor `mm/dd/yyyy` format, and "
         f"{_fmt_int(master_clean['shape_matched_but_invalid_date_rows'])} rows with a date "
         f"that LOOKS like one of those two formats but isn't a real calendar date (e.g. "
-        f"month 13), and {_fmt_int(master_clean['unparseable_text_price_rows'])} rows with "
+        f"month 13). This one, by contrast, IS narrowed to just the {window_desc} window: "
+        f"{_fmt_int(master_clean['unparseable_text_price_rows'])} rows with "
         f"a price field that has text in it that isn't a number at all (distinct from a "
         f"field that's simply empty, already counted above)."
     )
@@ -1750,14 +2108,18 @@ def build_findings_markdown(ctx: dict) -> str:
         f"partitioning), each with one row per (permno, date):"
     )
     lines.append("")
+    ret_retx_output_desc = (
+        "both already split/dividend-adjusted by CRSP, see above"
+        if overall == "adjusted"
+        else "see above for this run's actual adjustment-status finding before assuming so"
+    )
     lines.append(
         "- `permno`, `date` (a real date now), `ticker` (CRSP's ticker on record for that "
         "permno as of that specific date, not today's ticker -- tickers change over a "
         "company's life, so this avoids mislabeling old history with a later symbol)\n"
         "- `prc` (cleaned raw price, always positive), `prc_is_bidask_avg` (flag for CRSP's "
         "no-trade convention)\n"
-        "- `ret`, `retx` (total and price-only returns; both already split/dividend-adjusted "
-        "by CRSP, see above)\n"
+        f"- `ret`, `retx` (total and price-only returns; {ret_retx_output_desc})\n"
         "- `shrout` (shares outstanding, in thousands -- CRSP's convention), `vol` (shares "
         "traded that day), `cfacpr`, `cfacshr` (CRSP's own price/share adjustment factors, "
         "not divided into the price -- see above), carried through for anyone who needs them "
@@ -1838,36 +2200,69 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
         "not the symbol it traded under on that historical date -- unlike the CRSP side of "
         "this comparison, which is deliberately point-in-time (see the ticker note above). "
         "A ticker that's been reassigned to a different company since 2011-2013 then "
-        "compares two completely unrelated companies' prices under the same symbol."
+        "compares two completely unrelated companies' prices under the same symbol -- "
+        "concretely including a ticker that maps to two DIFFERENT CRSP permnos "
+        "sequentially within this very window, so a per-ticker-only check could average "
+        "the wrong-company segment together with the right-company one and miss the "
+        "problem entirely if the right company happens to be the majority of the matched "
+        "days."
     )
-    n_misaligned = crossval.get("tickers_quarantined_misaligned", 0)
+    n_misaligned = crossval.get("segments_quarantined_misaligned", 0)
     rows_misaligned = crossval.get("rows_quarantined_misaligned", 0)
-    n_too_few = crossval.get("tickers_quarantined_too_few_prices", 0)
+    n_too_few = crossval.get("segments_quarantined_too_few_prices", 0)
     rows_too_few = crossval.get("rows_quarantined_too_few_prices", 0)
+    worst_retained = crossval.get("ticker_gate_worst_retained_median_diff")
+    closest_quarantined = crossval.get("ticker_gate_closest_quarantined_median_diff")
+    if worst_retained is not None and closest_quarantined is not None:
+        margin_clause = (
+            f" (the most disagreement tolerated in a kept segment on this run is "
+            f"{worst_retained:.2e}; the least disagreement in a set-aside one is "
+            f"{closest_quarantined:.2e})"
+        )
+    else:
+        margin_clause = ""
     lines.append(
-        f"We catch this per ticker (not with one overall statistic, which can't see a "
-        f"problem confined to a handful of names): for every matched ticker, we compare "
-        f"how much CRSP's price moved from one matched day to the next against how much "
-        f"master_stock.csv's price moved over that SAME pair of days, and take the typical "
-        f"(median) size of the disagreement. Using the day-to-day price move rather than a "
-        f"pre-computed return keeps this test unaffected by which return convention either "
-        f"side uses. A ticker that really is the same company moves the same amount, in the "
-        f"same direction, on both sides, almost every time; a ticker pointing at two "
-        f"different companies does not. On this data the two groups are cleanly separated "
-        f"with a gap between them, so any ticker whose typical disagreement exceeds "
+        f"We catch this per **(ticker, permno) segment** -- not per ticker alone, and not "
+        f"with one overall statistic, either of which could miss a problem confined to a "
+        f"handful of names or hidden inside a ticker that changes hands mid-window: for "
+        f"every matched segment, we compare how much CRSP's price moved from one matched "
+        f"day to the next against how much master_stock.csv's price moved over that SAME "
+        f"pair of days, and take the typical (median) size of the disagreement. Using the "
+        f"day-to-day price move rather than a pre-computed return keeps this test "
+        f"unaffected by which return convention either side uses; grouping by permno as "
+        f"well as ticker is what lets it see a wrong-company segment that's a MINORITY of "
+        f"a ticker's matched rows, since CRSP's own identity for a security is the permno, "
+        f"not the mutable ticker label. A segment that really is the same company moves "
+        f"the same amount, in the same direction, on both sides, almost every time; one "
+        f"pointing at a different company does not. On this data the two groups are "
+        f"cleanly separated with a gap between them{margin_clause}, so any segment whose "
+        f"typical disagreement exceeds "
         f"{_fmt_pct(TICKER_ALIGNMENT_MAX_MEDIAN_PRICE_STEP_DIFF, 2)} is set aside as evidently "
-        f"a different company: **{_fmt_int(n_misaligned)} tickers ({_fmt_int(rows_misaligned)} "
-        f"rows)**. A further **{_fmt_int(n_too_few)} tickers ({_fmt_int(rows_too_few)} rows)** "
+        f"a different company: **{_fmt_int(n_misaligned)} segments ({_fmt_int(rows_misaligned)} "
+        f"rows)**. A further **{_fmt_int(n_too_few)} segments ({_fmt_int(rows_too_few)} rows)** "
         f"don't have enough overlapping days to judge one way or the other and are set aside "
         f"separately, not counted as evidence of either problem."
     )
-    examples = crossval.get("quarantined_ticker_examples") or []
+    n_spanning = crossval.get("tickers_spanning_multiple_permnos", 0)
+    n_boundary = crossval.get("segment_boundary_rows_excluded", 0)
+    if n_spanning:
+        lines.append(
+            f"**{_fmt_int(n_spanning)} matched ticker(s) actually span more than one permno "
+            f"within this window** (the ticker symbol was reassigned to a different company "
+            f"partway through) -- each permno is judged, and quarantined, on its own rather "
+            f"than pooled. The single day where a ticker hands off from one permno to the "
+            f"next is also excluded from the return-agreement numbers below regardless of "
+            f"either segment's own verdict, since master_stock.csv's own day-over-day return "
+            f"on that specific day is computed across the handoff itself and describes "
+            f"neither company individually: {_fmt_int(n_boundary)} such row(s)."
+        )
+    examples = crossval.get("quarantined_segment_examples") or []
     if examples:
         example_bits = "; ".join(
-            f"`{t}` (typical day-to-day price moves disagree by "
+            f"`{t}` (permno {p}; typical day-to-day price moves disagree by "
             f"{_fmt_pct(metric, 2)}; CRSP price around {_fmt_usd(crsp_p)}, "
             f"master_stock.csv price around {_fmt_usd(master_p)})"
-            for t, metric, crsp_p, master_p in examples[:3]
+            for t, p, metric, crsp_p, master_p in examples[:3]
         )
         lines.append(
             f"For example: {example_bits}. These aren't small rounding differences -- they're "
@@ -1879,7 +2274,7 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
     if retained_rows:
         lines.append(
             f"**Comparing day-over-day returns for the remaining, correctly-aligned "
-            f"tickers.** The comparison uses `retx` (CRSP's price-only return), not `ret` "
+            f"segments.** The comparison uses `retx` (CRSP's price-only return), not `ret` "
             f"(CRSP's total return, dividends reinvested) -- master_stock.csv's own prices "
             f"show no sign of dividend reinvestment, so `retx` is the honest like-for-like "
             f"comparison. Over {_fmt_int(retained_rows)} matched days: a median absolute "
@@ -1894,7 +2289,7 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
                 f"difference of {crossval.get('return_mean_abs_diff_total_ret', float('nan')):.2e} "
                 f"(versus {crossval['return_mean_abs_diff']:.2e} for `retx`). The gap is "
                 f"concentrated exactly where dividends would cause one: on the "
-                f"{_fmt_int(n_ex_div)} days CRSP recorded a dividend for a retained ticker "
+                f"{_fmt_int(n_ex_div)} days CRSP recorded a dividend for a retained segment "
                 f"(`ret` differs from `retx`), the median difference against master_stock.csv "
                 f"is {crossval['ex_dividend_median_abs_diff_ret']:.2e} using `ret` versus "
                 f"{crossval['ex_dividend_median_abs_diff_retx']:.2e} using `retx` -- itself "
@@ -1923,11 +2318,11 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
             corr_before = crossval.get("return_correlation_before_ticker_gate")
             frac_before = crossval.get("return_frac_within_1pct_before_ticker_gate")
             lines.append(
-                f"Correlation across the retained, correctly-aligned tickers is "
+                f"Correlation across the retained, correctly-aligned segments is "
                 f"{corr:.4f}"
                 + (
                     f" (versus {corr_before:.4f} before setting the misaligned/unjudgeable "
-                    f"tickers aside)."
+                    f"segments aside)."
                     if corr_before is not None else "."
                 )
             )
@@ -1936,9 +2331,9 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
                     f"To be clear about how much of this the ticker-alignment gate is "
                     f"actually responsible for: agreement within 1 percentage point was "
                     f"already {_fmt_pct(frac_before)} of matched days BEFORE setting any "
-                    f"ticker aside, versus {_fmt_pct(crossval['return_frac_within_1pct'])} "
+                    f"segment aside, versus {_fmt_pct(crossval['return_frac_within_1pct'])} "
                     f"after. The gate mainly removes a small number of confidently-wrong "
-                    f"tickers rather than manufacturing the headline agreement rate."
+                    f"segments rather than manufacturing the headline agreement rate."
                 )
             extreme_rows = crossval.get("return_extreme_diff_rows", 0)
             if extreme_rows:
@@ -1947,7 +2342,7 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
                     f"A residual {_fmt_int(extreme_rows)} days "
                     f"({_fmt_pct(crossval.get('return_extreme_diff_frac', 0.0))}) still show "
                     f"a difference bigger than {_fmt_pct(EXTREME_RETURN_DIFF_THRESHOLD, 0)} "
-                    f"even among the correctly-aligned tickers -- an isolated bad day here "
+                    f"even among the correctly-aligned segments -- an isolated bad day here "
                     f"and there rather than a wrong-company problem. Excluding those specific "
                     f"days moves the correlation to "
                     + (f"{corr_trimmed:.4f}." if corr_trimmed is not None else "a similar figure.")
@@ -1960,7 +2355,7 @@ def _crossval_detail_lines(crossval: dict, archive_start_year) -> list:
     lines.append("")
 
     positive_verdict = (
-        retained_rows >= 30
+        retained_rows >= CROSSVAL_VERDICT_MIN_RETAINED_ROWS
         and crossval.get("return_frac_within_1pct") is not None
         and crossval["return_frac_within_1pct"] >= 0.95
     )
@@ -1995,13 +2390,46 @@ CROSSVAL_YEARS = (2011, 2012, 2013)
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    print("Loading resolved universe PERMNO list ...", flush=True)
+    resolved_permnos = load_resolved_permnos()
+    print(f"  {len(resolved_permnos):,} resolved PERMNOs.", flush=True)
+
+    print("Loading crsp.stocknames for point-in-time ticker lookup ...", flush=True)
+    stocknames = load_stocknames_for_ticker_lookup(RAW_CRSP_DIR / "stocknames.parquet")
+    # AAPL/MSFT are named, human-checkable spot-check examples only (see
+    # split_spot_check) -- cosmetic evidence for FINDINGS.md, not load-
+    # bearing for the cleaning pipeline itself. A stocknames pull that
+    # happens not to include one of them degrades to skipping that one
+    # example (build_findings_markdown already handles an empty spot-check
+    # frame) rather than aborting an otherwise-successful run -- and,
+    # per the pruning comment below, this lookup deliberately happens
+    # BEFORE any prior run's output is deleted, so a failure here leaves
+    # the last good output in place.
+    try:
+        aapl_permno = lookup_permno_for_ticker(stocknames, AAPL_TICKER)
+    except ValueError as exc:
+        print(f"  WARNING: {exc} -- skipping the Apple split spot-check.", flush=True)
+        aapl_permno = None
+    try:
+        msft_permno = lookup_permno_for_ticker(stocknames, MSFT_TICKER)
+    except ValueError as exc:
+        print(f"  WARNING: {exc} -- skipping the Microsoft dividend spot-check.", flush=True)
+        msft_permno = None
+
+    years = discover_dsf_years()
+    if not years:
+        raise SystemExit(f"FATAL: no dsf_<year>.parquet files found under {RAW_CRSP_DIR}")
+    print(f"Found dsf year files: {years[0]}-{years[-1]} ({len(years)} years).", flush=True)
+
     # Every equity_<year>.parquet this run is about to write is about to be
     # replaced -- but a YEAR NOT IN THIS RUN's discover_dsf_years() (e.g. a
     # later re-pull that covers fewer years, or a renamed/removed raw file)
     # would otherwise leave a stale prior-run file behind that a downstream
     # equity_*.parquet glob would silently mix in alongside the current
-    # run's files. Pruned unconditionally up front rather than tracked with
-    # a completeness marker/manifest -- this is a fully regenerable local
+    # run's files. Pruned unconditionally up front (but only once the
+    # inputs above are confirmed to exist -- see the try/excepts and the
+    # discover_dsf_years check above) rather than tracked with a
+    # completeness marker/manifest -- this is a fully regenerable local
     # transform (see module docstring), so "stale files never survive a
     # fresh run" is a simpler invariant than "check a marker before
     # trusting what's on disk."
@@ -2017,20 +2445,6 @@ def main():
         stale.unlink()
     (OUT_DIR / "market_benchmark.parquet").unlink(missing_ok=True)
     (OUT_DIR / "FINDINGS.md").unlink(missing_ok=True)
-
-    print("Loading resolved universe PERMNO list ...", flush=True)
-    resolved_permnos = load_resolved_permnos()
-    print(f"  {len(resolved_permnos):,} resolved PERMNOs.", flush=True)
-
-    print("Loading crsp.stocknames for point-in-time ticker lookup ...", flush=True)
-    stocknames = load_stocknames_for_ticker_lookup(RAW_CRSP_DIR / "stocknames.parquet")
-    aapl_permno = lookup_permno_for_ticker(stocknames, AAPL_TICKER)
-    msft_permno = lookup_permno_for_ticker(stocknames, MSFT_TICKER)
-
-    years = discover_dsf_years()
-    if not years:
-        raise SystemExit(f"FATAL: no dsf_<year>.parquet files found under {RAW_CRSP_DIR}")
-    print(f"Found dsf year files: {years[0]}-{years[-1]} ({len(years)} years).", flush=True)
 
     empty_aapl_spot = pd.DataFrame(columns=["date", "prc", "ret", "retx", "shrout", "cfacpr"])
     empty_msft_spot = pd.DataFrame(columns=["date", "prc", "ret", "retx", "shrout", "cfacpr"])
@@ -2071,26 +2485,29 @@ def main():
 
         if year in CROSSVAL_YEARS:
             crossval_frames.append(cleaned[["permno", "ticker", "date", "prc", "ret", "retx"]])
-        if year in AAPL_SPLIT_YEAR_DATES and (cleaned["permno"] == aapl_permno).any():
+        if year in AAPL_SPLIT_YEAR_DATES and aapl_permno is not None and (cleaned["permno"] == aapl_permno).any():
             aapl_spot_by_year[year] = split_spot_check(cleaned, aapl_permno, AAPL_SPLIT_YEAR_DATES[year])
-        if year == MSFT_DIVIDEND_SPOT_YEAR and (cleaned["permno"] == msft_permno).any():
+        if year == MSFT_DIVIDEND_SPOT_YEAR and msft_permno is not None and (cleaned["permno"] == msft_permno).any():
             msft_spot = split_spot_check(cleaned, msft_permno, MSFT_DIVIDEND_SPOT_DATE)
 
     dsf_stats = aggregate_year_stats(stats_by_year)
 
     print("Checking split/dividend-adjustment evidence ...", flush=True)
     events = safe_concat(event_frames_by_year, ignore_index=True)
+    del event_frames_by_year  # superseded by `events`; see finding 10's memory note in the PR
     event_stats = summarize_adjustment_events(events)
-    adjustment_status = classify_adjustment_status(event_stats)
-    if adjustment_status != "adjusted":
+    adjustment_verdict = classify_adjustment_status(event_stats, dsf_stats)
+    if adjustment_verdict["overall"] != "adjusted":
         # Loud and impossible to miss: FINDINGS.md is gitignored, so a
         # human running this script locally needs to see this on the
         # terminal, not just in a report file they may not open.
+        reasons_block = "\n".join(f"  - {r}" for r in adjustment_verdict["reasons"])
         print(
             f"\n{'!' * 70}\n"
-            f"ADJUSTMENT STATUS: {adjustment_status.upper()} -- see FINDINGS.md's "
+            f"ADJUSTMENT STATUS: {adjustment_verdict['overall'].upper()} -- see FINDINGS.md's "
             f"'Are prices and returns already adjusted' section before trusting any "
             f"return calculation downstream of this slice.\n"
+            f"{reasons_block}\n"
             f"{'!' * 70}\n",
             flush=True,
         )
@@ -2100,7 +2517,10 @@ def main():
     # across the whole pull (see last_row_per_permno) -- exactly what's
     # needed as "this permno's cfacpr at the end of the window we pulled."
     prc_adj_risk_stats = summarize_prc_adj_lookahead_risk(first_year_prc_cfacpr, event_carryover[["permno", "cfacpr"]])
-    aapl_last_row = event_carryover.loc[event_carryover["permno"] == aapl_permno]
+    aapl_last_row = (
+        event_carryover.loc[event_carryover["permno"] == aapl_permno]
+        if aapl_permno is not None else event_carryover.iloc[0:0]
+    )
     aapl_last_cfacpr = float(aapl_last_row["cfacpr"].iloc[0]) if len(aapl_last_row) else None
     aapl_last_date = aapl_last_row["date"].iloc[0] if len(aapl_last_row) else None
 
@@ -2119,6 +2539,7 @@ def main():
     master_full_stats = profile_master_stock_file(MASTER_STOCK_PATH)
     master_raw = read_master_stock_raw(MASTER_STOCK_PATH, end_date=ARCHIVE_END_DATE)
     master_clean, master_clean_stats = clean_master_stock_frame(master_raw, end_date=ARCHIVE_END_DATE)
+    del master_raw  # superseded by master_clean; see finding 10's memory note in the PR
 
     # Guarded rather than assumed: a CRSP pull that happens not to cover any
     # of CROSSVAL_YEARS (e.g. a partial/older re-pull), or a master_stock.csv
@@ -2127,8 +2548,15 @@ def main():
     # a secondary, non-blocking check.
     if crossval_frames and len(master_clean) > 0:
         crsp_crossval = safe_concat(crossval_frames, ignore_index=True)
+        del crossval_frames  # superseded by crsp_crossval; see finding 10's memory note in the PR
         window_start = max(pd.Timestamp(master_clean["date"].min()), pd.Timestamp(crsp_crossval["date"].min()))
-        window_end = pd.Timestamp(ARCHIVE_END_DATE)
+        # min(...), not just ARCHIVE_END_DATE: bounds the reported window by
+        # what CRSP actually contributed to this comparison, symmetric with
+        # window_start just above -- otherwise the report could claim to
+        # have validated through ARCHIVE_END_DATE while the joined CRSP
+        # data actually stopped earlier (or vice versa, understate a
+        # window that moved later without updating this literal).
+        window_end = min(pd.Timestamp(ARCHIVE_END_DATE), pd.Timestamp(crsp_crossval["date"].max()))
         crossval_stats, _crossval_merged = cross_validate_master_stock(
             crsp_crossval, master_clean, window_start, window_end
         )
