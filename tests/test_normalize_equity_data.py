@@ -437,6 +437,12 @@ def test_summarize_adjustment_events_empty_is_safe():
 
 
 def test_summarize_adjustment_events_contrasts_naive_vs_actual():
+    # Both rows here have a naive move bigger than 20%, so they're both in
+    # the "big naive move" subset -- naive_ret_abs_median/
+    # actual_ret_abs_median/frac_actual_ret_gt_big_move are scoped to that
+    # subset (see the function's own docstring for why: an earlier version
+    # computed these over ALL events but presented them as describing the
+    # big-move subset specifically).
     events = pd.DataFrame({
         "naive_ret": [-0.5, -0.5],
         "ret": [0.01, 0.02],
@@ -444,8 +450,24 @@ def test_summarize_adjustment_events_contrasts_naive_vs_actual():
     stats = neq.summarize_adjustment_events(events)
     assert stats["naive_ret_abs_median"] == pytest.approx(0.5)
     assert stats["actual_ret_abs_median"] == pytest.approx(0.015)
-    assert stats["frac_naive_ret_gt_20pct"] == 1.0
-    assert stats["frac_actual_ret_gt_20pct"] == 0.0
+    assert stats["frac_actual_ret_gt_big_move"] == 0.0
+
+
+def test_summarize_adjustment_events_scopes_stats_to_big_move_subset_only():
+    # Regression test for the round-4 review finding: a THIRD row with a
+    # small naive move (not a real split -- ordinary day-to-day noise)
+    # must not leak into naive_ret_abs_median/actual_ret_abs_median/
+    # frac_actual_ret_gt_big_move, which describe the big-move subset only.
+    events = pd.DataFrame({
+        "naive_ret": [-0.5, -0.5, 0.01],  # third row: small, NOT a big move
+        "ret": [0.01, 0.02, 0.30],        # third row's actual ret is large, but it's excluded anyway
+    })
+    stats = neq.summarize_adjustment_events(events)
+    assert stats["n_events"] == 3
+    assert stats["n_events_with_big_naive_move"] == 2  # only the first two
+    assert stats["naive_ret_abs_median"] == pytest.approx(0.5)  # unaffected by the small-move row
+    assert stats["actual_ret_abs_median"] == pytest.approx(0.015)  # unaffected by the 0.30 outlier
+    assert stats["frac_actual_ret_gt_big_move"] == 0.0  # neither 0.01 nor 0.02 exceeds the threshold
     assert stats["n_events_with_big_naive_move"] == 2
     assert stats["frac_big_naive_events_ret_equals_naive"] == 0.0
 
@@ -560,6 +582,82 @@ def test_classify_adjustment_status_dividend_and_scale_inconclusive_below_row_fl
     assert result["dividend_status"] == "inconclusive"
     assert result["ret_scale_status"] == "inconclusive"
     assert result["overall"] == "inconclusive"
+
+
+def test_classify_adjustment_status_dividend_not_adjusted_when_ret_retx_swapped():
+    # Round-4 review BLOCKER: ret_lt_retx_rows was computed by
+    # clean_dsf_year, asserted by a test, and printed in the report with
+    # its own interpretation -- but classify_adjustment_status never read
+    # it. The disagreement-RATE check alone (frac_ne) is direction-blind
+    # by construction, so a pull where `ret` and `retx` are fully swapped
+    # (every single disagreement in the wrong direction) still classified
+    # "adjusted", since a swap produces plenty of ret != retx rows too.
+    stats = neq.summarize_adjustment_events(_events_df(40, 0.0))  # split evidence: clean
+    dsf = _dsf_stats_fixture(ret_ne_retx_rows=135_756, ret_lt_retx_rows=135_756)  # 100% wrong direction
+    result = neq.classify_adjustment_status(stats, dsf)
+    assert result["split_status"] == "adjusted"
+    assert result["dividend_status"] == "not_adjusted"
+    assert result["overall"] == "flagged"
+    assert any("LARGER" in r for r in result["reasons"])
+
+
+def test_classify_adjustment_status_dividend_wrong_direction_boundary():
+    stats = neq.summarize_adjustment_events(_events_df(40, 0.0))
+    # Just under DIVIDEND_EVIDENCE_MAX_WRONG_DIRECTION_FRACTION (1%) -> still "adjusted".
+    dsf_ok = _dsf_stats_fixture(ret_ne_retx_rows=10_000, ret_lt_retx_rows=99)  # 0.99%
+    assert neq.classify_adjustment_status(stats, dsf_ok)["dividend_status"] == "adjusted"
+    # Just over -> "not_adjusted".
+    dsf_bad = _dsf_stats_fixture(ret_ne_retx_rows=10_000, ret_lt_retx_rows=101)  # 1.01%
+    assert neq.classify_adjustment_status(stats, dsf_bad)["dividend_status"] == "not_adjusted"
+
+
+def test_classify_adjustment_status_every_check_has_teeth():
+    # Round-4 review's own answer to "is there a fifth gap in this
+    # mechanism": rounds 2, 3, and 4 each found a different piece of
+    # evidence that was collected and DISPLAYED in the report but never
+    # actually consulted by the verdict. Rather than trust that F1's fix
+    # is the last one needed, perturb every single piece of evidence this
+    # function reads, one at a time, away from "healthy," and confirm
+    # `overall` stops being "adjusted" every time -- this would catch a
+    # future regression on ANY of them, not just the ones already found.
+    healthy_events = _events_df(40, 0.0)
+    healthy_dsf = _dsf_stats_fixture()
+    healthy_stats = neq.summarize_adjustment_events(healthy_events)
+    baseline = neq.classify_adjustment_status(healthy_stats, healthy_dsf)
+    assert baseline["overall"] == "adjusted"  # sanity check on the "healthy" fixture itself
+
+    dsf_perturbations = [
+        ("ret_ne_retx_rows dropped to 0 (dividend disagreement vanishes)",
+         {"ret_ne_retx_rows": 0}, "dividend_status", "not_adjusted"),
+        ("every ret!=retx disagreement in the wrong direction (swapped columns)",
+         {"ret_lt_retx_rows": healthy_dsf["ret_ne_retx_rows"]}, "dividend_status", "not_adjusted"),
+        ("no ret value ever exceeds the big-move threshold (degenerate/constant ret)",
+         {"ret_abs_gt_big_move_rows": 0}, "ret_scale_status", "implausible"),
+        ("every ret value exceeds the big-move threshold (percent-units ret)",
+         {"ret_abs_gt_big_move_rows": healthy_dsf["ret_nonnull_rows"]}, "ret_scale_status", "implausible"),
+    ]
+    for label, overrides, field, expected in dsf_perturbations:
+        result = neq.classify_adjustment_status(healthy_stats, _dsf_stats_fixture(**overrides))
+        assert result[field] == expected, f"perturbation did not flip {field}: {label}"
+        assert result["overall"] != "adjusted", f"perturbation did not flip overall: {label}"
+
+    event_perturbations = [
+        ("ret always matches the naive move (fully unadjusted)", _events_df(40, 1.0), "split_status", "not_adjusted"),
+        ("ret matches the naive move half the time (mixed)", _events_df(40, 0.5), "split_status", "mixed"),
+    ]
+    for label, events_df, field, expected in event_perturbations:
+        result = neq.classify_adjustment_status(neq.summarize_adjustment_events(events_df), healthy_dsf)
+        assert result[field] == expected, f"perturbation did not flip {field}: {label}"
+        assert result["overall"] != "adjusted", f"perturbation did not flip overall: {label}"
+
+    # actual_ret_abs_median (on the big-move subset) implausibly large --
+    # ret never lands close to naive (so split_status stays "adjusted"),
+    # but ret's own size is far too big to be an ordinary daily return.
+    mis_scaled_events = pd.DataFrame({"naive_ret": [-0.5] * 40, "ret": [0.30] * 40})
+    result = neq.classify_adjustment_status(neq.summarize_adjustment_events(mis_scaled_events), healthy_dsf)
+    assert result["split_status"] == "adjusted"  # isolates the event-median path, not the split check
+    assert result["ret_scale_status"] == "implausible"
+    assert result["overall"] != "adjusted"
 
 
 # ---------------------------------------------------------------------------
@@ -1080,6 +1178,42 @@ def test_cross_validate_master_stock_drops_master_side_duplicates():
     assert stats["matched_rows"] == 0
 
 
+def test_cross_validate_master_stock_collision_diagnostics():
+    # Round-4 review finding: the report described every master_stock.csv
+    # collision as "exactly two rows" / "two unrelated price levels"
+    # unconditionally -- neither is true of every group. These diagnostics
+    # (group-size distribution, valid-price counts, relative price
+    # difference) let the report describe what's actually there instead.
+    dates = pd.to_datetime(["2011-01-03", "2011-01-04", "2011-01-05"])
+    crsp = pd.DataFrame({
+        "permno": [1, 1, 1], "ticker": ["AAA"] * 3, "date": dates,
+        "prc": [10.0, 10.1, 10.2], "ret": [0.0, 0.01, 0.01], "retx": [0.0, 0.01, 0.01],
+    })
+    master = pd.DataFrame({
+        "ticker": [
+            "AAA", "AAA",         # 2011-01-03: a 2-row collision, only ONE valid price
+            "AAA", "AAA",         # 2011-01-04: a 2-row collision, two valid prices within 1%
+            "AAA", "AAA", "AAA",  # 2011-01-05: a 3-row collision
+        ],
+        "date": [dates[0], dates[0], dates[1], dates[1], dates[2], dates[2], dates[2]],
+        "price": [10.0, np.nan, 20.0, 20.1, 30.0, 40.0, 50.0],
+    })
+    stats, _merged = neq.cross_validate_master_stock(crsp, master, dates.min(), dates.max())
+    assert stats["master_collision_groups"] == 3
+    assert stats["master_collision_groups_2_rows"] == 2
+    assert stats["master_collision_groups_3plus_rows"] == 1
+    assert stats["master_collision_groups_one_valid_price"] == 1
+    assert stats["master_collision_rows_one_valid_price_group"] == 2
+    assert stats["master_collision_two_valid_price_groups"] == 1
+    assert stats["master_collision_two_valid_price_groups_median_rel_diff"] == pytest.approx(0.005)
+    assert stats["master_collision_two_valid_price_groups_within_1pct"] == 1
+    # And, despite the recoverable single-valid-price row, ALL rows in
+    # every colliding group are still dropped from the comparison --
+    # recovering them was tried and measured to make agreement worse
+    # (see the docstring), not just re-derived from "seems fine."
+    assert stats["matched_rows"] == 0
+
+
 def test_cross_validate_master_stock_trims_extreme_outlier_correlation():
     # A single implausible day for an otherwise well-matched ticker: the
     # per-ticker gate (price-ratio-steps, not returns) must not quarantine
@@ -1415,10 +1549,9 @@ def _minimal_findings_ctx(crossval_skipped=False, adjustment_status="adjusted"):
     else:
         frac = {"adjusted": 0.0, "not_adjusted": 1.0, "mixed": 0.5}[adjustment_status]
         event_stats = {
-            "n_events": 40, "naive_ret_abs_median": 0.48, "naive_ret_abs_mean": 0.5,
+            "n_events": 40, "naive_ret_abs_median": 0.48,
             "actual_ret_abs_median": 0.02 if adjustment_status != "not_adjusted" else 0.47,
-            "actual_ret_abs_mean": 0.03, "frac_naive_ret_gt_20pct": 0.8,
-            "frac_actual_ret_gt_20pct": 0.02 if adjustment_status != "not_adjusted" else 0.78,
+            "frac_actual_ret_gt_big_move": 0.02 if adjustment_status != "not_adjusted" else 0.78,
             "n_events_with_big_naive_move": 35,
             "frac_big_naive_events_ret_equals_naive": frac,
         }
@@ -1461,6 +1594,12 @@ def _minimal_findings_ctx(crossval_skipped=False, adjustment_status="adjusted"):
         "resolved_permnos": [1, 2, 3],
         "dsf_stats": dsf_stats, "dsi_stats": dsi_stats, "delist_stats": delist_stats,
         "event_stats": event_stats, "aapl_permno": 1, "msft_permno": 2,
+        # Computed from the same event_stats/dsf_stats above via the real
+        # function (not hand-rolled) -- build_findings_markdown now reads
+        # this precomputed verdict from ctx rather than recomputing it
+        # (round-4 review: classify_adjustment_status was being called
+        # twice per run from identical inputs).
+        "adjustment_verdict": neq.classify_adjustment_status(event_stats, dsf_stats),
         "aapl_2000": empty_spot, "aapl_2005": empty_spot, "msft_div": empty_msft,
         "master_full_stats": master_full_stats, "master_clean_stats": master_clean_stats,
         "crossval_stats": crossval_stats, "prc_adj_risk": prc_adj_risk,
