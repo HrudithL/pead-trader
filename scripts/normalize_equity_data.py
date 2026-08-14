@@ -1154,6 +1154,14 @@ def cross_validate_master_stock(crsp_df: pd.DataFrame, master_df: pd.DataFrame, 
     every (ticker, date) pair present in both within [window_start,
     window_end]. Returns (stats_dict, merged_df).
 
+    `merged_df` carries an `is_retained_segment` column: True means that
+    row's (ticker, permno) segment passed the per-segment alignment gate
+    described below (i.e. it is NOT one of `quarantined_segments`). This
+    does NOT by itself exclude handoff rows -- callers wanting the same
+    fully-cleaned comparison set this function's own pooled return-
+    agreement statistics use should also filter out `is_permno_handoff`
+    rows, matching `retained_merged` internally.
+
     crsp_df must have columns permno/ticker/date/prc/ret/retx. Rows where
     the same (ticker, date) key appears more than once on EITHER side are
     dropped from that side before joining, rather than silently fanned
@@ -1398,11 +1406,27 @@ def cross_validate_master_stock(crsp_df: pd.DataFrame, master_df: pd.DataFrame, 
         stats["quarantined_segment_examples"] = examples
 
     quarantined_segments = misaligned_segments | too_few_segments
+    # Compute the in-quarantine mask once and reuse it for both
+    # retained_merged and the is_retained_segment column.
+    in_quarantine = _in_segments(merged, quarantined_segments)
+    
+    # Additive: a per-row flag mirroring the same (ticker, permno) gate
+    # `retained_merged` below already applies, so callers that want the
+    # gated comparison set (e.g. build_equity_data_report.py's crossval
+    # chart) don't have to re-derive `quarantined_segments` themselves.
+    # True means the row's (ticker, permno) segment passed the alignment
+    # gate above; it does NOT by itself exclude handoff rows -- callers
+    # wanting the fully-cleaned comparison set this function's own pooled
+    # statistics use should also filter ~is_permno_handoff, exactly as
+    # `retained_merged` does here. Purely additive: every existing column
+    # and the (stats, merged) return shape are unchanged.
+    merged["is_retained_segment"] = ~in_quarantine
+    
     # Handoff rows are excluded here too (not just from full_ret_cmp below):
     # a handoff row's OWN segment might be perfectly well-aligned, but its
     # master_ret still reflects a step across the boundary into a
     # different company's price level -- see docstring.
-    retained_merged = merged.loc[~_in_segments(merged, quarantined_segments) & ~merged["is_permno_handoff"]]
+    retained_merged = merged.loc[~in_quarantine & ~merged["is_permno_handoff"]].copy()
 
     # --- Return agreement, on the retained (correctly-aligned) segments ---
     full_ret_cmp = merged.dropna(subset=["retx", "master_ret"]).copy()

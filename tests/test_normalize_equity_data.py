@@ -1384,6 +1384,103 @@ def test_cross_validate_master_stock_ticker_spanning_two_permnos_quarantines_onl
     assert set(merged["permno"]) == {100, 200}
 
 
+def test_cross_validate_master_stock_is_retained_segment_flags_only_quarantined_rows():
+    # Additive column check (Fix 8): reuses the exact fixture from
+    # test_cross_validate_master_stock_ticker_spanning_two_permnos_
+    # quarantines_only_bad_segment above, which already has one quarantined
+    # segment (permno 100, misaligned) and one retained segment (permno
+    # 200) under the same ticker -- is_retained_segment must be False for
+    # exactly the quarantined segment's rows and True everywhere else.
+    dates_a = pd.to_datetime(["2012-01-03", "2012-01-04", "2012-01-05", "2012-01-06"])
+    dates_b = pd.to_datetime(["2012-06-04", "2012-06-05", "2012-06-06", "2012-06-07", "2012-06-08"])
+    crsp_a_prices = [10.0, 10.5, 9.8, 10.2]
+    master_a_prices = [50.0, 30.0, 80.0, 20.0]
+    crsp_b_prices = [20.0, 20.5, 19.8, 20.2, 20.1]
+    master_b_prices = list(crsp_b_prices)
+
+    crsp = pd.DataFrame({
+        "permno": [100] * 4 + [200] * 5,
+        "ticker": "SPAN",
+        "date": list(dates_a) + list(dates_b),
+        "prc": crsp_a_prices + crsp_b_prices,
+    })
+    crsp["retx"] = crsp.groupby("permno")["prc"].pct_change().fillna(0.0)
+    crsp["ret"] = crsp["retx"]
+    master = pd.DataFrame({
+        "ticker": "SPAN",
+        "date": list(dates_a) + list(dates_b),
+        "price": master_a_prices + master_b_prices,
+    })
+    stats, merged = neq.cross_validate_master_stock(crsp, master, dates_a.min(), dates_b.max())
+
+    assert stats["segments_quarantined_misaligned"] == 1  # sanity: permno 100 is the quarantined segment
+    assert not merged.loc[merged["permno"] == 100, "is_retained_segment"].any()
+    assert merged.loc[merged["permno"] == 200, "is_retained_segment"].all()
+
+
+def test_cross_validate_master_stock_is_retained_segment_multiple_quarantined_segments_same_permno():
+    """Fix 7: verify is_retained_segment works correctly when a single
+    permno has multiple non-overlapping segments (different tickers at
+    different times), some quarantined and some retained."""
+    # Permno 99 appears under three different tickers at non-overlapping times:
+    # - Ticker "BADTICK" in Jan: misaligned (quarantined)
+    # - Ticker "GOODTICK" in June: retained (matches well)
+    # - Ticker "ALSOBAD" in Dec: also misaligned (quarantined)
+    dates_a = pd.to_datetime(["2010-01-04", "2010-01-05", "2010-01-06", "2010-01-07", "2010-01-08", "2010-01-11"])
+    dates_b = pd.to_datetime(["2010-06-01", "2010-06-02", "2010-06-03", "2010-06-04", "2010-06-07"])
+    dates_c = pd.to_datetime(["2010-12-15", "2010-12-16", "2010-12-17", "2010-12-18", "2010-12-21", "2010-12-22"])
+
+    # Segment A (BADTICK, permno 99): CRSP steady, master moves wildly (misaligned)
+    crsp_a_prices = [10.0, 10.1, 10.2, 10.3, 10.4, 10.5]
+    master_a_prices = [50.0, 30.0, 80.0, 20.0, 65.0, 15.0]
+    
+    # Segment B (GOODTICK, permno 99): CRSP and master agree exactly (retained)
+    crsp_b_prices = [20.0, 20.5, 19.8, 20.2, 20.1]
+    master_b_prices = list(crsp_b_prices)
+    
+    # Segment C (ALSOBAD, permno 99): master steady, CRSP moves wildly --
+    # widened until unambiguously misaligned (off by 100x), so the ratio
+    # check reliably quarantines it.
+    crsp_c_prices = [1500.0, 3000.0, 1000.0, 4500.0, 500.0, 5000.0]
+    master_c_prices = [15.1, 15.2, 15.3, 15.4, 15.5, 15.6]
+
+    crsp = pd.DataFrame({
+        "permno": 99,
+        "ticker": (["BADTICK"] * 6) + (["GOODTICK"] * 5) + (["ALSOBAD"] * 6),
+        "date": list(dates_a) + list(dates_b) + list(dates_c),
+        "prc": crsp_a_prices + crsp_b_prices + crsp_c_prices,
+    })
+    crsp["retx"] = crsp["prc"].pct_change().fillna(0.0)
+    crsp["ret"] = crsp["retx"]
+
+    master = pd.DataFrame({
+        "ticker": (["BADTICK"] * 6) + (["GOODTICK"] * 5) + (["ALSOBAD"] * 6),
+        "date": list(dates_a) + list(dates_b) + list(dates_c),
+        "price": master_a_prices + master_b_prices + master_c_prices,
+    })
+    
+    stats, merged = neq.cross_validate_master_stock(crsp, master, dates_a.min(), dates_c.max())
+    
+    # Exactly 2 quarantined segments (BADTICK and ALSOBAD), not "at least 1".
+    assert stats["segments_quarantined_misaligned"] == 2
+    
+    # is_retained_segment must be False on quarantined rows (BADTICK and ALSOBAD segments)
+    # and True on retained rows (GOODTICK segment)
+    badtick_mask = merged["ticker"] == "BADTICK"
+    goodtick_mask = merged["ticker"] == "GOODTICK"
+    alsobad_mask = merged["ticker"] == "ALSOBAD"
+    
+    # All rows belong to the same permno 99
+    assert merged["permno"].nunique() == 1
+    assert merged["permno"].iloc[0] == 99
+    
+    # is_retained_segment correctly flags quarantined vs retained segments:
+    # every BADTICK row is False, every ALSOBAD row is False, every GOODTICK row is True.
+    assert not merged.loc[badtick_mask, "is_retained_segment"].any()
+    assert not merged.loc[alsobad_mask, "is_retained_segment"].any()
+    assert merged.loc[goodtick_mask, "is_retained_segment"].all()
+
+
 def test_cross_validate_master_stock_excludes_permno_handoff_row_from_return_comparison():
     # The single day a ticker hands off from one permno to another is
     # excluded from the return-agreement stats regardless of either
