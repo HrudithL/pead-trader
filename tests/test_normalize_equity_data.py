@@ -1438,8 +1438,10 @@ def test_cross_validate_master_stock_is_retained_segment_multiple_quarantined_se
     crsp_b_prices = [20.0, 20.5, 19.8, 20.2, 20.1]
     master_b_prices = list(crsp_b_prices)
     
-    # Segment C (ALSOBAD, permno 99): master steady, CRSP moves wildly (misaligned)
-    crsp_c_prices = [15.0, 30.0, 10.0, 45.0, 5.0, 50.0]
+    # Segment C (ALSOBAD, permno 99): master steady, CRSP moves wildly --
+    # widened until unambiguously misaligned (off by 100x), so the ratio
+    # check reliably quarantines it.
+    crsp_c_prices = [1500.0, 3000.0, 1000.0, 4500.0, 500.0, 5000.0]
     master_c_prices = [15.1, 15.2, 15.3, 15.4, 15.5, 15.6]
 
     crsp = pd.DataFrame({
@@ -1459,14 +1461,8 @@ def test_cross_validate_master_stock_is_retained_segment_multiple_quarantined_se
     
     stats, merged = neq.cross_validate_master_stock(crsp, master, dates_a.min(), dates_c.max())
     
-    # Sanity: we should have at least one quarantined segment and multiple
-    # segments total for the same permno (the key property being tested).
-    assert stats["segments_quarantined_misaligned"] >= 1
-    # Verify that we actually have multiple segments by checking that not
-    # all rows are in the same quarantine state.
-    all_quarantined = not merged["is_retained_segment"].any()
-    all_retained = merged["is_retained_segment"].all()
-    assert not (all_quarantined or all_retained), "Test fixture must create both quarantined and retained segments"
+    # Exactly 2 quarantined segments (BADTICK and ALSOBAD), not "at least 1".
+    assert stats["segments_quarantined_misaligned"] == 2
     
     # is_retained_segment must be False on quarantined rows (BADTICK and ALSOBAD segments)
     # and True on retained rows (GOODTICK segment)
@@ -1478,11 +1474,11 @@ def test_cross_validate_master_stock_is_retained_segment_multiple_quarantined_se
     assert merged["permno"].nunique() == 1
     assert merged["permno"].iloc[0] == 99
     
-    # is_retained_segment correctly flags quarantined vs retained segments
+    # is_retained_segment correctly flags quarantined vs retained segments:
+    # every BADTICK row is False, every ALSOBAD row is False, every GOODTICK row is True.
     assert not merged.loc[badtick_mask, "is_retained_segment"].any()
+    assert not merged.loc[alsobad_mask, "is_retained_segment"].any()
     assert merged.loc[goodtick_mask, "is_retained_segment"].all()
-    # ALSOBAD might or might not be quarantined depending on thresholds,
-    # but at least BADTICK and GOODTICK demonstrate the multi-segment behavior.
 
 
 def test_cross_validate_master_stock_excludes_permno_handoff_row_from_return_comparison():

@@ -287,6 +287,14 @@ def _load_ticker_window(
         # and the center_date row is missing (cannot disambiguate).
         center_rows = df.loc[df["date"] == center]
         if len(center_rows) > 0:
+            # Also raise if the center_date row itself has multiple permnos --
+            # sweep the same silent-misattribution shape as the missing-row case.
+            if center_rows["permno"].nunique() > 1:
+                unique_permnos = sorted(center_rows["permno"].unique().tolist())
+                raise ValueError(
+                    f"_load_ticker_window: ticker {ticker!r} has multiple permnos "
+                    f"({unique_permnos}) on center_date {center_date}; cannot disambiguate"
+                )
             chosen = center_rows["permno"].iloc[0]
         else:
             unique_permnos = sorted(distinct_permnos.tolist())
@@ -452,21 +460,20 @@ def _make_split_chart(window_df: pd.DataFrame, ticker: str, split_date: str) -> 
         fig.tight_layout()
         return fig
 
-    # Fix 12a: the FIRST plotted cumulative-return observation must be
-    # exactly 1.0 (the starting dollar, before any return has been
-    # applied) -- not 1 + ret[0], which double-counts the window's first
-    # day's own return. Built from a working copy of `ret` with its first
-    # value forced to 0.0 before compounding, rather than patching the
-    # result after the fact.
+    # First plotted cumulative-return point is 1.0 (representing $1
+    # invested pre-window) except when the split date IS the window's first
+    # row, in which case the first plotted point already reflects that
+    # day's return so the discontinuity is visually preserved.
     working_ret = df["ret"].copy()
     split_mask = df["date"] == split_ts
-    # A NaN return on the split date itself must not be silently treated
-    # as a 0% return by a blanket fillna: doing so would manufacture an
-    # artificially smooth line through a day this data genuinely has no
-    # return for, rather than honestly showing the gap. Every OTHER
-    # missing return in this small, hand-picked window is filled with 0%
+    # A NaN return on the split date itself is set to 0.0 so cumprod
+    # continues past the split date, with a visual marker (see below)
+    # showing where the missing observation was. Every OTHER missing
+    # return in this small, hand-picked window is also filled with 0%
     # (a non-event), same as before.
     split_ret_is_nan = bool(split_mask.any() and df.loc[split_mask, "ret"].isna().any())
+    if split_ret_is_nan:
+        working_ret.loc[split_mask] = 0.0
     fill_mask = working_ret.isna() & ~split_mask
     working_ret.loc[fill_mask] = 0.0
     # Only zero out the first row if the split date is not the first date.
@@ -481,6 +488,9 @@ def _make_split_chart(window_df: pd.DataFrame, ticker: str, split_date: str) -> 
 
     axes[1].plot(df["date"], df["cum_return_index"], color=_BLUE, linewidth=2, marker="o", markersize=3)
     axes[1].axvline(split_ts, color=_MUTED, linestyle="--", linewidth=1)
+    if split_ret_is_nan:
+        # Visual marker for the missing return observation at the split date
+        axes[1].axvline(split_ts, color=_ORANGE, linestyle=":", alpha=0.5)
     axes[1].set_ylabel("Value of $1 invested\n(built from the return column)")
     axes[1].set_xlabel("Date")
     title = "Same window, built from the return column instead of price"
@@ -990,11 +1000,17 @@ def _format_crossval_caption(stats: dict, window_start, window_end, n_plotted: i
     two quarantine reasons are reported separately, each only when its
     own count is greater than zero.
     """
+    # Guard against None/NaT window bounds
+    if window_start is None or pd.isna(window_start) or window_end is None or pd.isna(window_end):
+        date_range_phrase = "(window bounds unavailable)"
+    else:
+        date_range_phrase = f"between {pd.Timestamp(window_start).date()} and {pd.Timestamp(window_end).date()}"
+    
     caption = (
         f"Each hexagon groups together many (stock, day) observations, with a return "
-        f"recorded in both CRSP and the second price file, between {pd.Timestamp(window_start).date()} "
-        f"and {pd.Timestamp(window_end).date()}, colored by how many observations fall in it "
-        f"(darker/more intense = more) -- {n_plotted:,} stock-days plotted"
+        f"recorded in both CRSP and the second price file, {date_range_phrase}, "
+        f"colored by how many observations fall in it (darker/more intense = more) -- "
+        f"{n_plotted:,} stock-days plotted"
     )
     caption += (
         f"; {n_excluded:,} of the largest disagreements fall outside this plotted range and "

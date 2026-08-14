@@ -375,6 +375,24 @@ def test_load_ticker_window_raises_when_center_date_missing_with_multiple_permno
         ber._load_ticker_window(data_dir, 1995, "MULTI", "1995-06-05", window_days=10)
 
 
+def test_load_ticker_window_raises_when_center_date_has_multiple_permnos(tmp_path):
+    """Round-2 fix 6: when the center_date row EXISTS but has multiple
+    permnos (e.g. two permnos sharing the ticker on the exact center date),
+    _load_ticker_window must raise ValueError -- sweeps the same
+    silent-misattribution shape as the missing-row case."""
+    data_dir = tmp_path / "normalized_equity"
+    # Two permnos both present on the exact center date 1995-06-05
+    rows = [
+        {"permno": 111, "ticker": "DUPE", "date": "1995-06-05", "prc": 10.0, "ret": 0.01, "retx": 0.01},
+        {"permno": 222, "ticker": "DUPE", "date": "1995-06-05", "prc": 20.0, "ret": 0.02, "retx": 0.02},
+    ]
+    _write_equity_year(data_dir, 1995, _equity_year_frame(rows))
+
+    # The center_date row exists, but it's ambiguous -- cannot pick a permno.
+    with pytest.raises(ValueError, match=r"ticker 'DUPE' has multiple permnos.*on center_date.*cannot disambiguate"):
+        ber._load_ticker_window(data_dir, 1995, "DUPE", "1995-06-05", window_days=10)
+
+
 def test_format_split_caption_returns_numberless_branch_on_zero_prev_price(tmp_path):
     """Fix 4: when prev_price is <= 0, _format_split_caption must fall
     through to the numberless branch instead of dividing by zero."""
