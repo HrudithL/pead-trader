@@ -91,8 +91,9 @@ class TestATMPick:
             _row(option_id=3, strike=55.0, iv=0.32),
         )
         out = bih.build_iv_history_frame(df)
-        # Contracts 1 and 3 are equidistant from 50; pandas idxmin picks
-        # first occurrence -> option_id=1, iv=0.35.
+        # Contracts 1 and 3 are equidistant from 50; the deterministic
+        # tie-break sorts by (abs_diff, option_id) so option_id=1
+        # wins, iv=0.35.
         assert out.iloc[0]["atm_iv_30d"] == pytest.approx(0.35)
 
     def test_bucket_boundary_dte_covered_by_both_seams(self):
