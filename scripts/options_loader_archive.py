@@ -230,13 +230,31 @@ def _build_query(
     same date-range in overlapping ways). Without the GROUP BY, the
     read_parquet union would produce two rows per ``(secid, date)`` --
     one from the master, one from the yearly -- and the LEFT-hand JOIN
-    would fan out to two option rows per contract-day. The subsequent
-    canonical dedup would then silently pick whichever ``close`` row
-    happened to arrive first, which can differ between duplicates in
-    the (rare) case they disagree.
+    would fan out to two option rows per contract-day.
+
+    Choice of aggregator: MAX rather than MIN/AVG. In this archive
+    the master and yearly cuts hold identical ``close`` values for
+    every shared ``(secid, date)`` (they are literally partitions of
+    the same underlying export), so MAX / MIN / FIRST_VALUE all
+    produce the same number. MAX is picked for stability across
+    unlikely-but-possible future archives where the values disagree:
+    the higher price is the more conservative choice for the Slice 9
+    event-cube filter that gates on positive underlying price. If a
+    future archive is found to actually disagree on close, the
+    quality gate (Slice 6) reports the mismatch; that is where a
+    disagreement should surface, not silently in the loader.
     """
-    op_files_sql = "[" + ", ".join(f"'{f}'" for f in opprcd_files) + "]"
-    sp_files_sql = "[" + ", ".join(f"'{f}'" for f in secprd_files) + "]"
+    # Escape single quotes in the interpolated paths defensively. IvyDB
+    # filenames in this archive are alphanumeric only, but Path.glob()
+    # is filesystem-controlled and nothing about the type system stops
+    # a quoted filename from being handed to us; the standard SQL
+    # escape (double a single quote) neutralises it.
+    op_files_sql = "[" + ", ".join(
+        "'" + f.replace("'", "''") + "'" for f in opprcd_files
+    ) + "]"
+    sp_files_sql = "[" + ", ".join(
+        "'" + f.replace("'", "''") + "'" for f in secprd_files
+    ) + "]"
 
     where_parts: list[str] = []
     params: list = []
@@ -353,9 +371,21 @@ def _to_canonical_frame(raw: pd.DataFrame) -> pd.DataFrame:
 
     # De-duplicate on (option_id, date) -- the archive occasionally has
     # a duplicate row when a corporate action produced two records for
-    # the same contract-day. Keep the first; the quality gate reports
-    # duplicates separately.
-    df = df.drop_duplicates(subset=["option_id", "date"]).reset_index(drop=True)
+    # the same contract-day. Sort deterministically before dropping so
+    # the surviving row is reproducible across DuckDB versions and
+    # execution contexts, rather than being whichever row happened to
+    # arrive first. Sort key includes iv so ties between rows differing
+    # only in IV break the same way every run; the quality gate (Slice
+    # 6) is where genuinely-conflicting duplicates get reported.
+    df = (
+        df.sort_values(
+            ["option_id", "date", "iv", "bid", "ask"],
+            kind="stable",
+            na_position="last",
+        )
+        .drop_duplicates(subset=["option_id", "date"], keep="first")
+        .reset_index(drop=True)
+    )
 
     return df
 
