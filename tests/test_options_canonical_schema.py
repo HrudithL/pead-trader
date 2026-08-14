@@ -202,6 +202,36 @@ class TestValidateDomain:
         assert not result.ok
         assert any("multiplier" in e and "non-positive" in e for e in result.errors)
 
+    def test_infinite_strike_flagged(self):
+        df = _valid_frame(_valid_row(strike=float("inf")))
+        result = sch.validate(df)
+        assert not result.ok
+        assert any("strike" in e and "infinite" in e for e in result.errors)
+
+    def test_infinite_underlying_price_flagged(self):
+        df = _valid_frame(_valid_row(underlying_price=float("-inf")))
+        result = sch.validate(df)
+        assert not result.ok
+        assert any("underlying_price" in e and "infinite" in e for e in result.errors)
+
+    def test_negative_volume_flagged(self):
+        df = _valid_frame(_valid_row(volume=-5))
+        result = sch.validate(df)
+        assert not result.ok
+        assert any("volume" in e and "negative" in e for e in result.errors)
+
+    def test_negative_open_interest_flagged(self):
+        df = _valid_frame(_valid_row(open_interest=-1))
+        result = sch.validate(df)
+        assert not result.ok
+        assert any("open_interest" in e and "negative" in e for e in result.errors)
+
+    def test_zero_volume_ok(self):
+        # Zero volume on a truly illiquid contract is a real, valid state.
+        df = _valid_frame(_valid_row(volume=0, open_interest=0))
+        result = sch.validate(df)
+        assert result.ok, result.errors
+
     def test_expiration_before_date_flagged(self):
         df = _valid_frame(_valid_row(
             date=pd.Timestamp("2010-07-01"),
@@ -257,7 +287,10 @@ class TestDtypeCompat:
         ("Int64", "Int64", True),
         ("int64", "Int64", True),   # non-null int is fine where Int64 declared
         ("float64", "float64", True),
-        ("float32", "float64", True),  # narrower precision, still numeric
+        # float32 is rejected for float64 columns: single-precision loses
+        # meaningful precision on prices/Greeks/IV, and a loader that
+        # produced float32 needs to upcast before validation.
+        ("float32", "float64", False),
         ("datetime64[ns]", "datetime64[ns]", True),
         ("datetime64[ns, UTC]", "datetime64[ns]", True),
         # Non-UTC timezones are rejected: downstream event-cube joins

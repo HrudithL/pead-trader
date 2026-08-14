@@ -53,6 +53,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 
 # --- Schema ---------------------------------------------------------------
@@ -218,14 +219,17 @@ def _is_dtype_compatible(actual: str, declared: str) -> bool:
     assume a UTC / naive time axis and silently mixing in a
     ``datetime64[ns, US/Eastern]`` column would produce off-by-hours
     results at DST boundaries without any error surfacing.
+
+    ``float32`` is NOT accepted for ``float64`` columns: this is
+    financial data and a single-precision cast loses meaningful
+    precision on prices, Greeks, and IV. A loader producing float32
+    needs to upcast before validation.
     """
     if actual == declared:
         return True
     if declared == "string" and actual.startswith("string"):
         return True
     if declared == "Int64" and actual in ("int64", "Int64"):
-        return True
-    if declared == "float64" and actual in ("float64", "float32"):
         return True
     if declared == "datetime64[ns]" and actual in (
         "datetime64[ns]",
@@ -301,6 +305,29 @@ def _check_domain_constraints(
             if non_positive:
                 errors.append(
                     f"Column {col!r} has {non_positive} non-positive value(s)."
+                )
+            # Infinite prices/strikes/multipliers are meaningless. Reject
+            # rather than let them propagate silently through downstream
+            # arithmetic (where inf * 0 = NaN would silently drop rows).
+            series = df[col]
+            if pd.api.types.is_float_dtype(series):
+                infinite = int(np.isinf(series.to_numpy(dtype="float64", na_value=0.0)).sum())
+                if infinite > 0:
+                    errors.append(
+                        f"Column {col!r} has {infinite} infinite value(s)."
+                    )
+
+    # Nullable counts can't be negative: a contract cannot have negative
+    # volume traded or negative open interest. Zero is fine (illiquid);
+    # negative is nonsense.
+    for col in ("volume", "open_interest"):
+        if col in df.columns and len(df):
+            # fillna(0) so nulls don't count as negative.
+            negative = int((df[col].fillna(0) < 0).sum())
+            if negative:
+                errors.append(
+                    f"Column {col!r} has {negative} negative value(s); "
+                    f"contract counts cannot be negative."
                 )
 
     if "date" in df.columns and "expiration" in df.columns and len(df):
