@@ -147,18 +147,22 @@ def _dte_days(row: pd.Series) -> int:
 
 
 def _bucket_moneyness(m: float) -> str:
-    """Six log-moneyness buckets, matching the plan's "moneyness" strata."""
+    """Five log-moneyness buckets. Symmetric around ATM so the sampler
+    picks contrasting rows regardless of whether they're calls or puts
+    (``call_put`` is a separate stratification signal upstream if a
+    caller wants to slice by it).
+    """
     if not math.isfinite(m):
         return "unknown"
     if m < -0.10:
-        return "deep_itm_call" if m < 0 else "deep_itm_put"  # placeholder
+        return "deep"
     if m < -0.03:
         return "itm"
     if m < 0.03:
         return "atm"
     if m < 0.10:
         return "otm"
-    return "deep_otm"
+    return "deep"
 
 
 def _bucket_dte(days: int) -> str:
@@ -394,12 +398,21 @@ def validate_greeks_sample(
     ``stratified_sample``) -- this iterates row-by-row and calls
     QuantLib per row, so cost is O(target_size * per-row-time).
 
+    Rows that raise inside the QuantLib call path (rare, but happens
+    on badly-scaled inputs) are counted -- if more than 25% of the
+    input rows are dropped by exception, the report fails with a
+    reason that names the exception rate, so a systematic pricing
+    bug can't hide behind a silent skip.
+
     Returns a ``GreeksValidationReport``. The verdict is against
     ``thresholds`` on the median absolute differences for iv, delta,
     and vega -- gamma and theta are reported but not part of the
     pass/fail bar (they are second-derivative / calendar-sensitive and
     routinely disagree at higher relative percentages without
-    invalidating a first-order Greek).
+    invalidating a first-order Greek). Theta specifically returns NaN
+    on non-convergence rather than being bumped-and-revalued because
+    it's not in the verdict; adding a theta bump would be scope for a
+    future slice if the verdict starts using it.
     """
     if df.empty:
         return GreeksValidationReport(
@@ -409,6 +422,7 @@ def validate_greeks_sample(
         )
 
     rows: list[dict] = []
+    n_exceptions = 0
     for _, row in df.iterrows():
         try:
             spot = float(row["underlying_price"])
@@ -470,6 +484,7 @@ def validate_greeks_sample(
                 "ql_theta": ql_theta,
             })
         except Exception:  # noqa: BLE001 -- keep one bad row from stopping the sweep
+            n_exceptions += 1
             continue
 
     per_row = pd.DataFrame(rows)
@@ -508,6 +523,19 @@ def validate_greeks_sample(
     # Verdict.
     reasons: list[str] = []
     passed = True
+
+    # If more than 25% of the input rows were dropped by exception, the
+    # verdict fails even before the median-diff checks -- a systematic
+    # pricing bug can silently exclude every American row from the sweep
+    # and we don't want the median-diff-on-what's-left to hide that.
+    input_rows = len(df)
+    exception_rate = n_exceptions / input_rows if input_rows else 0.0
+    if exception_rate > 0.25:
+        passed = False
+        reasons.append(
+            f"pricing raised exceptions on {n_exceptions}/{input_rows} rows "
+            f"({exception_rate:.1%}); threshold is 25%"
+        )
 
     if len(per_row) < thresholds.min_sample_rows:
         reasons.append(

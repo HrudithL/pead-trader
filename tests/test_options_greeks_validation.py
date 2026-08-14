@@ -62,7 +62,10 @@ class TestBucketing:
         assert gv._bucket_moneyness(0.05) == "otm"
 
     def test_moneyness_deep_otm(self):
-        assert gv._bucket_moneyness(0.2) == "deep_otm"
+        # Post-review simplification: deep-OTM and deep-ITM both bucket
+        # as "deep" so a single stratum picks up symmetric extremes.
+        assert gv._bucket_moneyness(0.2) == "deep"
+        assert gv._bucket_moneyness(-0.2) == "deep"
 
     def test_moneyness_itm(self):
         assert gv._bucket_moneyness(-0.05) == "itm"
@@ -251,6 +254,31 @@ class TestValidateGreeksSample:
         report = gv.validate_greeks_sample(df)
         assert not report.passed
         assert any("delta median abs diff" in r for r in report.reasons)
+
+    def test_grossly_wrong_vendor_iv_fails(self):
+        # Round-1 review fix: prove the iv arm of the verdict actually
+        # fires when the vendor iv is wrong. Set vendor iv to 0.60 while
+        # rows priced at 0.30; solver should reveal ~0.30 iv, giving a
+        # 0.30 median abs diff, well above the 0.02 default threshold.
+        rows = [self._self_consistent_row(sigma=0.30) for _ in range(60)]
+        for i, r in enumerate(rows):
+            r["option_id"] = i
+            r["iv"] = 0.60
+        df = _frame(*rows)
+        report = gv.validate_greeks_sample(df)
+        assert not report.passed
+        assert any("iv median abs diff" in r for r in report.reasons)
+
+    def test_grossly_wrong_vendor_vega_fails(self):
+        # Same pattern for vega.
+        rows = [self._self_consistent_row() for _ in range(60)]
+        for i, r in enumerate(rows):
+            r["option_id"] = i
+            r["vega"] = 0.0
+        df = _frame(*rows)
+        report = gv.validate_greeks_sample(df)
+        assert not report.passed
+        assert any("vega median abs diff" in r for r in report.reasons)
 
     def test_per_metric_stats_populated(self):
         rows = [self._self_consistent_row() for _ in range(60)]
