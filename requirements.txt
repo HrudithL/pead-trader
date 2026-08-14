@@ -1,0 +1,48 @@
+# Dependencies for the WRDS bulk-pull scripts (scripts/wrds_pull_lib.py,
+# scripts/pull_wrds_reference.py, scripts/pull_wrds_crsp.py,
+# scripts/pull_wrds_compustat.py, scripts/pull_wrds_ibes.py) and the local
+# equity-data cleaning script (scripts/normalize_equity_data.py), plus their
+# tests.
+# Pinned to reasonable minimums roughly matching what's installed in .venv
+# (checked via `.venv/bin/pip freeze`: wrds==3.5.0, pandas==2.2.3,
+# pyarrow==25.0.1, psycopg2-binary==2.9.12, SQLAlchemy==2.0.51,
+# duckdb==1.5.5). SQLAlchemy is declared explicitly (not left as an implicit
+# transitive dependency of wrds) because wrds_pull_lib.py imports
+# sqlalchemy.exc directly and depends on it for error classification
+# (NoSuchTableError vs. everything else). duckdb is declared explicitly
+# because normalize_equity_data.py uses it directly to read
+# data/raw_equity/master_stock.csv (a large, imperfectly-quoted CSV where
+# DuckDB's explicit-quote-character CSV reader is materially more robust
+# than pandas' own CSV parser -- see that module's docstring); it was
+# already present in .venv (noted in memory/phase1-equity-pead-plan.md as
+# "pandas/pyarrow/duckdb already installed") but missing from this file.
+wrds>=3.5
+pandas>=2.2
+pyarrow>=15
+psycopg2-binary>=2.9
+SQLAlchemy>=2.0
+duckdb>=1.5
+pytest>=7
+
+# Dependencies for the reporting-infra slice (scripts/report_builder.py):
+# matplotlib for report charts, weasyprint for HTML/CSS-to-PDF rendering.
+# Floors are the exact versions actually installed and smoke-tested in this
+# slice's own .venv (`.venv/bin/pip show matplotlib weasyprint`), not a
+# guess: matplotlib==3.11.1, weasyprint==69.0.
+# scipy (event-study statistics: t-tests, Spearman IC) is NOT added here --
+# nothing in this slice uses it; it belongs on the statistics slice that
+# actually needs it.
+matplotlib>=3.11.1
+# weasyprint renders HTML/CSS to PDF via system libraries, not a pure
+# Python dependency -- on macOS it needs `brew install pango cairo
+# gdk-pixbuf` first (see README.md's Setup section), or the package imports
+# fine but `HTML(...).write_pdf(...)` fails at render time with no warning
+# at pip-install time.
+weasyprint>=69.0
+
+# Dependency for the event-study-statistics slice (scripts/build_event_study_stats.py):
+# scipy.stats.t for finite-sample confidence intervals and scipy.stats.spearmanr
+# for the rank-correlation IC. Human-approved addition for this slice (see that
+# script's own module docstring). Floor matches this project's pinning style --
+# a recent scipy compatible with the pandas/numpy versions already pinned above.
+scipy>=1.13
