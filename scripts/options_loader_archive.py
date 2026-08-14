@@ -221,6 +221,19 @@ def _build_query(
     """SQL + positional parameters. DuckDB pushes the WHERE clauses down
     to the parquet reader, so a filter on secid or date range does not
     materialise the whole opprcd year in memory before filtering.
+
+    ``secprd`` files are pre-aggregated with a MAX(close) GROUP BY
+    ``(secid, date)`` inside the join subquery. This is not stylistic:
+    the archive routinely carries both a master ``secprd.parquet``
+    AND yearly ``secprd<YYYY>.parquet`` files (see Slice 2's inventory:
+    19 parquet files across 1 master + 17 yearlies, all covering the
+    same date-range in overlapping ways). Without the GROUP BY, the
+    read_parquet union would produce two rows per ``(secid, date)`` --
+    one from the master, one from the yearly -- and the LEFT-hand JOIN
+    would fan out to two option rows per contract-day. The subsequent
+    canonical dedup would then silently pick whichever ``close`` row
+    happened to arrive first, which can differ between duplicates in
+    the (rare) case they disagree.
     """
     op_files_sql = "[" + ", ".join(f"'{f}'" for f in opprcd_files) + "]"
     sp_files_sql = "[" + ", ".join(f"'{f}'" for f in secprd_files) + "]"
@@ -228,6 +241,9 @@ def _build_query(
     where_parts: list[str] = []
     params: list = []
     if secids is not None:
+        # Empty secid list is handled by the caller (returns empty frame
+        # before this function is called); by the time we get here,
+        # ``secids`` is non-empty.
         placeholders = ", ".join(["?"] * len(secids))
         where_parts.append(f"o.secid IN ({placeholders})")
         params.extend(int(s) for s in secids)
@@ -262,7 +278,11 @@ def _build_query(
         o.root                                            AS raw_root,
         o.suffix                                          AS raw_suffix
     FROM read_parquet({op_files_sql}) AS o
-    JOIN read_parquet({sp_files_sql}) AS s
+    JOIN (
+        SELECT secid, date, MAX(close) AS close
+        FROM read_parquet({sp_files_sql})
+        GROUP BY secid, date
+    ) AS s
       ON s.secid = o.secid AND s.date = o.date
     {where_sql}
     """
@@ -381,6 +401,13 @@ def load_options(
     ds = _to_date(date_start)
     de = _to_date(date_end)
 
+    secid_list = list(secids) if secids is not None else None
+    # An explicitly-empty secid filter means "no securities in scope";
+    # short-circuit before building SQL, so we don't hand DuckDB a
+    # syntactically-invalid ``secid IN ()`` clause.
+    if secid_list is not None and len(secid_list) == 0:
+        return sch.empty_frame()
+
     opprcd_files = _select_opprcd_files_for_window(parquet_dir, ds, de)
     if not opprcd_files:
         return sch.empty_frame()
@@ -391,7 +418,6 @@ def load_options(
             f"the underlying_price column without a secprd source."
         )
 
-    secid_list = list(secids) if secids is not None else None
     sql, params = _build_query(
         opprcd_files=opprcd_files,
         secprd_files=secprd_files,

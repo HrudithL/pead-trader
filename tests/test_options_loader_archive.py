@@ -181,6 +181,15 @@ class TestLoadOptionsHappyPath:
         assert df.empty
         assert list(df.columns) == sch.CANONICAL_COLUMN_NAMES
 
+    def test_empty_secids_list_returns_empty(self, tmp_path: Path):
+        # Round-1 review fix: secids=[] is a valid caller state (universe
+        # collapsed to nothing) and must short-circuit rather than
+        # produce SQL ``secid IN ()`` (a DuckDB syntax error).
+        root = _make_minimal_archive(tmp_path)
+        df = loader.load_options(archive_root=root, secids=[])
+        assert df.empty
+        assert list(df.columns) == sch.CANONICAL_COLUMN_NAMES
+
     def test_secid_filter_applied(self, tmp_path: Path):
         root = tmp_path / "arch"
         _write_opprcd_year(
@@ -301,6 +310,23 @@ class TestDeduplication:
         df = loader.load_options(archive_root=root)
         # Exact duplicate -- keep one.
         assert len(df) == 1
+
+    def test_secprd_master_and_yearly_do_not_fan_out(self, tmp_path: Path):
+        # Round-1 review fix: the real archive has BOTH a master
+        # secprd.parquet AND yearly secprd<YYYY>.parquet files covering
+        # the same (secid, date) pairs. Without the GROUP BY in the
+        # join subquery, the read_parquet union would produce two rows
+        # per (secid, date) and the JOIN would fan out to two option
+        # rows per contract-day. Verify by writing both a master and a
+        # yearly with the same (secid, date), then loading and
+        # asserting one row per option.
+        root = tmp_path / "arch"
+        _write_opprcd_year(root, 2010, [_opprcd_row(optionid=1.0)])
+        _write_secprd(root, [_secprd_row()], filename="secprd.parquet")
+        _write_secprd(root, [_secprd_row()], filename="secprd2010.parquet")
+        df = loader.load_options(archive_root=root)
+        assert len(df) == 1
+        assert df.iloc[0]["option_id"] == 1
 
 
 class TestPushdownFileSelection:
