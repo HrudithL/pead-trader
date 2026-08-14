@@ -579,11 +579,14 @@ def _mktadj_by_horizon_and_quintile(stats: dict) -> dict[int, list[tuple[int, fl
 
 
 def _mktadj_spread_by_horizon(stats: dict) -> dict[int, dict]:
-    """Return `{horizon: {'spread', 'se', 't_stat', 'ci_low', 'ci_high'}}`
+    """Return `{horizon: {'spread', 'se', 't_stat', 'ci_low', 'ci_high', 'finite'}}`
     for `return_type == 'mktadj'` rows in `stats['quantile_spread']`. The
     CI half-width is derived here from `se` at the module's 5%-two-sided
     z; Slice 9's JSON does not carry an explicit CI for the spread rows,
-    only `se` and `t_stat`."""
+    only `se` and `t_stat`. The `finite` flag (round-1 finding #3) is
+    False when any of spread/se/t_stat is NaN or inf -- callers that
+    aggregate significance flags MUST check `finite` before treating
+    the row as evidence either way."""
     out: dict[int, dict] = {}
     for row in stats["quantile_spread"]:
         if row["return_type"] != "mktadj":
@@ -591,13 +594,16 @@ def _mktadj_spread_by_horizon(stats: dict) -> dict[int, dict]:
         h = int(row["horizon"])
         spread = float(row["spread"])
         se = float(row["se"])
-        half = _T_STAT_5PCT * se
+        t_stat = float(row["t_stat"])
+        finite = math.isfinite(spread) and math.isfinite(se) and math.isfinite(t_stat)
+        half = _T_STAT_5PCT * se if math.isfinite(se) else float("nan")
         out[h] = {
             "spread": spread,
             "se": se,
-            "t_stat": float(row["t_stat"]),
+            "t_stat": t_stat,
             "ci_low": spread - half,
             "ci_high": spread + half,
+            "finite": finite,
         }
     if not out:
         raise ValueError(
@@ -609,14 +615,22 @@ def _mktadj_spread_by_horizon(stats: dict) -> dict[int, dict]:
 
 
 def _mktadj_ic_by_horizon(stats: dict) -> dict[int, dict]:
-    """Return `{horizon: {'ic', 'n', 'p_value', 'ci_low', 'ci_high'}}` for
+    """Return `{horizon: {'ic', 'n', 'p_value', 'ci_low', 'ci_high', 'finite'}}` for
     `return_type == 'mktadj'` rows in `stats['spearman_ic']`. The 95% CI
     is derived from the sample size via a Fisher z-transform (rho ->
     atanh(rho); SE = 1/sqrt(n-3); CI = tanh(atanh(rho) +/- 1.96*SE)) --
     Slice 9's JSON reports the IC and its p_value but no CI, and the
     prompt's chart-3 spec calls for "95% CI or bands," so bands derived
     from n at the same 5% threshold the prose uses is the honest
-    construction."""
+    construction. The `finite` flag (round-1 finding #3) is False when
+    ic/p_value/n is NaN, inf, or the Fisher z-band was undefined --
+    callers that aggregate significance flags MUST check `finite`
+    before treating the row as evidence either way.
+
+    Slice 9's IC row `n` is expected to be the paired (surprise, return)
+    count used in the Spearman calculation; if a future Slice 9 change
+    makes `n` mean something else, the CI band's semantics silently
+    change too."""
     out: dict[int, dict] = {}
     for row in stats["spearman_ic"]:
         if row["return_type"] != "mktadj":
@@ -625,17 +639,24 @@ def _mktadj_ic_by_horizon(stats: dict) -> dict[int, dict]:
         ic = float(row["ic"])
         n = int(row["n"])
         p = float(row["p_value"])
-        if n <= 3 or abs(ic) >= 1.0:
+        finite = math.isfinite(ic) and math.isfinite(p)
+        if not finite or n <= 3 or abs(ic) >= 1.0:
             # Fisher z-transform is undefined at |rho| == 1 and needs n > 3.
             # A real PEAD sample never hits either; guard so the chart
-            # doesn't crash if a degenerate synthetic fixture does.
+            # doesn't crash if a degenerate synthetic fixture does. Also
+            # covers NaN ic (finding #3): NaN comparisons are False, so
+            # the earlier abs(ic) >= 1.0 check alone did not catch NaN.
             ci_low, ci_high = float("nan"), float("nan")
         else:
             z = math.atanh(ic)
             se_z = 1.0 / math.sqrt(n - 3)
             ci_low = math.tanh(z - _T_STAT_5PCT * se_z)
             ci_high = math.tanh(z + _T_STAT_5PCT * se_z)
-        out[h] = {"ic": ic, "n": n, "p_value": p, "ci_low": ci_low, "ci_high": ci_high}
+        out[h] = {
+            "ic": ic, "n": n, "p_value": p,
+            "ci_low": ci_low, "ci_high": ci_high,
+            "finite": finite,
+        }
     if not out:
         raise ValueError(
             "event_study_stats.json['spearman_ic'] has no return_type=='mktadj' rows; "
@@ -643,6 +664,39 @@ def _mktadj_ic_by_horizon(stats: dict) -> dict[int, dict]:
             "adjusted IC specifically and cannot be built without them."
         )
     return out
+
+
+def _assert_horizon_sets_agree(stats: dict) -> None:
+    """Round-1 finding #5: assert that the three mkt-adj source tables
+    this report's charts and Results section actually read (quantile_sort,
+    quantile_spread, spearman_ic) agree on which horizons they cover.
+    A silent mismatch would let one chart claim 'across 6 horizons' while
+    another claims 'across 5' -- a report-level inconsistency this check
+    prevents by failing loud at the top of build_final_event_study_report.
+
+    summary_stats is NOT included here: 10a validates its top-level
+    shape but neither the charts nor the Results-section prose read it,
+    so its per-horizon mkt-adj membership is not report-level load-
+    bearing (and cross-checking it here would over-constrain fixtures
+    that don't need to fill it in)."""
+    per_table: dict[str, set[int]] = {}
+    for key in ("quantile_sort", "quantile_spread", "spearman_ic"):
+        per_table[key] = {
+            int(row["horizon"])
+            for row in stats[key]
+            if row.get("return_type") == "mktadj"
+        }
+    baseline = per_table["quantile_sort"]
+    for key, horizons in per_table.items():
+        if horizons != baseline:
+            missing = baseline - horizons
+            extra = horizons - baseline
+            raise ValueError(
+                f"Mkt-adj horizon set in {key!r} ({sorted(horizons)}) does not "
+                f"match quantile_sort ({sorted(baseline)}); missing "
+                f"{sorted(missing)}, extra {sorted(extra)}. Regenerate Slice 9 "
+                f"so every table covers the same horizons before rebuilding this report."
+            )
 
 
 def _is_non_decreasing(values: list[float]) -> bool:
@@ -847,8 +901,18 @@ def _ic_by_horizon_caption(stats: dict) -> str:
 
     # Trajectory of the |IC| magnitude, first-to-last. Weak "grows" claim
     # is |IC[-1]| > |IC[0]|; equal magnitudes collapse to a flat branch.
+    # SIGN-FLIP guard (round-1 finding #4): if the sign flips between the
+    # first and last horizon (e.g. +IC at 1d, -IC at 60d), the magnitude
+    # story is misleading -- report the flip explicitly before any
+    # magnitude claim.
     m_first, m_last = abs(ics[0]), abs(ics[-1])
-    if m_last > m_first:
+    if ics[0] * ics[-1] < 0:
+        traj = (
+            f"the sign flips between endpoints, from {ics[0]:+.3f} at {horizons[0]}d "
+            f"to {ics[-1]:+.3f} at {horizons[-1]}d -- a reversal-shaped trajectory, "
+            f"not a monotone magnitude story"
+        )
+    elif m_last > m_first:
         traj = f"the magnitude grows from |IC|={m_first:.3f} at {horizons[0]}d to {m_last:.3f} at {horizons[-1]}d"
     elif m_last < m_first:
         traj = f"the magnitude shrinks from |IC|={m_first:.3f} at {horizons[0]}d to {m_last:.3f} at {horizons[-1]}d"
@@ -915,20 +979,29 @@ def _build_results_section(stats: dict) -> tuple[str, str]:
         non_dec = _is_non_decreasing(q_means)
         sp = by_sh[h]
         ic = by_ih[h]
+        # Round-1 finding #3: guard significance flags on the row's
+        # `finite` flag so a NaN spread/t-stat/ic/p-value from Slice 9
+        # gets classified 'unknown' rather than silently False (NaN
+        # comparisons return False, which would otherwise leak into
+        # 'not significant' aggregates.)
+        sp_finite = sp["finite"]
+        ic_finite = ic["finite"]
         per_h.append(
             {
                 "h": h,
                 "non_dec": non_dec,
                 "spread": sp["spread"],
                 "spread_t": sp["t_stat"],
-                "spread_sig_any": abs(sp["t_stat"]) > _T_STAT_5PCT,
-                "spread_sig_pos": sp["t_stat"] > _T_STAT_5PCT,
-                "spread_sig_neg": sp["t_stat"] < -_T_STAT_5PCT,
+                "sp_finite": sp_finite,
+                "ic_finite": ic_finite,
+                "spread_sig_any": sp_finite and abs(sp["t_stat"]) > _T_STAT_5PCT,
+                "spread_sig_pos": sp_finite and sp["t_stat"] > _T_STAT_5PCT,
+                "spread_sig_neg": sp_finite and sp["t_stat"] < -_T_STAT_5PCT,
                 "ic": ic["ic"],
                 "ic_p": ic["p_value"],
-                "ic_sig_any": ic["p_value"] < 0.05,
-                "ic_sig_pos": ic["p_value"] < 0.05 and ic["ic"] > 0,
-                "ic_sig_neg": ic["p_value"] < 0.05 and ic["ic"] < 0,
+                "ic_sig_any": ic_finite and ic["p_value"] < 0.05,
+                "ic_sig_pos": ic_finite and ic["p_value"] < 0.05 and ic["ic"] > 0,
+                "ic_sig_neg": ic_finite and ic["p_value"] < 0.05 and ic["ic"] < 0,
             }
         )
 
@@ -976,19 +1049,54 @@ def _build_results_section(stats: dict) -> tuple[str, str]:
             f"standard positive-PEAD hypothesis."
         )
     else:
-        n_all_three = sum(
+        # Data-directional summary (round-1 finding #1): the else branch
+        # is not automatically "partial positive PEAD" -- it depends on
+        # WHICH direction the significant signals point. Count both
+        # signs across horizons and phrase the sentence to match.
+        n_h = len(horizons)
+        n_sig_pos_spread = sum(1 for r in per_h if r["spread_sig_pos"])
+        n_sig_neg_spread = sum(1 for r in per_h if r["spread_sig_neg"])
+        n_sig_pos_ic = sum(1 for r in per_h if r["ic_sig_pos"])
+        n_sig_neg_ic = sum(1 for r in per_h if r["ic_sig_neg"])
+        n_non_dec = sum(1 for r in per_h if r["non_dec"])
+        n_all_three_pos = sum(
             1
             for r in per_h
             if r["non_dec"] and r["spread_sig_pos"] and r["ic_sig_pos"]
         )
+        # Decide the summary direction from the balance of significant
+        # signals, not from a hardcoded 'positive' fallback.
+        if n_sig_pos_spread > n_sig_neg_spread and n_sig_pos_ic >= n_sig_neg_ic:
+            direction_summary = (
+                f"the significant signals lean POSITIVE ({n_sig_pos_spread} of {n_h} "
+                f"horizons show sig-positive spreads, {n_sig_neg_spread} sig-negative; "
+                f"{n_sig_pos_ic} of {n_h} horizons show sig-positive ICs, {n_sig_neg_ic} "
+                f"sig-negative). The data supports a partial, horizon-dependent "
+                f"positive-PEAD signal but not a uniform one at every horizon"
+            )
+        elif n_sig_neg_spread > n_sig_pos_spread and n_sig_neg_ic >= n_sig_pos_ic:
+            direction_summary = (
+                f"the significant signals lean NEGATIVE ({n_sig_neg_spread} of {n_h} "
+                f"horizons show sig-negative spreads, {n_sig_pos_spread} sig-positive; "
+                f"{n_sig_neg_ic} of {n_h} horizons show sig-negative ICs, {n_sig_pos_ic} "
+                f"sig-positive). The data does NOT support the standard positive-PEAD "
+                f"hypothesis in this population; the reversal reading is closer to what "
+                f"the significant horizons show"
+            )
+        else:
+            direction_summary = (
+                f"the significant signals are directionally MIXED ({n_sig_pos_spread} of {n_h} "
+                f"horizons show sig-positive spreads, {n_sig_neg_spread} sig-negative; "
+                f"{n_sig_pos_ic} of {n_h} horizons show sig-positive ICs, {n_sig_neg_ic} "
+                f"sig-negative). The data does not support a single-direction PEAD "
+                f"reading at every horizon; the pattern is horizon-dependent in sign"
+            )
         conclusion = (
-            f"The picture is mixed: {n_all_three} of {len(horizons)} horizons "
+            f"The picture is mixed: {n_all_three_pos} of {n_h} horizons "
             f"clear all three positive-PEAD checks (non-decreasing sort, Q5-Q1 "
             f"spread significant and positive at 5%, IC significant and "
-            f"positive at 5%); the remaining {len(horizons) - n_all_three} "
-            f"fail at least one. The data supports a partial, horizon-"
-            f"dependent PEAD signal but not a uniform positive one at every "
-            f"horizon."
+            f"positive at 5%); {n_non_dec} of {n_h} horizons are non-decreasing. "
+            f"Overall {direction_summary}."
         )
 
     # Per-horizon line items. Formatted so grep-style substring assertions
@@ -1047,19 +1155,32 @@ def build_final_event_study_report(
     stats = load_stats(stats_path)
     scope = load_events_scope(events_path)
 
+    # Horizon-set consistency check (round-1 finding #5): every mkt-adj
+    # source table this report uses -- summary_stats, quantile_sort,
+    # quantile_spread, spearman_ic -- must agree on which horizons are
+    # present. A mismatch means Slice 9 reported a horizon in one table
+    # but not another, and any "across N horizons" claim in the prose
+    # would silently mean different Ns in different sentences.
+    _assert_horizon_sets_agree(stats)
+
     summary = _build_summary(stats, scope)
     sections = [
         _build_methodology_section(stats, scope, events_path),
         _build_results_section(stats),
         _build_limitations_section(stats),
     ]
-    charts = [
-        (_make_quintile_mean_chart(stats), _quintile_mean_caption(stats)),
-        (_make_q5_q1_spread_chart(stats), _q5_q1_spread_caption(stats)),
-        (_make_ic_by_horizon_chart(stats), _ic_by_horizon_caption(stats)),
-    ]
 
+    # Round-1 finding #7: build charts one at a time inside the try block
+    # (rather than as a list comprehension outside it), so a failure in a
+    # later chart still lets the finally-block close the earlier ones. A
+    # list-comprehension form would create earlier figures, then raise
+    # before they're bound to `charts`, leaking them into pyplot's global
+    # figure manager.
+    charts: list[tuple[matplotlib.figure.Figure, str]] = []
     try:
+        charts.append((_make_quintile_mean_chart(stats), _quintile_mean_caption(stats)))
+        charts.append((_make_q5_q1_spread_chart(stats), _q5_q1_spread_caption(stats)))
+        charts.append((_make_ic_by_horizon_chart(stats), _ic_by_horizon_caption(stats)))
         return report_builder.build_pdf_report(
             title="Event Study Result: Does Post-Earnings-Announcement Drift Show Up?",
             output_path=output_path,

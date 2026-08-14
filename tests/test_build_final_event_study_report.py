@@ -692,7 +692,7 @@ def test_results_section_mixed_branch_when_only_one_horizon_passes_all():
             row["mean"] = -0.05  # Q5 well below Q4, breaks non-decreasing
     _, body = report._build_results_section(stats)
     assert "picture is mixed: 1 of 2 horizons" in body
-    assert "partial, horizon-dependent PEAD signal" in body
+    assert "partial, horizon-dependent positive-PEAD signal" in body
     assert "supports a positive PEAD monotonicity signal at every horizon" not in body
 
 
