@@ -166,7 +166,11 @@ def _detect_non_positive_ask(df: pd.DataFrame) -> pd.Series:
 
 
 def _detect_non_standard_multiplier(df: pd.DataFrame) -> pd.Series:
-    return df["multiplier"] != STANDARD_MULTIPLIER
+    # Guard against NaN even though canonical schema declares multiplier
+    # as non-nullable -- if a future caller runs the QG on a partially-
+    # loaded frame, NaN != 100 would True-quarantine the row on a
+    # missing-data condition rather than on the actual rule.
+    return df["multiplier"].notna() & (df["multiplier"] != STANDARD_MULTIPLIER)
 
 
 def _detect_impossible_dte(df: pd.DataFrame) -> pd.Series:
@@ -222,23 +226,35 @@ def _detect_stale_quote_prev_day(df: pd.DataFrame) -> pd.Series:
     Uses a per-``option_id`` shift by one row after sorting by date.
     Requires >= 2 observations of the same contract to fire; a
     contract's first-ever observation is never flagged.
+
+    Uses positional (``.iloc``) alignment rather than index reindexing
+    so a caller passing a DataFrame with a non-unique ``df.index`` gets
+    correct results instead of silent row misalignment.
     """
-    if len(df) == 0:
+    n = len(df)
+    if n == 0:
         return pd.Series(False, index=df.index, dtype=bool)
-    # Sort once, use the original index to align the result back.
-    sorted_df = df.sort_values(["option_id", "date"], kind="stable")
+    # Positional sort key: sort_position[i] tells us where original row
+    # i ended up in the sorted view. Then flag_sorted at that position
+    # is the flag for row i.
+    order = df[["option_id", "date"]].reset_index(drop=True).sort_values(
+        ["option_id", "date"], kind="stable"
+    ).index.to_numpy()
+    sorted_df = df.iloc[order].reset_index(drop=True)
     prev_bid = sorted_df.groupby("option_id")["bid"].shift(1)
     prev_ask = sorted_df.groupby("option_id")["ask"].shift(1)
-    flag = (
+    flag_sorted = (
         sorted_df["bid"].notna()
         & sorted_df["ask"].notna()
         & prev_bid.notna()
         & prev_ask.notna()
         & (sorted_df["bid"] == prev_bid)
         & (sorted_df["ask"] == prev_ask)
-    )
-    # Reindex to the input df's row order.
-    return flag.reindex(df.index).fillna(False).astype(bool)
+    ).to_numpy()
+    # Undo the sort: put flag_sorted[k] back at original row order[k].
+    result = np.zeros(n, dtype=bool)
+    result[order] = flag_sorted
+    return pd.Series(result, index=df.index)
 
 
 # --- Rule registry ---------------------------------------------------
@@ -289,13 +305,22 @@ def run_quality_gate(
     """
     active_rules = list(rules) if rules is not None else list(QUALITY_RULES)
 
+    # Cross-row rules (Q009 duplicate detection, Q102 stale quotes) do
+    # positional row operations that misalign if the caller passes a
+    # frame with a non-unique index. Fail loudly here rather than
+    # silently mis-flag downstream.
+    if not df.index.is_unique:
+        raise ValueError(
+            "run_quality_gate requires df.index to be unique; got duplicate "
+            "index labels. Call df.reset_index(drop=True) before invoking."
+        )
+
     if len(df) == 0:
-        empty = df.copy()
-        empty["quarantine_reasons"] = pd.Series([], dtype="object")
+        empty_reasons = pd.Series([], dtype="object")
         return QualityGateResult(
-            clean=df.copy().assign(quarantine_reasons=pd.Series([], dtype="object")),
-            quarantine=empty,
-            warnings=empty,
+            clean=df.copy().assign(quarantine_reasons=empty_reasons),
+            quarantine=df.copy().assign(quarantine_reasons=empty_reasons),
+            warnings=df.copy().assign(warning_reasons=empty_reasons),
             counts={rule.code: 0 for rule in active_rules},
         )
 

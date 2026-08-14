@@ -299,3 +299,23 @@ class TestEmptyInput:
         # Every rule reports 0 flagged.
         for rule in qg.QUALITY_RULES:
             assert result.counts[rule.code] == 0
+
+    def test_empty_warnings_has_warning_reasons_column(self):
+        # Round-1 review fix: the empty branch used to give `warnings`
+        # a `quarantine_reasons` column instead of `warning_reasons`,
+        # silently breaking any caller that accessed the wrong name.
+        df = _frame().iloc[0:0]
+        result = qg.run_quality_gate(df)
+        assert "warning_reasons" in result.warnings.columns
+        assert "quarantine_reasons" not in result.warnings.columns
+
+
+class TestIndexUniqueness:
+    def test_non_unique_index_rejected(self):
+        # Round-1 review fix: cross-row rules (Q009, Q102) do positional
+        # ops that silently misalign under a duplicated index. Enforce
+        # the precondition at entry rather than mis-flag downstream.
+        df = _frame(_row(option_id=1), _row(option_id=2))
+        df.index = [0, 0]  # deliberately duplicate
+        with pytest.raises(ValueError, match="unique"):
+            qg.run_quality_gate(df)
