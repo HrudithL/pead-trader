@@ -353,7 +353,11 @@ def _make_data_quality_chart(df: pd.DataFrame) -> plt.Figure:
     # Headroom above 100 so the tall bar's "n=" label (fix 13) doesn't
     # visually crowd the plot's top border.
     ax_left.set_ylim(0, 108)
-    ax_left.set_title("Almost all announcements\nhad no basis question")
+    # Title derived from the same `pct_no_question` count that drove the
+    # left bar, so a rerun that produces a substantial basis-question
+    # share no longer leaves the chart's own title contradicting its
+    # bars.
+    ax_left.set_title(f"{pct_no_question:.1f}% of announcements\nhad no basis question")
     ax_left.tick_params(axis="x", labelsize=8)
 
     right_colors = [
@@ -412,8 +416,27 @@ def build_earnings_data_report(
     pct_identifier_ambiguous = 100.0 * df["identifier_ambiguous"].fillna(False).sum() / n_events
 
     n_lookahead_excluded = int(df["n_lookahead_excluded"].sum())
-    median_staleness = df["consensus_staleness_days"].median()
-    max_staleness = df["consensus_staleness_days"].max()
+    # Guard the staleness stats: median()/max() over an all-null column
+    # return NaN, which would render as literal "nan days" in the section-2
+    # prose; the sentence is dropped entirely when there is no non-null
+    # value to summarize.
+    has_staleness = bool(df["consensus_staleness_days"].notna().any())
+    if has_staleness:
+        median_staleness = df["consensus_staleness_days"].median()
+        max_staleness = df["consensus_staleness_days"].max()
+        staleness_clause = (
+            " But publishing beforehand is not the same as being fresh: a matched estimate "
+            f"can still be old, with a median gap of {median_staleness:.0f} days between "
+            f"the estimate and the announcement, running as high as {max_staleness:,.0f} "
+            "days for late or restated results. That gap (`consensus_staleness_days`) is "
+            "recorded on every row with a matched estimate, not filtered on -- whether to "
+            "require a fresher estimate for some later analysis is left to a later slice."
+        )
+    else:
+        staleness_clause = (
+            " No non-null consensus staleness values are present in this sample, so the "
+            "estimate-to-announcement gap cannot be summarized here."
+        )
 
     # eps_basis_status breakdown -- single-sourced (fix for the finding-1
     # bug class: the caption and this prose used to each compute their own
@@ -474,6 +497,51 @@ def build_earnings_data_report(
     excluded_pct_seasonal = dist_stats["excluded_pct_seasonal"]
     lo, hi = _SUE_DISPLAY_RANGE
 
+    # Analyst-tail asymmetry: gated on the actual magnitudes so a future
+    # rerun that flips the asymmetry direction (or produces roughly-equal
+    # tails) doesn't leave the prose contradicting the numbers it just
+    # printed.
+    if abs(low_tail_analyst) > abs(high_tail_analyst):
+        analyst_tail_asymmetry_clause = (
+            "the negative tail reaches further from zero than the positive one"
+        )
+    elif abs(high_tail_analyst) > abs(low_tail_analyst):
+        analyst_tail_asymmetry_clause = (
+            "the positive tail reaches further from zero than the negative one"
+        )
+    else:
+        analyst_tail_asymmetry_clause = (
+            "the two tails reach roughly the same distance from zero"
+        )
+
+    # Chart 1's "share with neither" trajectory + up-year count, derived
+    # rather than hand-written (finding 4): a rerun that produces a
+    # monotonically-falling `none_share` shouldn't leave the caption
+    # claiming there are up-years, and a rerun where the min IS the first
+    # year shouldn't be phrased as "falls from X to a low of X."
+    n_up_years = int((none_share.diff() > 0).sum())
+    if year_none_min == year_first:
+        none_trajectory = (
+            f"The share with neither measure (red) is already at its lowest, "
+            f"{pct_none_first:.1f}%, in {year_first}"
+        )
+    elif pct_none_min < pct_none_first:
+        none_trajectory = (
+            f"The share with neither measure (red) falls from {pct_none_first:.1f}% in "
+            f"{year_first} to a low of {pct_none_min:.1f}% in {year_none_min}"
+        )
+    else:
+        none_trajectory = (
+            f"The share with neither measure (red) starts at {pct_none_first:.1f}% in "
+            f"{year_first} and reaches its minimum of {pct_none_min:.1f}% in {year_none_min}"
+        )
+    if n_up_years == 0:
+        none_up_qualifier = ", with no up-years along the way."
+    elif n_up_years == 1:
+        none_up_qualifier = ", with one up-year along the way."
+    else:
+        none_up_qualifier = f", with {n_up_years} up-years along the way."
+
     sections = [
         (
             "What an \"earnings surprise\" is",
@@ -504,15 +572,8 @@ def build_earnings_data_report(
             "average across many analysts) were found to have been "
             "published on or after the announcement date and were excluded "
             "for exactly this reason -- an expected, mechanical filter, not "
-            "a data error. But publishing beforehand is not the same as "
-            "being fresh: a matched estimate can still be old, with a "
-            f"median gap of {median_staleness:.0f} days between the "
-            f"estimate and the announcement, running as high as "
-            f"{max_staleness:,.0f} days for late or restated results. That "
-            "gap (`consensus_staleness_days`) is recorded on every row with "
-            "a matched estimate, not filtered on -- whether to require a "
-            "fresher estimate for some later analysis is left to a later "
-            "slice.",
+            "a data error."
+            + staleness_clause,
         ),
         (
             "Two ways to measure a surprise",
@@ -543,11 +604,11 @@ def build_earnings_data_report(
             "Chart 1, at the end of this report, shows, for each "
             "announcement year, what share of that year's earnings reports "
             "got a real analyst-based surprise, what share fell back to "
-            "the mechanical measure, and what share had neither. Analyst "
-            "coverage is thinner in the earliest years of the sample, stays "
-            "roughly flat (with a dip) through the late 1990s and early "
-            "2000s, and then rises through the later 2000s and 2010s as "
-            "more companies gained regular analyst coverage. The very "
+            "the mechanical measure, and what share had neither. The "
+            "shape year-to-year is what the chart shows; the exact "
+            "trajectory (starts, peaks, and end shares) is quoted in "
+            "Chart 1's own caption rather than in a hand-written summary "
+            "here that could drift under a rerun. The very "
             f"start ({start_date[:4]}-{int(start_date[:4]) + 1}) and very "
             f"end ({end_date[:4]}) of the window are both visibly thinner "
             "than the interior years: the second year sits at the edge of "
@@ -573,9 +634,9 @@ def build_earnings_data_report(
             f"against analyst expectations, the median surprise is "
             f"{median_analyst:+.2f}, and the most extreme 0.1% of "
             f"announcements reach as low as {low_tail_analyst:.1f} on the "
-            f"downside versus only {high_tail_analyst:.1f} on the upside -- "
-            "the negative tail reaches further from zero than the positive "
-            f"one, though the two tails carry equal probability mass by "
+            f"downside and {high_tail_analyst:.1f} on the upside -- "
+            + analyst_tail_asymmetry_clause
+            + ", though the two tails carry equal probability mass by "
             f"construction (each is a 0.1% cutoff). Against the mechanical "
             f"seasonal benchmark, the median surprise is "
             f"{median_seasonal:+.2f}, with its own most-extreme 0.1% "
@@ -659,11 +720,10 @@ def build_earnings_data_report(
             f"peaks at {pct_analyst_max:.1f}% in {year_max}, and ends the "
             f"sample at {pct_analyst_last:.1f}% in {year_last} (see the "
             "pull-cutoff edge effect noted above for that final year). The "
-            "mechanical fallback (purple) fills much of the remaining gap "
-            f"in most years. The share with neither measure (red) falls "
-            f"from {pct_none_first:.1f}% in {year_first} to a low of "
-            f"{pct_none_min:.1f}% in {year_none_min}, though not without "
-            "some up-years along the way.",
+            "mechanical fallback (purple) fills part of the remaining gap; "
+            "its exact share by year is what the purple bars show. "
+            + none_trajectory
+            + none_up_qualifier,
         ),
         (
             distribution_fig,

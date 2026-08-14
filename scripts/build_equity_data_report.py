@@ -1046,10 +1046,22 @@ def _format_crossval_caption(stats: dict, window_start, window_end, n_plotted: i
                 "overlapping days to judge either way"
             )
         if reason_bits:
-            caption += "Setting aside " + "; and ".join(reason_bits) + ", agreement rises "
+            # Direction of the post-quarantine change gated on the actual
+            # numbers (class-sweep per §7): quarantining problematic
+            # segments is *expected* to raise agreement, but a rerun in
+            # which the quarantined rows happened to already agree well
+            # would produce a fall or a wash, and the sentence must not
+            # then contradict its own numbers on the same line.
+            if corr_post > corr_pre:
+                direction_clause = "agreement rises to"
+            elif corr_post < corr_pre:
+                direction_clause = "agreement falls to"
+            else:
+                direction_clause = "agreement holds at"
+            caption += "Setting aside " + "; and ".join(reason_bits) + f", {direction_clause} "
         else:
-            caption += "Among the retained segments, agreement is "
-        caption += f"to a correlation of {corr_post:.4f} and {frac_post:.2%} within 1 percentage point."
+            caption += "Among the retained segments, agreement stands at "
+        caption += f"a correlation of {corr_post:.4f} and {frac_post:.2%} within 1 percentage point."
     return caption
 
 
@@ -1095,7 +1107,7 @@ def _format_split_caption(window_df: pd.DataFrame, ticker: str, split_date: str)
     direction = "fell" if naive_pct < 0 else "rose"
     shape = "crash" if naive_pct < 0 else "spike"
     price_move = (
-        f"{ticker}'s actual traded price {direction} {abs(naive_pct):.2%} overnight on "
+        f"{ticker}'s actual traded price {direction} {abs(naive_pct):.2%} on "
         f"{split_ts.date()} (from ${prev_price:.2f} to ${split_price:.2f})"
     )
     if pd.isna(actual_ret):
