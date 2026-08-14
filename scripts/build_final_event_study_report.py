@@ -428,21 +428,18 @@ def _build_limitations_section(stats: dict) -> tuple[str, str]:
                 "reported by this stats build)"
             )
         population_gap_clause = (
-            f"The per-horizon summary-statistics table (in the Results section, "
-            f"sub-slice 10b) runs on the full {n_day0_ok:,}-event day-0-ok "
-            f"population, while the quintile sort and the Spearman IC further "
-            f"below run on the {n_sue_available:,}-event subset with a non-null "
-            f"surprise -- a difference of {gap:,} events{gap_source_clause}. "
-            f"Any comparison of \"the mean at "
-            f"horizon h\" from one table with \"the Q5-Q1 spread at horizon h\" "
-            f"from the other implicitly conditions on that missing subset."
+            f"The Results section's per-horizon lines above report the Q5-Q1 spread "
+            f"and Spearman IC on the {n_sue_available:,}-event subset with a non-null "
+            f"surprise -- a {gap:,}-event difference from the {n_day0_ok:,}-event "
+            f"day-0-ok population{gap_source_clause}. Any per-horizon Q5-Q1 spread "
+            f"or IC number in this report should therefore be read as a claim about "
+            f"the ranked subset, not the full day-0-ok population."
         )
     else:
         population_gap_clause = (
-            f"The per-horizon summary-statistics table, the quintile sort, and "
-            f"the Spearman IC all run on the same {n_day0_ok:,}-event "
-            f"population; no subsetting to a rankable-surprise slice was needed "
-            f"in this run."
+            f"The Results section's per-horizon lines above run on the same "
+            f"{n_day0_ok:,}-event day-0-ok population as the full sample; no "
+            f"subsetting to a rankable-surprise slice was needed in this run."
         )
 
     # Duplicate-and-contested clause: gated on whether the stats build even
@@ -523,14 +520,14 @@ def _build_limitations_section(stats: dict) -> tuple[str, str]:
         "documentation."
         "\n\n"
         "Quintile-mean Spearman rho is descriptive, not inferential. The "
-        "quintile-index-vs-quintile-mean-return Spearman rho reported alongside "
-        "the quintile sort (in sub-slice 10b) is computed over only 5 quintile "
-        "means and, more fundamentally, those 5 means are not 5 independent "
-        "draws -- so no p-value is reported next to it, and its value should "
-        "be read as a compact summary of monotonicity, not a significance test. "
-        "The real inferential test for a monotone relationship in this report "
-        "is the pooled per-event Spearman information coefficient (also in "
-        "sub-slice 10b), which uses the full ranked-event sample."
+        "Results section's per-horizon lines above report a pooled per-event "
+        "Spearman information coefficient (IC) with a real p-value -- that is "
+        "the actual inferential test for a monotone relationship in this report, "
+        "and it uses the full ranked-event sample. A separate quintile-index-"
+        "vs-quintile-mean-return correlation (over 5 quintile means only) is a "
+        "convenient descriptive summary of monotonicity, but 5 quintile means "
+        "are not 5 independent draws, so it is not treated as a significance "
+        "test and no p-value is attached to it anywhere in this report."
         "\n\n"
         "Point-in-time is fixed for the specific bug it fixed, not everything. "
         "The ranked surprise (`sue_rank_pct`) is grouped by announcement "

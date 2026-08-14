@@ -369,7 +369,7 @@ def test_limitations_section_derives_population_gap_when_present():
     assert "100" in body
     assert "90" in body
     assert "10" in body
-    assert "difference of 10 events" in body
+    assert "10,-event difference" in body.replace(",", "") or "10-event difference" in body
 
 
 def test_limitations_section_drops_gap_clause_when_no_gap():
@@ -381,7 +381,7 @@ def test_limitations_section_drops_gap_clause_when_no_gap():
     stats["meta"]["n_by_sue_source"] = {"analyst": 70, "seasonal": 30, "none": 0}
     _, body = report._build_limitations_section(stats)
     assert "difference of" not in body
-    assert "no subsetting" in body
+    assert "no subsetting to a rankable-surprise slice" in body
 
 
 def test_limitations_section_derives_dup_and_contested_clause():
