@@ -142,8 +142,8 @@ main
   - **Feature-on-feature stacks.** If feature B naturally builds on feature A's output, it is fine for B to branch off A and PR into A, rather than waiting for A to reach root first. When A merges up, B retargets.
   - **Cross-branch small PRs.** A tiny fix relevant to work on a sibling branch can be cut as its own sub-branch off the sibling and PR'd into it, rather than duplicating the change or waiting for a merge-up.
 
-  The rule is only this: every branch has exactly one parent branch it merges up into, that parent is a branch (never `main`), and the chain terminates at the root. What the intermediate shape looks like — flat fan, deep stack, mixed — is whatever keeps each PR small and each merge clean.
-- **Naming when stacking.** Three-level nesting (`feat/<spec>/<feature>/<slice>`) does not work once `feat/<spec>/<feature>` already exists as a pushed ref — git cannot nest a ref under an existing leaf ref. Use a flattened form for sub-branches: `feat/<spec>/<feature>-<slice>` (e.g. `feat/phase1-equity-pead/audit-reports-equity-data-report`).
+  The rule is only this: every *non-root* branch has exactly one parent branch it merges up into, that parent is a branch (never `main`), and the chain terminates at the root; root itself is the one branch permitted to merge to `main`. What the intermediate shape looks like — flat fan, deep stack, mixed — is whatever keeps each PR small and each merge clean.
+- **Naming when stacking.** Three-level nesting (`feat/<spec>/<feature>/<slice>`) does not work once `feat/<spec>/<feature>` already exists as a pushed ref — git cannot nest a ref under an existing leaf ref. Use a flattened form for sub-branches: `feat/<spec>/<feature>-<slice>` (e.g. `feat/phase1-equity-pead/audit-reports-equity-data-report`). For a stacked sub-of-sub, append the further slug to the parent sub-branch's full name: e.g. B stacked on A becomes `feat/<spec>/<feature>-<slice-a>-<slice-b>` (e.g. `feat/phase1-equity-pead/audit-reports-equity-data-report-fix-header`) — same principle, one more hyphen, still flat.
 
 ---
 
@@ -242,14 +242,15 @@ same PR — that is the "PR is too big or too complex for this loop to converge 
 reviewing this PR and reshape the work instead.** See "When to stop reviewing" below for the
 specifics, but the two default responses are: (a) *split-and-ship* — extract the parts of the diff
 that ARE now cleanly reviewable into a smaller PR that will pass a fresh 2-round pass, merge that,
-and reopen the remainder as one or more new small PRs stacked on top (this is the one case where the
-extracted sub-branch's PR targets its parent's parent, not the current stuck branch — the current
-branch is precisely what's not merging); or (b) *simplify-in-place* — cut the elaborate section the
-review keeps flagging rather than patching it again. The point of not-adding-more-rounds is not to
-force-merge unreviewed code; it is to force the work to be resized so the review can actually
-finish. A finding that repeats a pattern from an earlier round still gets fixed as a *class* within
-its round (not chased instance-by-instance across further rounds) — that rule is independent of the
-round-count guidance.
+and reopen the remainder as one or more new small PRs stacked on top (the extracted PR targets the
+current branch's parent, not the current branch itself — the current branch is precisely what's not
+merging — and its diff is *only* the reviewable subset, not the whole stuck diff; see "When to stop
+reviewing" for the concrete git mechanics, since naive branching does not produce that shape); or
+(b) *simplify-in-place* — cut the elaborate section the review keeps flagging rather than patching
+it again. The point of not-adding-more-rounds is not to force-merge unreviewed code; it is to force
+the work to be resized so the review can actually finish. A finding that repeats a pattern from an
+earlier round still gets fixed as a *class* within its round (not chased instance-by-instance across
+further rounds) — that rule is independent of the round-count guidance.
 
 **If external Codex review is ever reactivated for this project,** per
 [§2](#2-model-assignment-mandatory) it MUST be pinned to the **`gpt-5.6-terra`** tier — via the
@@ -363,14 +364,26 @@ After round 1, fix what's real. After round 2, look honestly at what the report 
   Pick one of two responses, whichever fits:
 
   1. **Split-and-ship (default).** Keep the fixes made so far on the branch. Extract the parts of
-     the diff that ARE now cleanly reviewable into a smaller PR — cut a new sub-branch off the
-     current one, move the reviewable subset there, PR it into the *current branch's parent* (i.e.
-     retarget past the stuck branch, unlike the pre-planned stacked-sub-branches pattern in
-     [§4](#4-phase-2--the-branch-tree) where B PRs into A; here the current branch is precisely the
-     one that isn't merging, so the extracted PR skips it), run a fresh 2-round review that actually
-     converges on that smaller scope, and merge. Reopen the remainder as one or more new small PRs
-     stacked on top. The original larger PR either becomes empty (close it) or is itself reshaped
-     down to what's left.
+     the diff that ARE now cleanly reviewable into a smaller PR. **How to actually do the extraction
+     matters — the naive `git branch new-branch` off the stuck branch's HEAD does NOT extract
+     anything, it carries the entire stuck diff onto the new branch.** Two workable shapes, either
+     is fine:
+
+     - *Cut off the parent and cherry-pick the reviewable commits over:* `git switch -c
+       <extracted> <current-branch's-parent>`, then `git cherry-pick` (or `git checkout <stuck> --
+       <files>`) the specific commits/paths that make up the reviewable subset. Open the PR from
+       `<extracted>` into the parent. The stuck branch stays put; the extracted PR carries only
+       what you moved over.
+     - *Cut off the stuck branch's HEAD and then reset/rebase interactively down to just the
+       reviewable subset:* `git switch -c <extracted>` off the stuck branch, then `git rebase -i`
+       (drop everything except the reviewable commits) or `git reset --mixed <parent>` and
+       re-stage/re-commit only the reviewable hunks. Open the PR from `<extracted>` into the
+       parent.
+
+     Either way, the extracted PR's diff against the parent is *only* the reviewable subset, never
+     the whole stuck diff. Run a fresh 2-round review that actually converges on that smaller
+     scope, and merge. Reopen the remainder as one or more new small PRs stacked on top. The
+     original larger PR either becomes empty (close it) or is itself reshaped down to what's left.
   2. **Simplify-in-place.** If the recurring finding points at a section that is elaborate for what
      it does, cut the elaborate section rather than patching it again — fewer report claims, a
      narrower feature, a plainer implementation that has less surface for the class of bug. Note the
