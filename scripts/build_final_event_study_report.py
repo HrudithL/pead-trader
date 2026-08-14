@@ -113,6 +113,26 @@ def load_stats(path: Path = DEFAULT_INPUT_STATS) -> dict:
                 f"source {source!r}."
             )
 
+    # Array-shape checks: the four per-horizon/per-quintile arrays must be
+    # non-empty lists whose rows carry a `horizon` key. Anything else
+    # (empty list, missing horizon per row) would only surface later as a
+    # cryptic KeyError deep inside a prose helper -- fail fast here with a
+    # message that names the actual malformed field.
+    for key in ("summary_stats", "quantile_sort", "quantile_spread", "spearman_ic"):
+        rows = stats[key]
+        if not isinstance(rows, list) or len(rows) == 0:
+            raise ValueError(
+                f"event_study_stats.json[{key!r}] must be a non-empty list; "
+                f"got {type(rows).__name__} of length "
+                f"{len(rows) if hasattr(rows, '__len__') else 'unknown'}."
+            )
+        for i, row in enumerate(rows):
+            if not isinstance(row, dict) or "horizon" not in row:
+                raise ValueError(
+                    f"event_study_stats.json[{key!r}][{i}] is missing the "
+                    f"'horizon' key (rows must carry the horizon they describe)."
+                )
+
     return stats
 
 
@@ -162,7 +182,14 @@ def _build_summary(stats: dict, scope: dict) -> str:
     n_day0_ok = int(meta["n_day0_ok"])
     horizons = list(meta["horizons"])
     n_sue_available = int(meta["n_sue_available"])
-    n_ic_horizons = len({row["horizon"] for row in stats["spearman_ic"]})
+    ic_horizons = sorted({int(row["horizon"]) for row in stats["spearman_ic"]})
+    if ic_horizons == sorted(int(h) for h in horizons):
+        ic_coverage_clause = f"at all {len(ic_horizons)} of those horizons"
+    else:
+        ic_coverage_clause = (
+            f"at {len(ic_horizons)} of those {len(horizons)} horizons "
+            f"({', '.join(f'+{h}d' for h in ic_horizons)})"
+        )
 
     # Sanity: the events-file day0-ok count must match the stats meta's
     # n_day0_ok. A mismatch means one of the two upstream files has drifted
@@ -184,8 +211,7 @@ def _build_summary(stats: dict, scope: dict) -> str:
         f"both raw and market-adjusted form. A rank-normalized earnings-surprise "
         f"measure -- available for the {n_sue_available:,}-event subset with a "
         f"non-null surprise -- is used for the quintile sort and the per-event "
-        f"Spearman information coefficients that follow, across all {n_ic_horizons} "
-        f"horizons above."
+        f"Spearman information coefficients that follow, {ic_coverage_clause}."
     )
 
 
@@ -217,13 +243,27 @@ def _build_methodology_section(stats: dict, scope: dict) -> tuple[str, str]:
         ratio = max(sd_analyst, sd_seasonal) / min(sd_analyst, sd_seasonal)
         if sd_analyst > sd_seasonal:
             wider, narrower = "analyst", "seasonal"
-        else:
+            scale_clause = (
+                f"the {wider}-benchmarked surprise has sample sd {max(sd_analyst, sd_seasonal):.3f} "
+                f"and the {narrower}-benchmarked surprise sd {min(sd_analyst, sd_seasonal):.3f}, "
+                f"a {ratio:.2f}x dispersion gap"
+            )
+        elif sd_seasonal > sd_analyst:
             wider, narrower = "seasonal", "analyst"
-        scale_clause = (
-            f"the {wider}-benchmarked surprise has sample sd {max(sd_analyst, sd_seasonal):.3f} "
-            f"and the {narrower}-benchmarked surprise sd {min(sd_analyst, sd_seasonal):.3f}, "
-            f"a {ratio:.2f}x dispersion gap"
-        )
+            scale_clause = (
+                f"the {wider}-benchmarked surprise has sample sd {max(sd_analyst, sd_seasonal):.3f} "
+                f"and the {narrower}-benchmarked surprise sd {min(sd_analyst, sd_seasonal):.3f}, "
+                f"a {ratio:.2f}x dispersion gap"
+            )
+        else:
+            # Equal sds (exact tie -- rare on real data, but a hardcoded
+            # "wider is X" claim here would falsely imply a 1.00x gap that
+            # isn't there. Print the two numbers without a direction word.
+            scale_clause = (
+                f"both the analyst-benchmarked and the seasonal-benchmarked surprises "
+                f"have the same sample sd {sd_analyst:.3f}, so there is no dispersion "
+                f"gap between them in this run"
+            )
     else:
         # Defensive: a zero sd on either side would make the ratio
         # undefined; the sentence is dropped in that (implausible) case
@@ -237,6 +277,15 @@ def _build_methodology_section(stats: dict, scope: dict) -> tuple[str, str]:
     n_cells = int(rank_cells["n_cells"])
     median_cell = float(rank_cells["median_cell_size"])
     min_cell = int(rank_cells["min_cell_size"])
+
+    # Illustrative years for the point-in-time example: derive from the
+    # actual data range so the sentence still reads correctly when the
+    # window shifts. mid_year is a within-window example year that the
+    # rank cell would have been drawn from; first/last are the endpoints
+    # of the fixed look-ahead bug the sentence describes.
+    first_year = int(scope["start_date"][:4])
+    last_year = int(scope["end_date"][:4])
+    mid_year = first_year + (last_year - first_year) // 2
 
     body = (
         "The dataset. This report is computed on the event table at "
@@ -287,20 +336,21 @@ def _build_methodology_section(stats: dict, scope: dict) -> tuple[str, str]:
         "Point-in-time discipline. `sue_rank_pct` is ranked within each "
         "(source, announcement calendar-quarter) group, so no event's rank "
         "depends on the surprise distribution of a later period -- an event "
-        "announced in, say, 2004Q1 only ranks against other 2004Q1 events "
-        "from the same source, never against events from 2013. The forward-"
+        f"announced in, say, {mid_year}Q1 only ranks against other {mid_year}Q1 events "
+        f"from the same source, never against events from {last_year} or any "
+        "other later quarter. The forward-"
         "return computation is strictly forward from day 0 regardless of how "
         "the permno was resolved, and any missing daily return inside a "
         "window nulls that horizon rather than being silently treated as 0%. "
         "This is not a full look-ahead audit (see Limitations for what the "
         "remaining known simplifications are), but it does fix the specific "
-        "look-ahead bug an earlier version of this rank had, where a 1996 "
-        "event's quintile depended on 2013 data."
+        f"look-ahead bug an earlier version of this rank had, where a {first_year} "
+        f"event's quintile depended on {last_year} data."
     )
     return ("Data and methodology", body)
 
 
-def _build_limitations_section(stats: dict, scope: dict) -> tuple[str, str]:
+def _build_limitations_section(stats: dict) -> tuple[str, str]:
     """The 'Limitations' section (heading, body). A plain-language, honest
     statement of exactly what this pilot's numbers do NOT support -- every
     limitation named here is one Slice 9's own FINDINGS.md or upstream
@@ -311,8 +361,13 @@ def _build_limitations_section(stats: dict, scope: dict) -> tuple[str, str]:
     n_sue_available = int(meta["n_sue_available"])
     n_by_source = meta["n_by_sue_source"]
     n_none = int(n_by_source.get("none", 0))
-    n_permno_contested = int(meta.get("n_permno_contested", 0))
-    n_duplicate_firm_day_rows = int(meta.get("n_duplicate_firm_day_rows", 0))
+    # These two are optional in the JSON schema (see load_stats). Missing
+    # keys are NOT the same as zero -- a stats build that didn't compute
+    # them shouldn't get the "unusually clean state" false-negative.
+    has_permno_contested = "n_permno_contested" in meta
+    has_duplicate_firm_day = "n_duplicate_firm_day_rows" in meta
+    n_permno_contested = int(meta["n_permno_contested"]) if has_permno_contested else 0
+    n_duplicate_firm_day_rows = int(meta["n_duplicate_firm_day_rows"]) if has_duplicate_firm_day else 0
 
     # Ranked-subset gap: derived, not hardcoded, and gated on the numbers
     # actually differing. If a future rerun somehow eliminated the gap
@@ -339,11 +394,19 @@ def _build_limitations_section(stats: dict, scope: dict) -> tuple[str, str]:
             f"in this run."
         )
 
-    # Duplicate-and-contested clause: gated on the actual counts, so a
-    # rerun that fully dedupes contested permnos or duplicate firm-days
-    # (e.g. an upstream fix in Slice 8) doesn't leave the prose asserting
-    # gaps that no longer exist.
-    if n_duplicate_firm_day_rows > 0 or n_permno_contested > 0:
+    # Duplicate-and-contested clause: gated on whether the stats build even
+    # reported these counts, not just on the counts themselves -- a schema
+    # drift that omits the keys should not silently print the "unusually
+    # clean" branch (finding 1).
+    if not (has_permno_contested and has_duplicate_firm_day):
+        dup_clause = (
+            "Non-independence: this stats build did not report the duplicate-"
+            "firm-day and contested-permno counts, so this report cannot state "
+            "how much of the ranked sample is strictly independent. Older "
+            "builds on this pull found a small share on both counts; treat "
+            "the i.i.d. standard errors above accordingly."
+        )
+    elif n_duplicate_firm_day_rows > 0 or n_permno_contested > 0:
         dup_pct = 100.0 * n_duplicate_firm_day_rows / n_day0_ok if n_day0_ok > 0 else 0.0
         contested_pct = 100.0 * n_permno_contested / n_day0_ok if n_day0_ok > 0 else 0.0
         dup_clause = (
@@ -386,9 +449,10 @@ def _build_limitations_section(stats: dict, scope: dict) -> tuple[str, str]:
         "series simply ends -- CRSP's `dsedelist` delisting-return series is "
         "not merged into the return panel this report is built on. The "
         "longer-horizon numbers implicitly condition on survival to the horizon "
-        "end, and the upstream event-table audit already shows that attrited "
-        "events had a lower average earnings surprise than retained ones -- "
-        "so this conditioning is somewhat non-random."
+        "end. Whether attrited events differ systematically from retained ones "
+        "in their earnings-surprise distribution is not audited in this report; "
+        "the conservative reading is that this conditioning is not guaranteed "
+        "random."
         "\n\n"
         "No transaction-cost or turnover analysis. This report measures whether "
         "a drift statistically exists on paper. It does NOT price out the "
@@ -454,7 +518,7 @@ def build_final_event_study_report(
     summary = _build_summary(stats, scope)
     sections = [
         _build_methodology_section(stats, scope),
-        _build_limitations_section(stats, scope),
+        _build_limitations_section(stats),
     ]
 
     return report_builder.build_pdf_report(

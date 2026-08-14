@@ -214,7 +214,22 @@ def test_build_summary_derives_counts_and_range_from_inputs():
     assert "2005-12-20" in summary
     assert "+5d and +20d" in summary
     assert "90" in summary  # n_sue_available
-    assert "2" in summary  # n_ic_horizons
+    # IC covers all enumerated horizons in the fixture (both +5d and +20d)
+    assert "at all 2 of those horizons" in summary
+
+
+def test_build_summary_reports_partial_ic_coverage_when_ic_missing_horizons():
+    """If Slice 9 emits IC on a subset of the enumerated horizons, the
+    summary lede must NOT read 'across all N horizons' -- it must say
+    'at K of those N horizons' with the covered subset explicit."""
+    stats = _make_synthetic_stats()
+    # Drop the +5d IC row, leaving only +20d
+    stats["spearman_ic"] = [row for row in stats["spearman_ic"] if row["horizon"] != 5]
+    scope = _make_synthetic_scope()
+    summary = report._build_summary(stats, scope)
+    assert "all 2 of those horizons" not in summary
+    assert "at 1 of those 2 horizons" in summary
+    assert "+20d" in summary
 
 
 def test_build_summary_rejects_scope_mismatch():
@@ -231,7 +246,8 @@ def test_build_summary_rejects_scope_mismatch():
 
 def test_methodology_section_dispersion_gated_on_which_source_is_wider():
     """Which source is described as 'wider' must follow the actual sds.
-    Flipping the sds must flip the wording, not leave a hardcoded claim."""
+    Flipping the sds must flip the wording, not leave a hardcoded claim.
+    Equal sds must NOT be described as a gap."""
     stats = _make_synthetic_stats()
     scope = _make_synthetic_scope()
     _, body = report._build_methodology_section(stats, scope)
@@ -246,20 +262,54 @@ def test_methodology_section_dispersion_gated_on_which_source_is_wider():
     assert "seasonal-benchmarked surprise has sample sd 8.000" in body_flipped
     assert "analyst-benchmarked surprise sd 2.500" in body_flipped
 
+    equal_sds = copy.deepcopy(stats)
+    equal_sds["meta"]["sue_scale_by_source"]["analyst"]["sd"] = 5.0
+    equal_sds["meta"]["sue_scale_by_source"]["seasonal"]["sd"] = 5.0
+    _, body_equal = report._build_methodology_section(equal_sds, scope)
+    assert "no dispersion gap between them" in body_equal
+    assert "1.00x" not in body_equal
+    assert "wider" not in body_equal
+
 
 def test_methodology_section_pulls_rank_cell_stats():
     stats = _make_synthetic_stats()
     scope = _make_synthetic_scope()
     _, body = report._build_methodology_section(stats, scope)
     assert "8 such cells" in body
-    assert "median cell size 11" in body
-    assert "smallest 2" in body
+    assert "median cell size 11 rows," in body  # trailing 'rows,' pins substring so '110' can't spoof it
+    assert "smallest 2 --" in body  # trailing ' --' same reason
+
+
+def test_methodology_section_derives_illustrative_years_from_scope():
+    """The point-in-time example should reference years from the actual
+    data range, not a hardcoded 2004/2013/1996 fixture. If the scope
+    shifts, the sentence must shift with it. (The events-file path in
+    the same section carries the year range as a filename literal --
+    that's a constant, not a data-derived claim, so we don't assert
+    absence there.)"""
+    stats = _make_synthetic_stats()
+    scope = _make_synthetic_scope()
+    # Fixture scope: 2001-01-15 to 2005-12-20 -- first=2001, last=2005, mid=2003
+    _, body = report._build_methodology_section(stats, scope)
+    # Isolate the point-in-time paragraph (the second half of the section
+    # after 'Point-in-time discipline.') and assert only that paragraph's
+    # example years follow the scope.
+    pit_paragraph = body[body.index("Point-in-time discipline.") :]
+    assert "2003Q1" in pit_paragraph
+    assert "never against events from 2005" in pit_paragraph
+    assert "a 2001 event's quintile depended on 2005 data" in pit_paragraph
+    # None of the hardcoded fixture years may appear in the point-in-time
+    # example (they can still appear elsewhere e.g. in the file path).
+    for hardcoded in ("2013", "2004Q1", "1996"):
+        assert hardcoded not in pit_paragraph, (
+            f"point-in-time example still contains hardcoded {hardcoded!r}"
+        )
 
 
 def test_limitations_section_derives_population_gap_when_present():
     stats = _make_synthetic_stats()
     scope = _make_synthetic_scope()
-    _, body = report._build_limitations_section(stats, scope)
+    _, body = report._build_limitations_section(stats)
     # Population gap: 100 total, 90 ranked, 10 none → gap of 10.
     assert "100" in body
     assert "90" in body
@@ -274,16 +324,14 @@ def test_limitations_section_drops_gap_clause_when_no_gap():
     stats = _make_synthetic_stats()
     stats["meta"]["n_sue_available"] = 100
     stats["meta"]["n_by_sue_source"] = {"analyst": 70, "seasonal": 30, "none": 0}
-    scope = _make_synthetic_scope()
-    _, body = report._build_limitations_section(stats, scope)
+    _, body = report._build_limitations_section(stats)
     assert "difference of" not in body
     assert "no subsetting" in body
 
 
 def test_limitations_section_derives_dup_and_contested_clause():
     stats = _make_synthetic_stats()
-    scope = _make_synthetic_scope()
-    _, body = report._build_limitations_section(stats, scope)
+    _, body = report._build_limitations_section(stats)
     assert "7" in body  # n_duplicate_firm_day_rows
     assert "3" in body  # n_permno_contested
 
@@ -292,9 +340,22 @@ def test_limitations_section_drops_dup_clause_when_zero():
     stats = _make_synthetic_stats()
     stats["meta"]["n_duplicate_firm_day_rows"] = 0
     stats["meta"]["n_permno_contested"] = 0
-    scope = _make_synthetic_scope()
-    _, body = report._build_limitations_section(stats, scope)
+    _, body = report._build_limitations_section(stats)
     assert "no duplicate firm-day rows or contested permnos" in body
+
+
+def test_limitations_section_reports_not_recorded_when_dup_keys_missing():
+    """Round-1 review finding #1: missing keys must NOT default to zero and
+    produce the 'unusually clean' branch -- a schema drift that omits
+    these counts is a *different* state from 'clean' and must be labelled
+    as such."""
+    stats = _make_synthetic_stats()
+    del stats["meta"]["n_duplicate_firm_day_rows"]
+    del stats["meta"]["n_permno_contested"]
+    _, body = report._build_limitations_section(stats)
+    assert "did not report" in body
+    assert "unusually clean" not in body
+    assert "cannot state" in body
 
 
 # --- integration --------------------------------------------------------------
