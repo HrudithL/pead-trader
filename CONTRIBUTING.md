@@ -42,7 +42,7 @@ The agent's north star: **ship small, reviewable, reversible slices; keep it sim
   for the concrete sizing guideline.
 - **Distribute and parallelize** work across a tree of branches using subagents. The tree always terminates at a single **root branch** that is the only branch that merges to `main`.
 - **The agent does not make *genuine-fork* calls alone.** Product/UX, public API shape, naming, dependencies, architecture, security posture — the categories in [§11](#11-subjective-vs-objective-decisions) — are escalated. Straightforward, obviously-right fixes are made at the agent's discretion, not escalated (see [§11.1](#111-when-to-decide-vs-ask)).
-- **The internal review agent is triaged each round, not chased to zero.** Wait for the review subagent's pass ([§7](#7-phase-5--review-agent)), decide at the Opus tier which of its findings actually warrant a change (§11.1), make only those, and re-review if warranted. **Two rounds, hard cap** — see [§7](#7-phase-5--review-agent). A finding that repeats a pattern from an earlier round gets fixed as a class, not chased instance-by-instance across further rounds; do not keep looping in pursuit of a perfectly silent report.
+- **The internal review agent is triaged each round, not chased to zero.** Wait for the review subagent's pass ([§7](#7-phase-5--review-agent)), decide at the Opus tier which of its findings actually warrant a change (§11.1), make only those, and re-review if warranted. **Two rounds is the norm; there is no hard cap on rounds, but a PR still generating real, substantive findings after round 2 is a signal the PR is too big or too complex for the review loop to converge on it — the response is to stop reviewing it and *split it*, not to add more rounds.** See [§7](#7-phase-5--review-agent). A finding that repeats a pattern from an earlier round gets fixed as a class, not chased instance-by-instance across further rounds.
 - **`main` is sacred.** No direct pushes, no force pushes, no auto-merge, no shortcuts.
 
 ---
@@ -136,6 +136,14 @@ main
 - **Parallelism:** independent slices MUST be developed in parallel via subagents (see [§4](#4-phase-3--executing-slices-subagents)). Dependent slices are serialized behind their parent.
 - **Isolation:** a single repository checkout can only have one branch checked out at a time — if two subagents share it, one switching branches yanks the working tree out from under the other, and edits or commits can land on the wrong branch. Each subagent working an in-flight branch in parallel with another MUST get its own git worktree (or clone). If isolated worktrees genuinely aren't available, serialize the branch work instead of sharing one checkout.
 - **Every branch is a leaf until proven otherwise.** Only create children when needed.
+- **The tree shape is a guide, not a cage — small, mergeable increments are the goal, not strict hierarchy.** The default `root → feature → sub` shape above fits most work, but nothing prevents richer topologies when they keep each PR smaller:
+  - **Stacked sub-branches within a feature.** If sub-branch B depends on sub-branch A's changes, cut B off A (not off the feature branch) and PR B into A. When A merges into the feature, B's PR retargets to the feature and reviews only B's incremental diff. This is preferable to piling both A's and B's changes onto one branch just to keep the tree "clean."
+  - **Parallel feature branches under the same root.** Two features that don't depend on each other MUST develop in parallel (per the parallelism rule above), each merging into root independently.
+  - **Feature-on-feature stacks.** If feature B naturally builds on feature A's output, it is fine for B to branch off A and PR into A, rather than waiting for A to reach root first. When A merges up, B retargets.
+  - **Cross-branch small PRs.** A tiny fix relevant to work on a sibling branch can be cut as its own sub-branch off the sibling and PR'd into it, rather than duplicating the change or waiting for a merge-up.
+
+  The rule is only this: every branch has exactly one parent branch it merges up into, that parent is a branch (never `main`), and the chain terminates at the root. What the intermediate shape looks like — flat fan, deep stack, mixed — is whatever keeps each PR small and each merge clean.
+- **Naming when stacking.** Three-level nesting (`feat/<spec>/<feature>/<slice>`) does not work once `feat/<spec>/<feature>` already exists as a pushed ref — git cannot nest a ref under an existing leaf ref. Use a flattened form for sub-branches: `feat/<spec>/<feature>-<slice>` (e.g. `feat/phase1-equity-pead/audit-reports-equity-data-report`).
 
 ---
 
@@ -188,14 +196,19 @@ Every branch (sub → feature, feature → root) is integrated via a PR. No exce
   - Test evidence (commands run, output summary).
   - Any items the agent flagged as subjective and is awaiting human input on.
 - **Size: small, by default, not as a fallback.** Aim for one cohesive piece of behavior in one
-  new/changed file (or a couple of tightly related ones) — roughly, a diff a reviewer can hold in
-  their head in one pass, not one that needs a table of contents. If a slice's natural output is
-  "a pipeline stage with five sub-steps and a report," that's five-plus PRs, not one: e.g. split
-  "clean the raw data," "derive a finding from it," "cross-validate it against a second source,"
-  and "render the findings as a report" into separate branches even though they're all part of the
-  same slice. Don't wait for a diff to turn out sprawling and split it after the fact — decide the
-  split at planning time (see [§3](#3-phase-1--plan-before-you-touch-code)'s slice breakdown) and
-  cut the branches small from the start. This is a direct lesson from this project's own history:
+  new/changed file (or a couple of tightly related ones). **Soft ceiling: ~800 lines of diff (added +
+  deleted, excluding lockfiles/generated artifacts/gitignored data).** A good PR is well *under*
+  that — 800 is already a lot; treat it as the point where a PR is unambiguously too big and MUST be
+  split, not as a target to fill. The real goal is a diff a reviewer can hold in their head in one
+  pass, not one that needs a table of contents. If a slice's natural output is "a pipeline stage with
+  five sub-steps and a report," that's five-plus PRs, not one: e.g. split "clean the raw data,"
+  "derive a finding from it," "cross-validate it against a second source," and "render the findings
+  as a report" into separate branches even though they're all part of the same slice. Don't wait for
+  a diff to turn out sprawling and split it after the fact — decide the split at planning time (see
+  [§3](#3-phase-1--plan-before-you-touch-code)'s slice breakdown) and cut the branches small from
+  the start. If a working diff *is* growing past the ceiling mid-implementation, that itself is the
+  signal to stop, split, and stack (per [§4](#4-phase-2--the-branch-tree)'s stacked-sub-branches
+  rule) — not to negotiate the ceiling. This is a direct lesson from this project's own history:
   large PRs needed 4-5 review-fix rounds to get right, while small ones tend to clear in 1-2 — many
   small, cleanly-reviewed iterations compound into the big change faster than a few large ones that
   each drag through repeated rounds.
@@ -217,12 +230,20 @@ exhausted). The agent MUST NOT wait for, poll for, or otherwise depend on an ext
 **own internal review subagent** for every PR, and that self-hosted review is the mandatory gate
 before any PR merges up the tree.
 
-**Hard cap: 2 review-fix rounds per PR, no exceptions.** Round 1 catches real findings; fix them.
-Round 2 confirms the fix and catches anything round 1 missed; fix that too. After round 2, merge —
-regardless of whether the report is spotless. This is not a soft guideline to be argued past when a
-round 2 finding feels substantive; it is a hard stop. See "When to stop reviewing" below for what to
-do when round 2 still finds something real, especially a *repeat* of a pattern from round 1 — the
-answer is never "run round 3," it's "fix the class of problem, not the instance, then stop."
+**Two rounds is the norm; more rounds is a signal, not a plan.** Round 1 catches real findings; fix
+them. Round 2 confirms the fix and catches anything round 1 missed; fix that too. If round 2 comes
+back clean or with only cosmetic/deferrable findings, merge. **If round 2 still surfaces real,
+substantive issues that aren't the cosmetic/deferrable bucket, do not spawn round 3 on the same PR —
+that is the "PR is too big or too complex for this loop to converge on it" signal. Stop reviewing
+this PR and reshape the work instead.** See "When to stop reviewing" below for the specifics, but
+the two default responses are: (a) *split-and-ship* — extract the parts of the diff that ARE now
+cleanly reviewable into a smaller PR that will pass a fresh 2-round pass, merge that, and reopen the
+remainder as one or more new small PRs stacked on top per [§4](#4-phase-2--the-branch-tree); or (b)
+*simplify-in-place* — cut the elaborate section the review keeps flagging rather than patching it
+again. The point of not-adding-more-rounds is not to force-merge unreviewed code; it is to force the
+work to be resized so the review can actually finish. A finding that repeats a pattern from an
+earlier round still gets fixed as a *class* within its round (not chased instance-by-instance across
+further rounds) — that rule is independent of the round-count guidance.
 
 **If external Codex review is ever reactivated for this project,** per
 [§2](#2-model-assignment-mandatory) it MUST be pinned to the **`gpt-5.6-terra`** tier — via the
@@ -326,11 +347,30 @@ delegated to the Sonnet coding subagent and never done by skimming. For each fin
 
 ### When to stop reviewing
 
-The goal is never a spotless report — it's two rounds, triaged properly, then merge. After round 1,
-fix what's real. After round 2, fix what's real **and then stop, unconditionally** — do not spawn a
-round 3 to re-verify the round-2 fix or to chase a fully clean report. If round 2 turns up something
-so serious it feels unsafe to ship without a fresh look, that is itself a signal the underlying code
-is too complex for its own good — simplify it (see below) rather than adding a review round.
+The goal is never a spotless report — it's a small, reviewable PR, triaged properly, then merge.
+After round 1, fix what's real. After round 2, look honestly at what the report is *still* saying:
+
+- **If it's clean, or only restating cosmetic/deferred items:** merge.
+- **If it's still finding real, substantive issues that aren't cosmetic/deferred:** do not spawn
+  round 3 on this PR. That is the "PR is too big or too complex for this review loop to converge on
+  it" signal, and adding rounds does not fix it — it just papers over the underlying sizing problem.
+  Pick one of two responses, whichever fits:
+
+  1. **Split-and-ship (default).** Keep the fixes made so far on the branch. Extract the parts of
+     the diff that ARE now cleanly reviewable into a smaller PR — cut a new sub-branch off the
+     current one (per [§4](#4-phase-2--the-branch-tree)'s stacked-sub-branches rule), move the
+     reviewable subset there, PR it into the current branch's parent, run a fresh 2-round review
+     that actually converges on that smaller scope, and merge. Reopen the remainder as one or more
+     new small PRs stacked on top. The original larger PR either becomes empty (close it) or is
+     itself reshaped down to what's left.
+  2. **Simplify-in-place.** If the recurring finding points at a section that is elaborate for what
+     it does, cut the elaborate section rather than patching it again — fewer report claims, a
+     narrower feature, a plainer implementation that has less surface for the class of bug. Note the
+     simplification on the PR the same way a fix would be. This is a legitimate outcome of triage,
+     not a failure to fully satisfy the review.
+
+  Either way, close the review loop on *this* PR and let the reshaped smaller PR(s) carry the rest
+  of the work forward.
 
 **If a round's finding is the same *class* of problem as an earlier round's (not the same instance —
 the same shape: e.g. two different unconditional claims in report-generation prose, two different
@@ -338,31 +378,27 @@ missing null-checks, two different off-by-one date joins), do not fix the one in
 Find every other instance of that class in the affected file (a `grep` for the shape of the pattern
 is usually enough) and fix them all in the same pass. A pattern that recurs across rounds means the
 code has a structural weak spot, not a series of unrelated typos — the fix is to close the weak spot
-once, not to let each round discover one more example of it. This is the mechanism that keeps the
-2-round cap real: rounds don't need to extend to catch "just one more instance" if the triage already
-swept the class the first time it appeared.
+once, not to let each round discover one more example of it.
 
-**If, after a class-fix, the honest conclusion is that a whole area of the code is too fragile or too
-elaborate to keep patching, simplify or cut it** rather than layering on more defensive checks.
-Fewer report claims, a narrower feature, or a plainer implementation that has less surface for this
-class of bug is a legitimate outcome of triage — not a failure to fully satisfy the review. Note the
-simplification on the PR the same way a fix would be noted.
-
-Stop the loop (after round 2 at the absolute latest) once remaining findings are:
+Stop the review loop on this PR (typically by round 2; always by the round where it becomes clear
+the loop isn't converging) once remaining findings are:
 
 - restating something already declined or deferred with a reason on the PR,
 - purely stylistic/cosmetic with no behavior, security, or data-integrity impact,
-- scope the PR deliberately doesn't cover, or
-- otherwise not clearing the [§11.1](#111-when-to-decide-vs-ask) bar for "worth changing."
+- scope the PR deliberately doesn't cover,
+- otherwise not clearing the [§11.1](#111-when-to-decide-vs-ask) bar for "worth changing," or
+- **substantive but pointing at a size/complexity problem the review loop can't fix — in which case
+  split per above and merge the reviewable subset.**
 
-Note the outcome briefly on the PR ("round 2 fixed the remaining findings, including a class-fix for
-X — merging") and move on. This is an Opus-tier judgment call the agent makes itself, not a genuine
-fork to escalate to the human.
+Note the outcome briefly on the PR ("round 2 fixed the remaining findings — merging," or "round 2
+  surfaced structural issues we're splitting rather than adding rounds — reviewable subset merges
+  here; PR #NNN carries the rest") and move on. This is an Opus-tier judgment call the agent makes
+itself, not a genuine fork to escalate to the human.
 
-The PR is eligible to merge up once **both** are true: the review has reached its stopping point
-(round 2, or earlier if round 1 comes back clean), and any escalated forks are resolved by the
-human. None of this requires a spotless report — it requires that every round's findings were
-actually triaged at the Opus tier and acted on where it mattered.
+The PR is eligible to merge up once **both** are true: the review loop has reached its stopping
+point (clean, or split-and-shipped), and any escalated forks are resolved by the human. None of this
+requires a spotless report — it requires that every round's findings were actually triaged at the
+Opus tier and either acted on or explicitly handled by resizing the work.
 
 ### Posting the review for auditability
 
@@ -478,9 +514,9 @@ Before every task:
 - [ ] Escalated all subjective items in the plan to the human and received answers.
 
 Per slice:
-- [ ] Cut a sub-branch off the correct feature branch.
+- [ ] Cut a sub-branch off its correct parent (feature branch, or another sub-branch when stacking per [§4](#4-phase-2--the-branch-tree)); used the flattened `feat/<spec>/<feature>-<slice>` form.
 - [ ] Spawned a subagent with a full context contract (goal, branch, files, acceptance, non-goals, escalation triggers).
-- [ ] Made a small number of tightly scoped commits.
+- [ ] Made a small number of tightly scoped commits, keeping the diff under the ~800-line soft ceiling ([§6](#6-phase-4--pull-requests)); split into a stacked sub-branch mid-implementation if it started growing past.
 - [ ] Opened a PR to the parent branch with a complete description.
 
 Per PR:
@@ -490,7 +526,7 @@ Per PR:
 - [ ] Posted the review subagent's findings (or a summary) as a PR comment, labelled as the internal review agent's pass.
 - [ ] Made the reasonable fixes at own discretion each round; declined/deferred anything that would overcomplicate (noted why).
 - [ ] Escalated only genuine forks (multiple reasonable implementations, or a §11 decision); recorded the human's answer.
-- [ ] Stopped at 2 review-fix rounds, hard cap; fixed any repeated-pattern finding as a class, not instance-by-instance; noted the stop reason on the PR.
+- [ ] Ran the review loop until it converged (typically 2 rounds); if round 2 still surfaced real substantive issues, split the PR into smaller ones (or simplified the affected section) rather than spawning round 3. Fixed any repeated-pattern finding as a class, not instance-by-instance. Noted the stop-or-split reason on the PR.
 - [ ] Merged up with a **merge commit** (not squash, not rebase).
 - [ ] Proposed branch deletion to the human.
 
