@@ -851,7 +851,17 @@ def _q5_q1_spread_caption(stats: dict) -> str:
     5%, and whether the spread widens, narrows or is flat across horizons
     -- direction gated on the actual first-vs-last comparison."""
     by_horizon = _mktadj_spread_by_horizon(stats)
-    horizons = sorted(by_horizon.keys())
+    # Round-2 F2: filter to horizons whose row's data is finite before
+    # any min/max/index operation, so a NaN slice-9 row doesn't crash
+    # this caption at min(...) / .index(NaN).
+    horizons = sorted(h for h, r in by_horizon.items() if r["finite"])
+    if not horizons:
+        return (
+            "Each bar is the market-adjusted mean return in the top surprise quintile "
+            "minus the mean in the bottom, at that horizon; error bars are the +/-1.96 "
+            "standard-error 95% CI. No horizon produced finite spread statistics in "
+            "this run -- the chart's bars are all missing."
+        )
     spreads_pct = [by_horizon[h]["spread"] * 100.0 for h in horizons]
     t_stats = [by_horizon[h]["t_stat"] for h in horizons]
     n_signif = sum(1 for t in t_stats if abs(t) > _T_STAT_5PCT)
@@ -1065,8 +1075,21 @@ def _build_results_section(stats: dict) -> tuple[str, str]:
             if r["non_dec"] and r["spread_sig_pos"] and r["ic_sig_pos"]
         )
         # Decide the summary direction from the balance of significant
-        # signals, not from a hardcoded 'positive' fallback.
-        if n_sig_pos_spread > n_sig_neg_spread and n_sig_pos_ic >= n_sig_neg_ic:
+        # signals, not from a hardcoded 'positive' fallback. Round-2 F1:
+        # when both spread counts tie (typically both zero) but IC
+        # signals lean unambiguously one direction, don't fall through to
+        # a false 'directionally MIXED' label -- follow whichever leg has
+        # a clear majority.
+        spread_leans_pos = n_sig_pos_spread > n_sig_neg_spread
+        spread_leans_neg = n_sig_neg_spread > n_sig_pos_spread
+        spread_ties = n_sig_pos_spread == n_sig_neg_spread
+        ic_leans_pos = n_sig_pos_ic > n_sig_neg_ic
+        ic_leans_neg = n_sig_neg_ic > n_sig_pos_ic
+        if (
+            (spread_leans_pos and ic_leans_pos)
+            or (spread_leans_pos and n_sig_pos_ic >= n_sig_neg_ic)
+            or (spread_ties and ic_leans_pos)
+        ):
             direction_summary = (
                 f"the significant signals lean POSITIVE ({n_sig_pos_spread} of {n_h} "
                 f"horizons show sig-positive spreads, {n_sig_neg_spread} sig-negative; "
@@ -1074,7 +1097,11 @@ def _build_results_section(stats: dict) -> tuple[str, str]:
                 f"sig-negative). The data supports a partial, horizon-dependent "
                 f"positive-PEAD signal but not a uniform one at every horizon"
             )
-        elif n_sig_neg_spread > n_sig_pos_spread and n_sig_neg_ic >= n_sig_pos_ic:
+        elif (
+            (spread_leans_neg and ic_leans_neg)
+            or (spread_leans_neg and n_sig_neg_ic >= n_sig_pos_ic)
+            or (spread_ties and ic_leans_neg)
+        ):
             direction_summary = (
                 f"the significant signals lean NEGATIVE ({n_sig_neg_spread} of {n_h} "
                 f"horizons show sig-negative spreads, {n_sig_pos_spread} sig-positive; "
@@ -1178,9 +1205,16 @@ def build_final_event_study_report(
     # figure manager.
     charts: list[tuple[matplotlib.figure.Figure, str]] = []
     try:
-        charts.append((_make_quintile_mean_chart(stats), _quintile_mean_caption(stats)))
-        charts.append((_make_q5_q1_spread_chart(stats), _q5_q1_spread_caption(stats)))
-        charts.append((_make_ic_by_horizon_chart(stats), _ic_by_horizon_caption(stats)))
+        # Round-2 F3: bind each figure to a local BEFORE calling its
+        # caption helper, so a caption that raises (e.g. on an
+        # unexpected data shape) can't leak the figure into pyplot's
+        # global registry uncounted.
+        fig1 = _make_quintile_mean_chart(stats)
+        charts.append((fig1, _quintile_mean_caption(stats)))
+        fig2 = _make_q5_q1_spread_chart(stats)
+        charts.append((fig2, _q5_q1_spread_caption(stats)))
+        fig3 = _make_ic_by_horizon_chart(stats)
+        charts.append((fig3, _ic_by_horizon_caption(stats)))
         return report_builder.build_pdf_report(
             title="Event Study Result: Does Post-Earnings-Announcement Drift Show Up?",
             output_path=output_path,
