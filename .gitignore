@@ -55,6 +55,10 @@ outputs/
 *.parquet
 *.duckdb
 
+# Local safe-rm trash: files moved by scripts/safe_rm.py live here so they
+# stay recoverable via scripts/restore_from_trash.py without polluting git.
+/.trash/
+
 # OS / editor
 .DS_Store
 .idea/

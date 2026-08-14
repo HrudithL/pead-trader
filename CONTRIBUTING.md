@@ -62,6 +62,7 @@ not a default or a suggestion — it is a hard requirement, checked on every sub
 | **Thinking and planning** — writing/updating the plan in `memory/`, deciding branch/slice breakdown, triaging review findings ([§7](#7-phase-5--review-agent)), deciding whether a proposed doc/fix change should be made at all | **Opus 5** (`claude-opus-5`); if unavailable, **Opus 4.8** | This is the "judgment" layer — anywhere the agent is deciding *what* to do or *whether* something is worth doing, not executing a already-decided mechanical step. |
 | **Documentation and simple mechanical fixes** — writing/updating docs, README content, changelog entries, and applying already-decided, already-verified simple fixes after a PR has passed review | **Haiku** (`claude-haiku-4-5-20251001`) | Only for execution of a change that Opus has already decided should happen (see above). Haiku does not decide anything — it writes what it's told to write. |
 | **The review agent itself** ([§7](#7-phase-5--review-agent)) | **Opus 5** (`claude-opus-5`); if unavailable, **Opus 4.8** | An elite adversarial review is a judgment task (finding defects, weighing severity), not a code-writing task — it uses the thinking-tier model, not the coding-tier model. |
+| **External Codex/ChatGPT review, only if it is ever used** ([§7](#7-phase-5--review-agent)) | **`gpt-5.6-terra`** — never the default `gpt-5.6-sol` | This project has no active Codex review right now (see [§7](#7-phase-5--review-agent)), so this row is dormant. If Codex review is ever reactivated, pin it to Terra: Sol is the flagship tier ($5/$30 per M tokens) and buys no review-quality gain over Terra ($2/$12, "competitive with GPT-5.5") worth its cost here. Do not drop to Luna ($0.20/$1.20) either — per the "never downgrade a thinking/review task" rule below, Luna is sized for high-volume simple work, not adversarial review. |
 
 Rules for applying this table:
 
@@ -112,7 +113,7 @@ For every task, spec, or feature request:
 
 ## 4. Phase 2 — The Branch Tree
 
-Work is organized as a **worktree**: many small branches that all trace back to one root branch, which is the only branch permitted to open a PR into `main`.
+Work is organized as a **git worktree**: many small branches that all trace back to one root branch, which is the only branch permitted to open a PR into `main`. It is a requirement to use **git worktrees** to develop as this allows other agents to work in parallel.
 
 ```
 main
@@ -222,6 +223,14 @@ regardless of whether the report is spotless. This is not a soft guideline to be
 round 2 finding feels substantive; it is a hard stop. See "When to stop reviewing" below for what to
 do when round 2 still finds something real, especially a *repeat* of a pattern from round 1 — the
 answer is never "run round 3," it's "fix the class of problem, not the instance, then stop."
+
+**If external Codex review is ever reactivated for this project,** per
+[§2](#2-model-assignment-mandatory) it MUST be pinned to the **`gpt-5.6-terra`** tier — via the
+connected Codex workspace's model setting, or `--model gpt-5.6-terra` if invoked through the Codex
+CLI — never left on the default flagship **`gpt-5.6-sol`** tier. Sol costs more ($5/$30 per M
+tokens vs. Terra's $2/$12) without a review-quality gain worth paying for on top of the internal
+Opus review above; do not go the other direction to Luna either, since a lighter, high-throughput
+tier is the wrong fit for adversarial review judgment.
 
 ### The review agent's context contract — PR only, nothing more
 
