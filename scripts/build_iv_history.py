@@ -91,18 +91,23 @@ _OUTPUT_COLUMNS: list[str] = [
 
 
 def _pick_atm_iv(group: pd.DataFrame, dte_lo: int, dte_hi: int) -> float:
-    """Return the ATM IV for the tenor bucket, or NaN if none."""
+    """Return the ATM IV for the tenor bucket, or NaN if none.
+
+    Ties on absolute strike-vs-underlying distance are broken
+    deterministically: sort the bucket by (abs_diff, option_id) before
+    calling ``idxmin`` so the choice does not depend on the caller's
+    input order.
+    """
     dte = (group["expiration"] - group["date"]).dt.days
     mask = (dte >= dte_lo) & (dte <= dte_hi) & group["iv"].notna()
     bucket = group.loc[mask]
     if bucket.empty:
         return float("nan")
-    # ATM = strike closest to underlying_price. Absolute log-moneyness
-    # would be equivalent but adds a log() call on every row for no
-    # semantic difference on a small bucket.
     abs_diff = (bucket["strike"] - bucket["underlying_price"]).abs()
-    idx = abs_diff.idxmin()
-    return float(bucket.loc[idx, "iv"])
+    tie_break = bucket.assign(_abs_diff=abs_diff).sort_values(
+        ["_abs_diff", "option_id"], kind="stable"
+    )
+    return float(tie_break.iloc[0]["iv"])
 
 
 def build_iv_history_frame(options: pd.DataFrame) -> pd.DataFrame:
@@ -116,7 +121,18 @@ def build_iv_history_frame(options: pd.DataFrame) -> pd.DataFrame:
     ATM IV at three tenors and aggregate volume/OI.
     """
     if options.empty:
-        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+        return _empty_typed_output()
+
+    # Canonical schema guarantees non-null grouping keys; enforce here
+    # so a partially-loaded frame doesn't silently drop rows in pandas'
+    # groupby (which discards NaN-keyed rows by default).
+    for key in ("stable_underlying_id", "date"):
+        if options[key].isna().any():
+            n = int(options[key].isna().sum())
+            raise ValueError(
+                f"build_iv_history_frame: {n} row(s) have a null {key!r}; "
+                f"the canonical schema requires this column to be non-null."
+            )
 
     # Two-pass build: (1) aggregate volume + OI via groupby.agg, which
     # is fast and produces a clean two-column-index DataFrame, then
@@ -129,8 +145,8 @@ def build_iv_history_frame(options: pd.DataFrame) -> pd.DataFrame:
             ["stable_underlying_id", "date"], sort=True
         )
         .agg(
-            total_option_volume=("volume", lambda s: int(s.fillna(0).sum())),
-            total_open_interest=("open_interest", lambda s: int(s.fillna(0).sum())),
+            total_option_volume=("volume", _sum_safe),
+            total_open_interest=("open_interest", _sum_safe),
         )
         .reset_index()
     )
@@ -149,8 +165,46 @@ def build_iv_history_frame(options: pd.DataFrame) -> pd.DataFrame:
         })
     atm = pd.DataFrame(atm_rows)
 
-    out = aggregates.merge(atm, on=["stable_underlying_id", "date"], how="left")
+    out = (
+        aggregates.merge(atm, on=["stable_underlying_id", "date"], how="left")
+        # Enforce a stable, groupby-sort-independent output order so
+        # downstream consumers see the same row order across every
+        # invocation, regardless of the merge's input side ordering.
+        .sort_values(["stable_underlying_id", "date"], kind="stable")
+        .reset_index(drop=True)
+    )
     return out[_OUTPUT_COLUMNS]
+
+
+def _empty_typed_output() -> pd.DataFrame:
+    """Empty DataFrame with the correct column order AND the correct
+    dtype per column, so an empty-batch write is round-trip-consistent
+    with a non-empty one.
+    """
+    df = pd.DataFrame({
+        "stable_underlying_id": pd.Series([], dtype="string"),
+        "date": pd.Series([], dtype="datetime64[ns]"),
+        "atm_iv_30d": pd.Series([], dtype="float64"),
+        "atm_iv_60d": pd.Series([], dtype="float64"),
+        "atm_iv_90d": pd.Series([], dtype="float64"),
+        "total_option_volume": pd.Series([], dtype="int64"),
+        "total_open_interest": pd.Series([], dtype="int64"),
+    })
+    return df[_OUTPUT_COLUMNS]
+
+
+def _sum_safe(s: pd.Series) -> int:
+    """Sum a nullable-integer column, returning 0 on all-null groups.
+
+    Guards against ``pd.NA -> int()`` blowing up on Int64 columns where
+    every value is null: ``.sum()`` on all-null Int64 returns ``pd.NA``
+    and ``int(pd.NA)`` raises. Explicit ``fillna(0).sum()`` on the
+    numpy view sidesteps both issues.
+    """
+    total = s.fillna(0).sum()
+    if pd.isna(total):
+        return 0
+    return int(total)
 
 
 def _atomic_write_parquet(df: pd.DataFrame, path: Path) -> None:
@@ -190,7 +244,7 @@ def build_iv_history_for_range(
         frames.append(build_iv_history_frame(year_options))
 
     if not frames:
-        history = pd.DataFrame(columns=_OUTPUT_COLUMNS)
+        history = _empty_typed_output()
     else:
         history = pd.concat(frames, ignore_index=True)
 

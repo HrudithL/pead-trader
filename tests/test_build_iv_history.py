@@ -243,3 +243,67 @@ class TestCLI:
     def test_reversed_range_rejected(self, monkeypatch):
         with pytest.raises(SystemExit, match="must be <="):
             bih.main(["--start-year", "2011", "--end-year", "2010"])
+
+
+class TestRoundOneReviewFixes:
+    def test_null_group_key_raises(self):
+        # Round-1 review fix: schema says these are non-null; guard
+        # against silent groupby-drop when a partially-loaded frame
+        # slips through.
+        df = _frame(_row())
+        df.loc[0, "stable_underlying_id"] = None
+        with pytest.raises(ValueError, match="non-null"):
+            bih.build_iv_history_frame(df)
+
+    def test_tie_break_deterministic(self):
+        # Round-1 review fix: two contracts equidistant from underlying
+        # -- pick reproducibly (lowest option_id) regardless of input
+        # row order.
+        rows_ordered = [
+            _row(option_id=1, strike=45.0, iv=0.35),
+            _row(option_id=2, strike=55.0, iv=0.40),
+        ]
+        rows_reversed = list(reversed(rows_ordered))
+        out1 = bih.build_iv_history_frame(_frame(*rows_ordered))
+        out2 = bih.build_iv_history_frame(_frame(*rows_reversed))
+        assert out1.iloc[0]["atm_iv_30d"] == out2.iloc[0]["atm_iv_30d"]
+
+    def test_all_null_volume_column_no_crash(self):
+        # Round-1 review fix: all-null Int64 sum is pd.NA in pandas;
+        # _sum_safe converts to 0 rather than raising.
+        df = _frame(_row())
+        df["volume"] = pd.array([pd.NA], dtype="Int64")
+        df["open_interest"] = pd.array([pd.NA], dtype="Int64")
+        out = bih.build_iv_history_frame(df)
+        assert out.iloc[0]["total_option_volume"] == 0
+        assert out.iloc[0]["total_open_interest"] == 0
+
+    def test_empty_output_has_typed_columns(self):
+        # Round-1 review fix: empty batch used to have object-dtype
+        # placeholders; now returns proper int64/float64/datetime64 so
+        # a round-trip through parquet stays type-consistent.
+        empty = _frame().iloc[0:0]
+        out = bih.build_iv_history_frame(empty)
+        assert str(out["date"].dtype).startswith("datetime64")
+        assert out["total_option_volume"].dtype == "int64"
+        assert out["atm_iv_30d"].dtype == "float64"
+
+    def test_output_sorted_regardless_of_input_order(self):
+        # Round-1 review fix: explicit sort_values after merge means
+        # output row order is stable across shuffled inputs.
+        df_ordered = _frame(
+            _row(option_id=1, stable_underlying_id="SEC_A",
+                 date=pd.Timestamp("2010-01-04")),
+            _row(option_id=2, stable_underlying_id="SEC_B",
+                 date=pd.Timestamp("2010-01-04")),
+        )
+        df_reversed = _frame(
+            _row(option_id=2, stable_underlying_id="SEC_B",
+                 date=pd.Timestamp("2010-01-04")),
+            _row(option_id=1, stable_underlying_id="SEC_A",
+                 date=pd.Timestamp("2010-01-04")),
+        )
+        out1 = bih.build_iv_history_frame(df_ordered)
+        out2 = bih.build_iv_history_frame(df_reversed)
+        assert list(out1["stable_underlying_id"]) == list(out2["stable_underlying_id"])
+        assert list(out1["stable_underlying_id"]) == ["SEC_A", "SEC_B"]
