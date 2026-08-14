@@ -46,3 +46,14 @@ weasyprint>=69.0
 # script's own module docstring). Floor matches this project's pinning style --
 # a recent scipy compatible with the pandas/numpy versions already pinned above.
 scipy>=1.13
+
+# Dependencies for Phase III (memory/phase3-options-pead-plan.md), added under
+# the user's batched dependency approval (see plan Subjective Item 3):
+# QuantLib (option pricer used only in Slice 7's Greeks / IV validation harness
+# on a stratified sample -- NOT in the main pipeline unless the validation
+# fails, per the plan). Runtime is via the QuantLib-Python binding.
+# alphalens-reloaded (IC / quantile-sort tearsheets for Slice 17 H2/H3 work;
+# blocked on Phase II shipping, added here so the environment is complete when
+# the H2 slice starts).
+QuantLib>=1.40
+alphalens-reloaded>=0.4
