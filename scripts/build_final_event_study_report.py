@@ -5,11 +5,12 @@ result -- the actual H0 answer for whether post-earnings-announcement drift
 requirement (A4, plain-language prose, per this project's phase-completion
 report convention).
 
-This is sub-slice 10a: a scaffold containing the script skeleton, data-
-loading, and the two prose-only sections (Data & methodology, Limitations).
-The Results section and its charts land in sub-slice 10b -- this sub-slice
-deliberately ships `charts=[]` so the pipeline is proven end-to-end before
-the more expensive chart work begins.
+This is sub-slice 10b: adds the Results section and its three charts on top
+of the 10a scaffold. Section order: Data & methodology -> Results (does
+PEAD show up?) -> Limitations. Charts: quintile-mean by horizon (visual
+monotonicity headline), Q5-Q1 spread with 95% CI (magnitude headline),
+pooled Spearman IC by horizon with 95% band (significance-of-monotonicity
+headline) -- all three on the market-adjusted return series specifically.
 
 Relates to the other two Phase-1 reports:
   - `reports/equity_data_audit.pdf` -- Slice 4 -- the equity-price data this
@@ -34,16 +35,30 @@ in git (unlike `data/`/`outputs/`/`mlruns/`), per that directory's README.
 """
 
 import json
+import math
 import sys
 from pathlib import Path
 
+import matplotlib
+import matplotlib.figure
+import matplotlib.pyplot as plt
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import report_builder  # noqa: E402
+
+matplotlib.use("Agg")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_INPUT_STATS = REPO_ROOT / "data" / "results" / "event_study_stats.json"
 DEFAULT_INPUT_EVENTS = REPO_ROOT / "data" / "events" / "equity_events_1996_2013.parquet"
 DEFAULT_OUTPUT = REPO_ROOT / "reports" / "event_study_result.pdf"
+
+# 5%-two-sided z threshold: used to gate "significant" claims in Results
+# prose and captions. Kept as a module-level constant so both the prose
+# and the charts read the same threshold; hardcoding 1.96 in three
+# different places is exactly the class of drift the round-2 sweep guarded
+# against.
+_T_STAT_5PCT = 1.96
 
 # Slice 9's JSON schema: the top-level keys this script requires. The
 # `monotonicity` block is emitted by Slice 9 as well but is not consumed by
@@ -535,35 +550,528 @@ def _build_limitations_section(stats: dict) -> tuple[str, str]:
     return ("Limitations (what this result does not support)", body)
 
 
+def _mktadj_by_horizon_and_quintile(stats: dict) -> dict[int, list[tuple[int, float]]]:
+    """Group `stats['quantile_sort']` into `{horizon: [(quintile, mean), ...]}`
+    for `return_type == 'mktadj'`, with each horizon's list ordered by
+    quintile ascending. Missing quintiles (e.g. a Slice 9 build that
+    didn't emit Q1-Q5 for a horizon) raise loudly rather than silently
+    truncating a chart or a monotonicity check."""
+    by_horizon: dict[int, dict[int, float]] = {}
+    for row in stats["quantile_sort"]:
+        if row["return_type"] != "mktadj":
+            continue
+        h = int(row["horizon"])
+        q = int(row["quintile"])
+        by_horizon.setdefault(h, {})[q] = float(row["mean"])
+    if not by_horizon:
+        raise ValueError(
+            "event_study_stats.json['quantile_sort'] has no return_type=='mktadj' rows; "
+            "the Results section and its charts describe the market-adjusted "
+            "sort specifically and cannot be built without them."
+        )
+    out: dict[int, list[tuple[int, float]]] = {}
+    for h, qmap in by_horizon.items():
+        quintiles = sorted(qmap.keys())
+        if not quintiles:
+            raise ValueError(f"quantile_sort has no quintile rows for horizon +{h}d (mktadj).")
+        out[h] = [(q, qmap[q]) for q in quintiles]
+    return out
+
+
+def _mktadj_spread_by_horizon(stats: dict) -> dict[int, dict]:
+    """Return `{horizon: {'spread', 'se', 't_stat', 'ci_low', 'ci_high'}}`
+    for `return_type == 'mktadj'` rows in `stats['quantile_spread']`. The
+    CI half-width is derived here from `se` at the module's 5%-two-sided
+    z; Slice 9's JSON does not carry an explicit CI for the spread rows,
+    only `se` and `t_stat`."""
+    out: dict[int, dict] = {}
+    for row in stats["quantile_spread"]:
+        if row["return_type"] != "mktadj":
+            continue
+        h = int(row["horizon"])
+        spread = float(row["spread"])
+        se = float(row["se"])
+        half = _T_STAT_5PCT * se
+        out[h] = {
+            "spread": spread,
+            "se": se,
+            "t_stat": float(row["t_stat"]),
+            "ci_low": spread - half,
+            "ci_high": spread + half,
+        }
+    if not out:
+        raise ValueError(
+            "event_study_stats.json['quantile_spread'] has no return_type=='mktadj' rows; "
+            "the Q5-Q1 spread chart and Results section describe the market-"
+            "adjusted spread specifically and cannot be built without them."
+        )
+    return out
+
+
+def _mktadj_ic_by_horizon(stats: dict) -> dict[int, dict]:
+    """Return `{horizon: {'ic', 'n', 'p_value', 'ci_low', 'ci_high'}}` for
+    `return_type == 'mktadj'` rows in `stats['spearman_ic']`. The 95% CI
+    is derived from the sample size via a Fisher z-transform (rho ->
+    atanh(rho); SE = 1/sqrt(n-3); CI = tanh(atanh(rho) +/- 1.96*SE)) --
+    Slice 9's JSON reports the IC and its p_value but no CI, and the
+    prompt's chart-3 spec calls for "95% CI or bands," so bands derived
+    from n at the same 5% threshold the prose uses is the honest
+    construction."""
+    out: dict[int, dict] = {}
+    for row in stats["spearman_ic"]:
+        if row["return_type"] != "mktadj":
+            continue
+        h = int(row["horizon"])
+        ic = float(row["ic"])
+        n = int(row["n"])
+        p = float(row["p_value"])
+        if n <= 3 or abs(ic) >= 1.0:
+            # Fisher z-transform is undefined at |rho| == 1 and needs n > 3.
+            # A real PEAD sample never hits either; guard so the chart
+            # doesn't crash if a degenerate synthetic fixture does.
+            ci_low, ci_high = float("nan"), float("nan")
+        else:
+            z = math.atanh(ic)
+            se_z = 1.0 / math.sqrt(n - 3)
+            ci_low = math.tanh(z - _T_STAT_5PCT * se_z)
+            ci_high = math.tanh(z + _T_STAT_5PCT * se_z)
+        out[h] = {"ic": ic, "n": n, "p_value": p, "ci_low": ci_low, "ci_high": ci_high}
+    if not out:
+        raise ValueError(
+            "event_study_stats.json['spearman_ic'] has no return_type=='mktadj' rows; "
+            "the Spearman IC chart and Results section describe the market-"
+            "adjusted IC specifically and cannot be built without them."
+        )
+    return out
+
+
+def _is_non_decreasing(values: list[float]) -> bool:
+    """Non-decreasing means each successive quintile mean is >= the one
+    before (ties allowed). NOT the same as `strict_monotonic` from the
+    Slice 9 monotonicity block, which forbids ties -- the Results-section
+    check the prompt asks for is the weaker non-decreasing check, so this
+    is derived here directly from `quantile_sort` rather than reading
+    Slice 9's precomputed flag."""
+    return all(values[i + 1] >= values[i] for i in range(len(values) - 1))
+
+
+def _make_quintile_mean_chart(stats: dict) -> matplotlib.figure.Figure:
+    """Chart 1 -- the visual PEAD-monotonicity headline. One panel, x-axis
+    quintile 1..5, y-axis mean market-adjusted forward return; one color-
+    coded line per horizon. If every line slopes up from Q1 to Q5, the
+    monotonicity claim is visible at a glance. Title is a data-derived
+    shape claim -- how many horizons and quintiles the panel actually
+    covers -- not an interpretation of the picture."""
+    by_horizon = _mktadj_by_horizon_and_quintile(stats)
+    horizons = sorted(by_horizon.keys())
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.8))
+    cmap = plt.get_cmap("viridis")
+    n_h = len(horizons)
+    for i, h in enumerate(horizons):
+        rows = by_horizon[h]
+        xs = [q for q, _ in rows]
+        ys = [m * 100.0 for _, m in rows]  # percent
+        color = cmap(i / max(1, n_h - 1))
+        ax.plot(xs, ys, marker="o", color=color, linewidth=1.6, label=f"+{h}d")
+
+    ax.axhline(0, color="#666666", linewidth=0.7, linestyle="--")
+    ax.set_xlabel("Surprise quintile (1 = most negative, 5 = most positive)")
+    ax.set_ylabel("Mean market-adjusted forward return (%)")
+    # Data-derived structural title: names how many horizons and quintiles
+    # the panel actually contains. Does NOT claim the picture is monotone.
+    n_quintiles = len(next(iter(by_horizon.values())))
+    ax.set_title(
+        f"Mean market-adjusted forward return by surprise quintile, "
+        f"{n_h} horizons x {n_quintiles} quintiles"
+    )
+    ax.set_xticks(sorted({q for rows in by_horizon.values() for q, _ in rows}))
+    ax.legend(loc="upper left", fontsize=8, frameon=False, title="Horizon")
+    fig.tight_layout()
+    return fig
+
+
+def _make_q5_q1_spread_chart(stats: dict) -> matplotlib.figure.Figure:
+    """Chart 2 -- the numerical PEAD-magnitude headline. One panel, x-axis
+    horizon, y-axis Q5-Q1 market-adjusted spread with 95% CI error bars
+    (half-width 1.96 * se, matching the Q5-Q1 SE Slice 9 stored in the
+    JSON). Title names how many horizons the panel covers and how many of
+    them clear the 5% significance bar -- data-derived, no interpretive
+    words like 'strong' or 'weak'."""
+    by_horizon = _mktadj_spread_by_horizon(stats)
+    horizons = sorted(by_horizon.keys())
+    spreads = [by_horizon[h]["spread"] * 100.0 for h in horizons]  # percent
+    err = [(by_horizon[h]["ci_high"] - by_horizon[h]["spread"]) * 100.0 for h in horizons]
+    n_signif = sum(1 for h in horizons if abs(by_horizon[h]["t_stat"]) > _T_STAT_5PCT)
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.4))
+    x = list(range(len(horizons)))
+    # Bar colors track sign so a hypothetical flip (negative Q5-Q1 spread)
+    # is not silently rendered the same green as a positive one.
+    colors = ["#2f855a" if s >= 0 else "#c53030" for s in spreads]
+    ax.bar(x, spreads, color=colors, alpha=0.75, edgecolor="#333333", linewidth=0.5)
+    ax.errorbar(x, spreads, yerr=err, fmt="none", ecolor="#1a1a1a", capsize=4, linewidth=1.0)
+    ax.axhline(0, color="#666666", linewidth=0.7)
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"+{h}d" for h in horizons])
+    ax.set_xlabel("Forward-return horizon")
+    ax.set_ylabel("Q5 minus Q1 market-adjusted spread (%)")
+    ax.set_title(
+        f"Q5-Q1 market-adjusted spread with 95% CI, {len(horizons)} horizons "
+        f"({n_signif} significant at 5% two-sided)"
+    )
+    fig.tight_layout()
+    return fig
+
+
+def _make_ic_by_horizon_chart(stats: dict) -> matplotlib.figure.Figure:
+    """Chart 3 -- the significance-of-monotonicity headline. One panel,
+    x-axis horizon, y-axis pooled Spearman IC of (rank surprise, market-
+    adjusted forward return), with a 95% CI band derived from a Fisher
+    z-transform of the sample size (Slice 9's JSON reports IC and
+    p-value but no CI). Title names the number of horizons and how many
+    have p < 0.05 -- data-derived, not an interpretation."""
+    by_horizon = _mktadj_ic_by_horizon(stats)
+    horizons = sorted(by_horizon.keys())
+    ics = [by_horizon[h]["ic"] for h in horizons]
+    lows = [by_horizon[h]["ci_low"] for h in horizons]
+    highs = [by_horizon[h]["ci_high"] for h in horizons]
+    n_signif = sum(1 for h in horizons if by_horizon[h]["p_value"] < 0.05)
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.4))
+    x = list(range(len(horizons)))
+    ax.plot(x, ics, marker="o", color="#2b6cb0", linewidth=1.6, label="Spearman IC (mkt-adj)")
+    ax.fill_between(x, lows, highs, color="#2b6cb0", alpha=0.20, label="95% CI (Fisher z from n)")
+    ax.axhline(0, color="#666666", linewidth=0.7, linestyle="--")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"+{h}d" for h in horizons])
+    ax.set_xlabel("Forward-return horizon")
+    ax.set_ylabel("Pooled Spearman IC")
+    ax.set_title(
+        f"Pooled Spearman IC (rank surprise vs market-adjusted forward return), "
+        f"{len(horizons)} horizons ({n_signif} with p < 0.05)"
+    )
+    ax.legend(loc="lower right", fontsize=8, frameon=False)
+    fig.tight_layout()
+    return fig
+
+
+def _quintile_mean_caption(stats: dict) -> str:
+    """Data-derived caption for Chart 1. Reports how many horizons the
+    panel's lines are non-decreasing across all 5 quintiles (weaker
+    monotonicity), and the Q1/Q5 pair for the longest-horizon line as
+    the concrete anchor number. No interpretive 'clearly PEAD-shaped'
+    phrasing."""
+    by_horizon = _mktadj_by_horizon_and_quintile(stats)
+    horizons = sorted(by_horizon.keys())
+    non_dec_count = sum(
+        1 for h in horizons if _is_non_decreasing([m for _, m in by_horizon[h]])
+    )
+    if non_dec_count == len(horizons):
+        mono_clause = f"is non-decreasing from Q1 to Q5 at all {len(horizons)} horizons"
+    elif non_dec_count == 0:
+        mono_clause = f"is non-decreasing at none of the {len(horizons)} horizons"
+    else:
+        mono_clause = (
+            f"is non-decreasing at {non_dec_count} of {len(horizons)} horizons "
+            f"(the remaining {len(horizons) - non_dec_count} contain a Q_i > Q_(i+1) reversal)"
+        )
+    longest = horizons[-1]
+    q_rows = by_horizon[longest]
+    q1 = q_rows[0][1] * 100.0
+    q5 = q_rows[-1][1] * 100.0
+    return (
+        f"Each line is one forward-return horizon; the x-axis is the surprise "
+        f"quintile (1 = most negative, 5 = most positive) and the y-axis is the "
+        f"mean market-adjusted forward return in percent. The mkt-adj quintile "
+        f"sort {mono_clause}. At the longest horizon shown ({longest}d), Q1's "
+        f"mean is {q1:+.2f}% and Q5's mean is {q5:+.2f}%; the sign, ordering "
+        f"and inter-line spacing here are the numbers the Q5-Q1 spread and "
+        f"Spearman IC charts below quantify with confidence intervals."
+    )
+
+
+def _q5_q1_spread_caption(stats: dict) -> str:
+    """Data-derived caption for Chart 2. Reports smallest and largest
+    market-adjusted Q5-Q1 spreads across horizons, count significant at
+    5%, and whether the spread widens, narrows or is flat across horizons
+    -- direction gated on the actual first-vs-last comparison."""
+    by_horizon = _mktadj_spread_by_horizon(stats)
+    horizons = sorted(by_horizon.keys())
+    spreads_pct = [by_horizon[h]["spread"] * 100.0 for h in horizons]
+    t_stats = [by_horizon[h]["t_stat"] for h in horizons]
+    n_signif = sum(1 for t in t_stats if abs(t) > _T_STAT_5PCT)
+    h_min = horizons[spreads_pct.index(min(spreads_pct))]
+    h_max = horizons[spreads_pct.index(max(spreads_pct))]
+
+    # Direction: derive from first-vs-last, with an equality branch.
+    first, last = spreads_pct[0], spreads_pct[-1]
+    if last > first:
+        direction = f"widens with horizon (from {first:+.2f}% at {horizons[0]}d to {last:+.2f}% at {horizons[-1]}d)"
+    elif last < first:
+        direction = f"narrows with horizon (from {first:+.2f}% at {horizons[0]}d to {last:+.2f}% at {horizons[-1]}d)"
+    else:
+        direction = f"is roughly flat across horizons ({first:+.2f}% at both endpoints)"
+
+    if n_signif == len(horizons):
+        sig_clause = f"all {len(horizons)} horizons"
+    elif n_signif == 0:
+        sig_clause = f"none of the {len(horizons)} horizons"
+    else:
+        sig_clause = f"{n_signif} of {len(horizons)} horizons"
+    return (
+        f"Each bar is the market-adjusted mean return in the top surprise quintile "
+        f"minus the mean in the bottom, at that horizon; error bars are the +/-1.96 "
+        f"standard-error 95% CI. The spread {direction}, spans "
+        f"{min(spreads_pct):+.2f}% at {h_min}d to {max(spreads_pct):+.2f}% at "
+        f"{h_max}d, and clears the 5% two-sided significance bar (|t| > "
+        f"{_T_STAT_5PCT}) at {sig_clause}. Green marks a positive spread, red "
+        f"a negative one; the sign is picked from the data, not fixed."
+    )
+
+
+def _ic_by_horizon_caption(stats: dict) -> str:
+    """Data-derived caption for Chart 3. Reports minimum and maximum
+    Spearman IC (mkt-adj) across horizons, count with p < 0.05, and
+    whether the IC magnitude grows, shrinks, or stays flat first-to-last
+    -- direction gated on the actual comparison so a re-run that flips
+    the trajectory doesn't leave the caption asserting the wrong shape."""
+    by_horizon = _mktadj_ic_by_horizon(stats)
+    horizons = sorted(by_horizon.keys())
+    ics = [by_horizon[h]["ic"] for h in horizons]
+    p_signif = sum(1 for h in horizons if by_horizon[h]["p_value"] < 0.05)
+    ic_min = min(ics)
+    ic_max = max(ics)
+    h_min = horizons[ics.index(ic_min)]
+    h_max = horizons[ics.index(ic_max)]
+
+    # Trajectory of the |IC| magnitude, first-to-last. Weak "grows" claim
+    # is |IC[-1]| > |IC[0]|; equal magnitudes collapse to a flat branch.
+    m_first, m_last = abs(ics[0]), abs(ics[-1])
+    if m_last > m_first:
+        traj = f"the magnitude grows from |IC|={m_first:.3f} at {horizons[0]}d to {m_last:.3f} at {horizons[-1]}d"
+    elif m_last < m_first:
+        traj = f"the magnitude shrinks from |IC|={m_first:.3f} at {horizons[0]}d to {m_last:.3f} at {horizons[-1]}d"
+    else:
+        traj = f"the magnitude is flat at |IC|={m_first:.3f} at both endpoints"
+
+    if p_signif == len(horizons):
+        sig_clause = f"all {len(horizons)} horizons"
+    elif p_signif == 0:
+        sig_clause = f"none of the {len(horizons)} horizons"
+    else:
+        sig_clause = f"{p_signif} of {len(horizons)} horizons"
+    return (
+        f"Solid line: the pooled Spearman rank correlation between per-event "
+        f"surprise rank (`sue_rank_pct`) and per-event market-adjusted forward "
+        f"return, computed on the full ranked subset at each horizon; shaded "
+        f"band: 95% CI derived from a Fisher z-transform of the sample size "
+        f"(Slice 9's JSON reports IC and p-value but not an explicit CI). "
+        f"IC ranges from {ic_min:+.3f} at {h_min}d to {ic_max:+.3f} at {h_max}d; "
+        f"{traj}. The 5% two-sided significance bar (p < 0.05) is cleared at "
+        f"{sig_clause}."
+    )
+
+
+def _build_results_section(stats: dict) -> tuple[str, str]:
+    """The 'Results (does PEAD show up?)' section (heading, body).
+
+    Reports, in plain language: (a) whether each mkt-adj quintile sort is
+    non-decreasing, (b) each horizon's Q5-Q1 spread with t-stat and 5%
+    sig-flag, (c) each horizon's Spearman IC with p-value, and (d) a
+    single conclusion sentence gated on the three checks above.
+
+    The conclusion has four disjoint branches:
+      1. all-positive     -- every horizon non-decreasing AND every
+                             Q5-Q1 spread significantly positive AND
+                             every IC significantly positive
+      2. mixed            -- at least one but not all horizons pass the
+                             three-way check (some signal, some not)
+      3. negative         -- no horizon non-decreasing AND every
+                             significant spread is negative AND every
+                             significant IC is negative
+      4. degenerate       -- no horizon shows a spread OR an IC that
+                             clears 5%, in either direction
+    """
+    by_qh = _mktadj_by_horizon_and_quintile(stats)
+    by_sh = _mktadj_spread_by_horizon(stats)
+    by_ih = _mktadj_ic_by_horizon(stats)
+    horizons = sorted(set(by_qh) & set(by_sh) & set(by_ih))
+    if not horizons:
+        raise ValueError(
+            "No horizon has mkt-adj rows in all three of quantile_sort, "
+            "quantile_spread and spearman_ic -- cannot build the Results "
+            "section against the intersection."
+        )
+
+    # Per-horizon booleans, derived rather than hardcoded. `is_signif_pos`
+    # (spread) uses t_stat > +1.96 rather than abs(t) > 1.96 because the
+    # positive-PEAD conclusion needs a POSITIVELY-signed significant
+    # spread; a significant negative spread would be counter-evidence,
+    # not confirmation.
+    per_h = []
+    for h in horizons:
+        q_means = [m for _, m in by_qh[h]]
+        non_dec = _is_non_decreasing(q_means)
+        sp = by_sh[h]
+        ic = by_ih[h]
+        per_h.append(
+            {
+                "h": h,
+                "non_dec": non_dec,
+                "spread": sp["spread"],
+                "spread_t": sp["t_stat"],
+                "spread_sig_any": abs(sp["t_stat"]) > _T_STAT_5PCT,
+                "spread_sig_pos": sp["t_stat"] > _T_STAT_5PCT,
+                "spread_sig_neg": sp["t_stat"] < -_T_STAT_5PCT,
+                "ic": ic["ic"],
+                "ic_p": ic["p_value"],
+                "ic_sig_any": ic["p_value"] < 0.05,
+                "ic_sig_pos": ic["p_value"] < 0.05 and ic["ic"] > 0,
+                "ic_sig_neg": ic["p_value"] < 0.05 and ic["ic"] < 0,
+            }
+        )
+
+    all_non_dec = all(r["non_dec"] for r in per_h)
+    none_non_dec = all(not r["non_dec"] for r in per_h)
+    all_spread_sig_pos = all(r["spread_sig_pos"] for r in per_h)
+    all_ic_sig_pos = all(r["ic_sig_pos"] for r in per_h)
+    any_spread_sig = any(r["spread_sig_any"] for r in per_h)
+    any_ic_sig = any(r["ic_sig_any"] for r in per_h)
+    # Negative-side test: every significant spread is negatively signed
+    # AND every significant IC is negatively signed. Silent horizons (not
+    # significant either way) don't disqualify the negative reading, but
+    # they also don't confirm it -- the guard against a false negative
+    # branch is that at least ONE significant negative signal must exist.
+    sig_spreads_all_neg = (
+        any(r["spread_sig_neg"] for r in per_h)
+        and all(r["spread_sig_neg"] or not r["spread_sig_any"] for r in per_h)
+    )
+    sig_ics_all_neg = (
+        any(r["ic_sig_neg"] for r in per_h)
+        and all(r["ic_sig_neg"] or not r["ic_sig_any"] for r in per_h)
+    )
+
+    if all_non_dec and all_spread_sig_pos and all_ic_sig_pos:
+        conclusion = (
+            f"At every one of the {len(horizons)} horizons tested, the mkt-adj "
+            f"quintile sort is non-decreasing, the Q5-Q1 spread is significantly "
+            f"positive at 5%, and the pooled Spearman IC is significantly "
+            f"positive at 5%. The data supports a positive PEAD monotonicity "
+            f"signal at every horizon in this population."
+        )
+    elif not any_spread_sig and not any_ic_sig:
+        conclusion = (
+            f"No horizon shows either a Q5-Q1 spread or a Spearman IC that "
+            f"clears the 5% two-sided significance bar, in either direction. "
+            f"The data does not support a PEAD signal in this population -- "
+            f"any monotonicity in the quintile sort is within statistical "
+            f"noise."
+        )
+    elif none_non_dec and sig_spreads_all_neg and sig_ics_all_neg:
+        conclusion = (
+            f"No horizon's mkt-adj quintile sort is non-decreasing; every "
+            f"significant Q5-Q1 spread and every significant Spearman IC has "
+            f"a negative sign. The data supports a REVERSAL signal, not the "
+            f"standard positive-PEAD hypothesis."
+        )
+    else:
+        n_all_three = sum(
+            1
+            for r in per_h
+            if r["non_dec"] and r["spread_sig_pos"] and r["ic_sig_pos"]
+        )
+        conclusion = (
+            f"The picture is mixed: {n_all_three} of {len(horizons)} horizons "
+            f"clear all three positive-PEAD checks (non-decreasing sort, Q5-Q1 "
+            f"spread significant and positive at 5%, IC significant and "
+            f"positive at 5%); the remaining {len(horizons) - n_all_three} "
+            f"fail at least one. The data supports a partial, horizon-"
+            f"dependent PEAD signal but not a uniform positive one at every "
+            f"horizon."
+        )
+
+    # Per-horizon line items. Formatted so grep-style substring assertions
+    # in tests can pin the horizon, direction, and significance-flag
+    # without over-specifying number precision.
+    def _per_row_line(r: dict) -> str:
+        h = r["h"]
+        spread_pct = r["spread"] * 100.0
+        spread_flag = "significant at 5%" if r["spread_sig_any"] else "NOT significant at 5%"
+        nd_flag = "non-decreasing" if r["non_dec"] else "NOT non-decreasing"
+        ic_flag = "p < 0.05" if r["ic_sig_any"] else "p >= 0.05"
+        return (
+            f"  * At +{h}d: mkt-adj quintile sort is {nd_flag}; Q5-Q1 spread is "
+            f"{spread_pct:+.3f}% (t = {r['spread_t']:+.2f}, {spread_flag}); "
+            f"Spearman IC = {r['ic']:+.4f} ({ic_flag}, p = {r['ic_p']:.2g})."
+        )
+
+    per_horizon_block = "\n".join(_per_row_line(r) for r in per_h)
+
+    body = (
+        "This section reports the three market-adjusted checks that answer "
+        "the question the whole report was set up to test -- whether PEAD "
+        "shows up in this pilot dataset -- and its numbers are illustrated by "
+        "the three charts that follow.\n\n"
+        f"Per-horizon breakdown ({len(horizons)} horizons, all mkt-adj):\n"
+        f"{per_horizon_block}\n\n"
+        "Read that block as three columns per row: (1) is the sort non-"
+        "decreasing across Q1..Q5, i.e. does the mean return weakly rise "
+        "with the surprise quintile? (2) is the Q5-Q1 spread large enough "
+        "relative to its own standard error to reject a zero-spread null at "
+        "5%? (3) is the pooled per-event Spearman rank correlation between "
+        "surprise rank and forward return large enough relative to its own "
+        "sample size to reject a zero-correlation null at 5%? All three must "
+        "line up for a horizon to fully corroborate a positive-PEAD reading; "
+        "any single failing check leaves that horizon partially supported at "
+        "best.\n\n"
+        f"Conclusion. {conclusion}"
+    )
+    return ("Results (does PEAD show up?)", body)
+
+
 def build_final_event_study_report(
     output_path: Path = DEFAULT_OUTPUT,
     stats_path: Path = DEFAULT_INPUT_STATS,
     events_path: Path = DEFAULT_INPUT_EVENTS,
 ) -> Path:
-    """Build the final event-study report (scaffold, sub-slice 10a) and
-    return the path it was written to.
+    """Build the final event-study report and return the path it was
+    written to.
 
-    This scaffold ships two prose sections (Data & methodology, Limitations)
-    and NO charts -- `charts=[]` is deliberate; the Results section and its
-    charts are the job of sub-slice 10b. Split out from __main__ so tests
-    can call this directly instead of shelling out to the script.
-    """
+    Sections in order: Data & methodology -> Results (does PEAD show up?)
+    -> Limitations. Charts in order: quintile-mean by horizon, Q5-Q1
+    spread with 95% CI, Spearman IC by horizon with 95% band -- all three
+    on the market-adjusted return series specifically. Split out from
+    __main__ so tests can call this directly instead of shelling out to
+    the script."""
     stats = load_stats(stats_path)
     scope = load_events_scope(events_path)
 
     summary = _build_summary(stats, scope)
     sections = [
         _build_methodology_section(stats, scope, events_path),
+        _build_results_section(stats),
         _build_limitations_section(stats),
     ]
+    charts = [
+        (_make_quintile_mean_chart(stats), _quintile_mean_caption(stats)),
+        (_make_q5_q1_spread_chart(stats), _q5_q1_spread_caption(stats)),
+        (_make_ic_by_horizon_chart(stats), _ic_by_horizon_caption(stats)),
+    ]
 
-    return report_builder.build_pdf_report(
-        title="Event Study Result: Does Post-Earnings-Announcement Drift Show Up?",
-        output_path=output_path,
-        summary=summary,
-        sections=sections,
-        charts=[],
-    )
+    try:
+        return report_builder.build_pdf_report(
+            title="Event Study Result: Does Post-Earnings-Announcement Drift Show Up?",
+            output_path=output_path,
+            summary=summary,
+            sections=sections,
+            charts=charts,
+        )
+    finally:
+        # Close the figures we created so the process doesn't leak them
+        # across many test invocations or repeat runs.
+        for fig, _ in charts:
+            plt.close(fig)
 
 
 def main() -> None:
@@ -573,3 +1081,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
