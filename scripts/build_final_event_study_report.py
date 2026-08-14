@@ -215,7 +215,9 @@ def _build_summary(stats: dict, scope: dict) -> str:
     )
 
 
-def _build_methodology_section(stats: dict, scope: dict) -> tuple[str, str]:
+def _build_methodology_section(
+    stats: dict, scope: dict, events_path: Path
+) -> tuple[str, str]:
     """The 'Data & methodology' section (heading, body).
 
     Explains: which dataset, how the surprise is defined (mechanical +
@@ -228,7 +230,20 @@ def _build_methodology_section(stats: dict, scope: dict) -> tuple[str, str]:
     n_by_source = meta["n_by_sue_source"]
     n_analyst = int(n_by_source["analyst"])
     n_seasonal = int(n_by_source["seasonal"])
-    n_none = int(n_by_source.get("none", 0))
+    # 'none' is documented optional in load_stats; gate on presence so a
+    # missing key does NOT silently print '0 had neither' next to a nonzero
+    # analyst+seasonal gap (round-2 class-sweep of round-1 finding #1).
+    has_none = "none" in n_by_source
+    n_none = int(n_by_source["none"]) if has_none else 0
+    if has_none:
+        no_surprise_clause = f", and {n_none:,} had neither and carry no surprise value"
+    else:
+        no_surprise_clause = (
+            " (this stats build did not report the neither-source count "
+            "separately -- any announcements with neither an analyst nor a "
+            "seasonal surprise are absent from the ranked subset described "
+            "below rather than accounted for here)"
+        )
     n_sue_available = int(meta["n_sue_available"])
 
     # Scale dispersion between the two surprise measures. Comparing sds is
@@ -239,38 +254,43 @@ def _build_methodology_section(stats: dict, scope: dict) -> tuple[str, str]:
     # prose describing the wrong source as the wider one.
     sd_analyst = float(meta["sue_scale_by_source"]["analyst"]["sd"])
     sd_seasonal = float(meta["sue_scale_by_source"]["seasonal"]["sd"])
-    if sd_seasonal > 0 and sd_analyst > 0:
-        ratio = max(sd_analyst, sd_seasonal) / min(sd_analyst, sd_seasonal)
-        if sd_analyst > sd_seasonal:
-            wider, narrower = "analyst", "seasonal"
-            scale_clause = (
-                f"the {wider}-benchmarked surprise has sample sd {max(sd_analyst, sd_seasonal):.3f} "
-                f"and the {narrower}-benchmarked surprise sd {min(sd_analyst, sd_seasonal):.3f}, "
-                f"a {ratio:.2f}x dispersion gap"
-            )
-        elif sd_seasonal > sd_analyst:
-            wider, narrower = "seasonal", "analyst"
-            scale_clause = (
-                f"the {wider}-benchmarked surprise has sample sd {max(sd_analyst, sd_seasonal):.3f} "
-                f"and the {narrower}-benchmarked surprise sd {min(sd_analyst, sd_seasonal):.3f}, "
-                f"a {ratio:.2f}x dispersion gap"
-            )
-        else:
-            # Equal sds (exact tie -- rare on real data, but a hardcoded
-            # "wider is X" claim here would falsely imply a 1.00x gap that
-            # isn't there. Print the two numbers without a direction word.
+    if sd_analyst > 0 and sd_seasonal > 0:
+        # Non-degenerate case: pick which source is wider first, then
+        # format the sentence once -- collapsing the two byte-identical
+        # branches that the round-1 fix introduced (round-2 finding #6).
+        if sd_analyst == sd_seasonal:
             scale_clause = (
                 f"both the analyst-benchmarked and the seasonal-benchmarked surprises "
                 f"have the same sample sd {sd_analyst:.3f}, so there is no dispersion "
                 f"gap between them in this run"
             )
+        else:
+            ratio = max(sd_analyst, sd_seasonal) / min(sd_analyst, sd_seasonal)
+            wider = "analyst" if sd_analyst > sd_seasonal else "seasonal"
+            narrower = "seasonal" if wider == "analyst" else "analyst"
+            scale_clause = (
+                f"the {wider}-benchmarked surprise has sample sd {max(sd_analyst, sd_seasonal):.3f} "
+                f"and the {narrower}-benchmarked surprise sd {min(sd_analyst, sd_seasonal):.3f}, "
+                f"a {ratio:.2f}x dispersion gap"
+            )
     else:
-        # Defensive: a zero sd on either side would make the ratio
-        # undefined; the sentence is dropped in that (implausible) case
-        # rather than printed as "inf" or "nan".
+        # sd == 0 on either side is not a 'different scales' story; it is
+        # a data-integrity red flag -- one source has zero dispersion at
+        # all. Say so honestly rather than glossing it as scale mismatch
+        # (round-2 finding #4).
+        if sd_analyst == 0 and sd_seasonal == 0:
+            degenerate = "both the analyst-benchmarked and the seasonal-benchmarked surprises have"
+        elif sd_analyst == 0:
+            degenerate = "the analyst-benchmarked surprise has"
+        else:
+            degenerate = "the seasonal-benchmarked surprise has"
         scale_clause = (
-            f"the analyst-benchmarked surprise has sample sd {sd_analyst:.3f} and the "
-            f"seasonal-benchmarked surprise sd {sd_seasonal:.3f}"
+            f"{degenerate} zero sample dispersion in this run, which is a data-"
+            f"integrity signal (analyst sd {sd_analyst:.3f}, seasonal sd {sd_seasonal:.3f}) "
+            f"and not a normal cross-source scale story -- the rank normalization runs "
+            f"anyway on whichever source has non-zero dispersion, but the reader should "
+            f"treat any per-source numbers below with caution until the upstream data "
+            f"is re-checked"
         )
 
     rank_cells = meta["rank_cell_stats"]
@@ -289,7 +309,7 @@ def _build_methodology_section(stats: dict, scope: dict) -> tuple[str, str]:
 
     body = (
         "The dataset. This report is computed on the event table at "
-        f"`data/events/equity_events_1996_2013.parquet` -- {scope['n_events_total']:,} "
+        f"`data/events/{events_path.name}` -- {scope['n_events_total']:,} "
         f"U.S.-equity earnings announcements ({scope['start_date']} to "
         f"{scope['end_date']}) built by joining the cleaned I/B/E/S earnings "
         "table (see `reports/earnings_data_report.pdf` for the surprise-"
@@ -305,8 +325,8 @@ def _build_methodology_section(stats: dict, scope: dict) -> tuple[str, str]:
         "company's own year-over-year volatility -- the mechanical \"seasonal\" "
         "measure, a fallback for announcements without usable analyst coverage). "
         f"In this population, {n_analyst:,} announcements got an analyst-based "
-        f"measure, {n_seasonal:,} fell back to the seasonal measure, and "
-        f"{n_none:,} had neither and carry no surprise value. The two measures "
+        f"measure, {n_seasonal:,} fell back to the seasonal measure"
+        f"{no_surprise_clause}. The two measures "
         f"are on different scales -- {scale_clause} -- so they are never pooled "
         "on their raw scales for anything scale-sensitive. Instead, both are "
         "converted to a percentile rank (0 to 1) separately within each "
@@ -360,7 +380,10 @@ def _build_limitations_section(stats: dict) -> tuple[str, str]:
     n_day0_ok = int(meta["n_day0_ok"])
     n_sue_available = int(meta["n_sue_available"])
     n_by_source = meta["n_by_sue_source"]
-    n_none = int(n_by_source.get("none", 0))
+    # Same class-fix as methodology: gate 'none' on presence, don't
+    # silently default to zero (round-2 class-sweep of round-1 finding #1).
+    has_none = "none" in n_by_source
+    n_none = int(n_by_source["none"]) if has_none else 0
     # These two are optional in the JSON schema (see load_stats). Missing
     # keys are NOT the same as zero -- a stats build that didn't compute
     # them shouldn't get the "unusually clean state" false-negative.
@@ -375,14 +398,27 @@ def _build_limitations_section(stats: dict) -> tuple[str, str]:
     # falsely imply a mismatch that isn't there.
     gap = n_day0_ok - n_sue_available
     if gap > 0:
+        # Whether we can name the specific 'neither' subset that comprises
+        # the gap depends on whether the stats build reported it. If not,
+        # the population-gap clause names the gap and stops there -- do
+        # not falsely attribute the gap to a zero 'none' count.
+        if has_none:
+            gap_source_clause = (
+                f", comprising the {n_none:,} announcements with neither an "
+                f"analyst-based nor a seasonal-based surprise value"
+            )
+        else:
+            gap_source_clause = (
+                " (the specific per-source breakdown of that gap is not "
+                "reported by this stats build)"
+            )
         population_gap_clause = (
             f"The per-horizon summary-statistics table (in the Results section, "
             f"sub-slice 10b) runs on the full {n_day0_ok:,}-event day-0-ok "
             f"population, while the quintile sort and the Spearman IC further "
             f"below run on the {n_sue_available:,}-event subset with a non-null "
-            f"surprise -- a difference of {gap:,} events, comprising the "
-            f"{n_none:,} announcements with neither an analyst-based nor a "
-            f"seasonal-based surprise value. Any comparison of \"the mean at "
+            f"surprise -- a difference of {gap:,} events{gap_source_clause}. "
+            f"Any comparison of \"the mean at "
             f"horizon h\" from one table with \"the Q5-Q1 spread at horizon h\" "
             f"from the other implicitly conditions on that missing subset."
         )
@@ -517,7 +553,7 @@ def build_final_event_study_report(
 
     summary = _build_summary(stats, scope)
     sections = [
-        _build_methodology_section(stats, scope),
+        _build_methodology_section(stats, scope, events_path),
         _build_limitations_section(stats),
     ]
 

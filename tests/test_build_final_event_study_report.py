@@ -250,7 +250,7 @@ def test_methodology_section_dispersion_gated_on_which_source_is_wider():
     Equal sds must NOT be described as a gap."""
     stats = _make_synthetic_stats()
     scope = _make_synthetic_scope()
-    _, body = report._build_methodology_section(stats, scope)
+    _, body = report._build_methodology_section(stats, scope, report.DEFAULT_INPUT_EVENTS)
     assert "analyst-benchmarked surprise has sample sd 8.000" in body
     assert "seasonal-benchmarked surprise sd 2.500" in body
     assert "3.20x dispersion gap" in body
@@ -258,14 +258,14 @@ def test_methodology_section_dispersion_gated_on_which_source_is_wider():
     flipped = copy.deepcopy(stats)
     flipped["meta"]["sue_scale_by_source"]["analyst"]["sd"] = 2.5
     flipped["meta"]["sue_scale_by_source"]["seasonal"]["sd"] = 8.0
-    _, body_flipped = report._build_methodology_section(flipped, scope)
+    _, body_flipped = report._build_methodology_section(flipped, scope, report.DEFAULT_INPUT_EVENTS)
     assert "seasonal-benchmarked surprise has sample sd 8.000" in body_flipped
     assert "analyst-benchmarked surprise sd 2.500" in body_flipped
 
     equal_sds = copy.deepcopy(stats)
     equal_sds["meta"]["sue_scale_by_source"]["analyst"]["sd"] = 5.0
     equal_sds["meta"]["sue_scale_by_source"]["seasonal"]["sd"] = 5.0
-    _, body_equal = report._build_methodology_section(equal_sds, scope)
+    _, body_equal = report._build_methodology_section(equal_sds, scope, report.DEFAULT_INPUT_EVENTS)
     assert "no dispersion gap between them" in body_equal
     assert "1.00x" not in body_equal
     assert "wider" not in body_equal
@@ -274,7 +274,7 @@ def test_methodology_section_dispersion_gated_on_which_source_is_wider():
 def test_methodology_section_pulls_rank_cell_stats():
     stats = _make_synthetic_stats()
     scope = _make_synthetic_scope()
-    _, body = report._build_methodology_section(stats, scope)
+    _, body = report._build_methodology_section(stats, scope, report.DEFAULT_INPUT_EVENTS)
     assert "8 such cells" in body
     assert "median cell size 11 rows," in body  # trailing 'rows,' pins substring so '110' can't spoof it
     assert "smallest 2 --" in body  # trailing ' --' same reason
@@ -290,7 +290,7 @@ def test_methodology_section_derives_illustrative_years_from_scope():
     stats = _make_synthetic_stats()
     scope = _make_synthetic_scope()
     # Fixture scope: 2001-01-15 to 2005-12-20 -- first=2001, last=2005, mid=2003
-    _, body = report._build_methodology_section(stats, scope)
+    _, body = report._build_methodology_section(stats, scope, report.DEFAULT_INPUT_EVENTS)
     # Isolate the point-in-time paragraph (the second half of the section
     # after 'Point-in-time discipline.') and assert only that paragraph's
     # example years follow the scope.
@@ -332,8 +332,13 @@ def test_limitations_section_drops_gap_clause_when_no_gap():
 def test_limitations_section_derives_dup_and_contested_clause():
     stats = _make_synthetic_stats()
     _, body = report._build_limitations_section(stats)
-    assert "7" in body  # n_duplicate_firm_day_rows
-    assert "3" in body  # n_permno_contested
+    # Tight substring pins: full-clause fragments including the count and
+    # its trailing context so a stray '7' or '3' elsewhere in the body
+    # (percentages, other counters) can't spoof the assertion.
+    assert "7 of the 100 events used here" in body  # n_duplicate_firm_day_rows
+    # n_permno_contested = 3 rendered as '3 (3.0%)' with 'carry a permno' nearby
+    assert "carry a permno" in body
+    assert "3 (3.0%)" in body
 
 
 def test_limitations_section_drops_dup_clause_when_zero():
@@ -356,6 +361,56 @@ def test_limitations_section_reports_not_recorded_when_dup_keys_missing():
     assert "did not report" in body
     assert "unusually clean" not in body
     assert "cannot state" in body
+
+
+def test_limitations_section_reports_not_specified_when_none_missing():
+    """Round-2 class-sweep of round-1 finding #1: n_by_sue_source['none']
+    is documented optional in load_stats. If a build omits it, the
+    population-gap clause must NOT falsely attribute the gap to a zero
+    'neither' count; it must say the per-source breakdown of the gap is
+    unavailable."""
+    stats = _make_synthetic_stats()
+    # Drop 'none' and keep n_sue_available < n_day0_ok so the gap branch fires
+    del stats["meta"]["n_by_sue_source"]["none"]
+    _, body = report._build_limitations_section(stats)
+    assert "per-source breakdown of that gap is not reported" in body
+    assert "comprising the 0 announcements" not in body
+
+
+def test_methodology_section_reports_not_specified_when_none_missing():
+    """Same class as the limitations test above, one layer up: the
+    methodology 'A got analyst, B got seasonal, C had neither' sentence
+    must NOT print '0 had neither' when the 'none' count is absent."""
+    stats = _make_synthetic_stats()
+    del stats["meta"]["n_by_sue_source"]["none"]
+    scope = _make_synthetic_scope()
+    _, body = report._build_methodology_section(stats, scope, report.DEFAULT_INPUT_EVENTS)
+    assert "0 had neither" not in body
+    assert "did not report the neither-source count" in body
+
+
+def test_methodology_section_pathological_zero_sd_says_so_honestly():
+    """Round-2 finding #4: sd == 0 on either side is a data-integrity red
+    flag, not a 'different scales' story. Prose must call it out."""
+    stats = _make_synthetic_stats()
+    stats["meta"]["sue_scale_by_source"]["analyst"]["sd"] = 0.0
+    scope = _make_synthetic_scope()
+    _, body = report._build_methodology_section(stats, scope, report.DEFAULT_INPUT_EVENTS)
+    assert "zero sample dispersion" in body
+    assert "data-integrity signal" in body
+    # Must NOT print the standard 'different scales' framing with a 0-sd source
+    assert "a 0.00x dispersion gap" not in body
+
+
+def test_methodology_section_uses_derived_events_filename():
+    """Round-2 finding #2: the dataset sentence should reference the
+    actual events file name, not a hardcoded '1996_2013' basename."""
+    stats = _make_synthetic_stats()
+    scope = _make_synthetic_scope()
+    custom_path = Path("data/events/equity_events_2020_2023.parquet")
+    _, body = report._build_methodology_section(stats, scope, custom_path)
+    assert "equity_events_2020_2023.parquet" in body
+    assert "equity_events_1996_2013.parquet" not in body
 
 
 # --- integration --------------------------------------------------------------
