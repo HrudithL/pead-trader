@@ -211,9 +211,13 @@ def _is_dtype_compatible(actual: str, declared: str) -> bool:
     is spelled ``string`` on some builds and ``string[python]`` on
     others, and both are valid for a ``"string"`` column; int64 is
     acceptable where ``"Int64"`` (nullable) is declared as long as
-    there are no nulls (the caller does the null-check separately); a
-    tz-aware datetime is fine for a ``"datetime64[ns]"`` column as long
-    as the tz is UTC or naive.
+    there are no nulls (the caller does the null-check separately). For
+    a declared ``"datetime64[ns]"`` column we accept naive
+    ``datetime64[ns]`` and UTC-tagged ``datetime64[ns, UTC]``; any
+    other timezone is rejected, because downstream event-cube joins
+    assume a UTC / naive time axis and silently mixing in a
+    ``datetime64[ns, US/Eastern]`` column would produce off-by-hours
+    results at DST boundaries without any error surfacing.
     """
     if actual == declared:
         return True
@@ -223,7 +227,10 @@ def _is_dtype_compatible(actual: str, declared: str) -> bool:
         return True
     if declared == "float64" and actual in ("float64", "float32"):
         return True
-    if declared == "datetime64[ns]" and actual.startswith("datetime64"):
+    if declared == "datetime64[ns]" and actual in (
+        "datetime64[ns]",
+        "datetime64[ns, UTC]",
+    ):
         return True
     return False
 

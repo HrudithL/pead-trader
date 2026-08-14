@@ -176,11 +176,31 @@ class TestValidateDomain:
         assert not result.ok
         assert any("call_put" in e and "'X'" in e for e in result.errors)
 
+    def test_lowercase_call_put_flagged(self):
+        # Case matters: 'c' and 'p' are NOT valid, only 'C' and 'P'.
+        df = _valid_frame(_valid_row(call_put="c"))
+        result = sch.validate(df)
+        assert not result.ok
+        assert any("call_put" in e for e in result.errors)
+
     def test_negative_strike_flagged(self):
         df = _valid_frame(_valid_row(strike=-1.0))
         result = sch.validate(df)
         assert not result.ok
         assert any("strike" in e and "non-positive" in e for e in result.errors)
+
+    def test_zero_strike_flagged(self):
+        # "Strictly positive" means zero must be rejected too.
+        df = _valid_frame(_valid_row(strike=0.0))
+        result = sch.validate(df)
+        assert not result.ok
+        assert any("strike" in e and "non-positive" in e for e in result.errors)
+
+    def test_zero_multiplier_flagged(self):
+        df = _valid_frame(_valid_row(multiplier=0))
+        result = sch.validate(df)
+        assert not result.ok
+        assert any("multiplier" in e and "non-positive" in e for e in result.errors)
 
     def test_expiration_before_date_flagged(self):
         df = _valid_frame(_valid_row(
@@ -240,6 +260,11 @@ class TestDtypeCompat:
         ("float32", "float64", True),  # narrower precision, still numeric
         ("datetime64[ns]", "datetime64[ns]", True),
         ("datetime64[ns, UTC]", "datetime64[ns]", True),
+        # Non-UTC timezones are rejected: downstream event-cube joins
+        # assume a UTC / naive time axis and would silently produce
+        # off-by-hours results at DST boundaries.
+        ("datetime64[ns, US/Eastern]", "datetime64[ns]", False),
+        ("datetime64[ns, Asia/Tokyo]", "datetime64[ns]", False),
         ("int64", "float64", False),
         ("object", "string", False),
         ("float64", "int64", False),
