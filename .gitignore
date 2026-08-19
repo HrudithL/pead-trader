@@ -1,6 +1,11 @@
 # Agent memory: planning notes, working specs, and reference docs — private working notes, not PR artifacts
 memory/
 
+# Local-only safety tooling (device-specific, never a PR artifact). Every agent/human MUST
+# still create this file locally per CONTRIBUTING.md before removing any worktree — see the
+# Hard Prohibitions section for why it's mandatory despite being gitignored.
+worktree_remove.ps1
+
 # Python
 __pycache__/
 *.py[cod]

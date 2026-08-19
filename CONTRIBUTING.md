@@ -465,7 +465,7 @@ Auto-merge MUST NOT be enabled on any PR targeting `main`. Merge only happens af
 
 Rules:
 - **Never delete a branch that still has open PRs, unmerged commits, or ongoing work by any collaborator** — that check is what protects real work, not a blanket approval requirement on every deletion. If there is any doubt about whether a branch is fully merged, verify with `git branch --merged` before deleting rather than asking the human to confirm something git can already confirm.
-- Also remove the branch's worktree (`git worktree remove`) when cleaning up a merged branch that had one, so worktree directories don't accumulate as stale residue.
+- **Removing a worktree MUST go through `./worktree_remove.ps1 -Path <path>` at the repo root, never a bare `git worktree remove`.** This is gitignored, device-local safety tooling — create it once per clone/device if it doesn't already exist (see [§12](#12-hard-prohibitions) for why this is a hard rule, not a suggestion). It sweeps the worktree for any junction/symlink and unlinks it non-recursively before calling git's own removal, because `git worktree remove` itself can recurse through a Windows junction and delete the real directory it points at instead of just unlinking it — this happened for real on 2026-08-18 and destroyed a shared `data/` directory (see `memory/repo/current-state-and-next-actions.md`).
 - Report what was deleted (briefly, batched) rather than proposing it in advance — this is a completed action to log, not a pending one to gate.
 
 ---
@@ -527,6 +527,7 @@ The agent MUST NOT:
 - Merge a PR up the tree before the review agent's pass ([§7](#7-phase-5--review-agent)) has been read and triaged (at the Opus tier) for the latest diff.
 - Treat "the CI passed" as a substitute for the review agent's pass.
 - Spawn any subagent without pinning its model per [§2](#2-model-assignment-mandatory) — including spawning the review agent on anything other than Opus 5/4.8, or having the review agent's context include anything beyond the PR diff and description.
+- **Run `git worktree remove` directly, under any circumstances, instead of `./worktree_remove.ps1`** ([§10](#10-phase-8--branch-cleanup)). Never place a symlink/junction inside a worktree either, even temporarily — if a worktree needs read access to a shared directory (e.g. `data/`), copy only the specific files needed, never link the whole tree. Both rules exist because of a real, non-hypothetical incident: a junction into `data/` plus a bare `git worktree remove` destroyed that directory's entire contents on 2026-08-18.
 
 ---
 
