@@ -21,12 +21,15 @@ The agent's north star: **ship small, reviewable, reversible slices; keep it sim
 11. [Subjective vs. Objective Decisions](#11-subjective-vs-objective-decisions)
 12. [Hard Prohibitions](#12-hard-prohibitions)
 13. [Quick Reference Checklist](#13-quick-reference-checklist)
+14. [Markdown Formatting](#14-markdown-formatting)
+15. [Commit Identity](#15-commit-identity)
 
 ---
 
 ## 1. Core Principles
 
 - **Keep it simple and linear.** Build the smallest thing that satisfies the spec. Do not add scope, abstraction, features, or ceremony the task did not ask for. Do not make the project more than it is. When two paths both work, take the simpler one. When in doubt, do less. This applies to writing, not just code: comments, PR descriptions, and report prose should be terse and plain — a comment earns its place only by explaining a non-obvious *why*, not by narrating what the code already says. A verbose codebase and verbose PRs are their own kind of complexity, and cost real time and tokens to write, read, and review.
+- **The exact mechanics of how a plan gets executed are not the point — the outcome is.** What matters is that development is incremental and quick: small, clean branches, small, well-described PRs, fast, easy reviews. It does not matter whether a given plan ends up executed in exactly the shape first sketched, whether a slice gets merged or re-split, or whether the branch tree ends up one shape or another. What's not acceptable is bloat: needless process ceremony, repetitive review rounds on the same PR, or diffs padded past what the slice actually needs. If the mechanics ever start slowing delivery down instead of speeding it up, simplify the mechanics, not the standard for small/clean/fast.
 - **Use senior-developer discretion.** Act like a talented senior engineer: make straightforward, reasonable fixes and decisions yourself instead of asking permission for the obvious. Don't make silly mistakes, and know where the boundaries are (§11). The bar for interrupting the human is high — see [§11.1](#111-when-to-decide-vs-ask).
 - **Plan, then read your plan, then execute.** Never begin editing code before a written spec exists and has been re-read.
 - **One small feature per branch — err toward smaller, always.** A branch holds a few commits at
@@ -134,7 +137,7 @@ main
 - **Sub-branches:** branch off a feature. Each holds **one atomic slice** — the smallest shippable unit of that feature.
 - **Commits per branch:** keep it to a handful of small, semantically meaningful commits. If a branch grows large, split it into more sub-branches.
 - **Parallelism:** independent slices MUST be developed in parallel via subagents (see [§4](#4-phase-3--executing-slices-subagents)). Dependent slices are serialized behind their parent.
-- **Isolation:** a single repository checkout can only have one branch checked out at a time — if two subagents share it, one switching branches yanks the working tree out from under the other, and edits or commits can land on the wrong branch. Each subagent working an in-flight branch in parallel with another MUST get its own git worktree (or clone). If isolated worktrees genuinely aren't available, serialize the branch work instead of sharing one checkout.
+- **Isolation:** a single repository checkout can only have one branch checked out at a time — if two subagents share it, one switching branches yanks the working tree out from under the other, and edits or commits can land on the wrong branch. **Git worktrees MUST be used, always, not just when subagents happen to run in parallel.** Every branch being actively worked — whether by a subagent or by the orchestrating agent itself — gets its own worktree. This is not a parallelism optimization to skip when work feels sequential; it is the default way any branch in this repo is worked, because it is what keeps `main`'s and any in-flight branch's working tree safe from an accidental cross-branch edit. If isolated worktrees genuinely aren't available, serialize the branch work instead of sharing one checkout — do not fall back to a shared checkout as a shortcut.
 - **Every branch is a leaf until proven otherwise.** Only create children when needed.
 - **The tree shape is a guide, not a cage — small, mergeable increments are the goal, not strict hierarchy.** The default `root → feature → sub` shape above fits most work, but nothing prevents richer topologies when they keep each PR smaller:
   - **Stacked sub-branches within a feature.** If sub-branch B depends on sub-branch A's changes, cut B off A (not off the feature branch) and PR B into A. When A merges into the feature, B's PR retargets to the feature and reviews only B's incremental diff. This is preferable to piling both A's and B's changes onto one branch just to keep the tree "clean."
@@ -454,16 +457,16 @@ Auto-merge MUST NOT be enabled on any PR targeting `main`. Merge only happens af
 
 ## 10. Phase 8 — Branch Cleanup
 
-**Merged branches MUST be removed once they are no longer relevant.** Stale branches clutter the tree and confuse future work.
+**Merged branches are deleted by default, immediately, as part of completing the merge — this does not require a separate per-branch approval round.** Stale branches clutter the tree and confuse future work, and asking permission for a routine, already-decided cleanup step is exactly the kind of process bloat §1 says to avoid. Deleting a branch ref never deletes its commits — this project merges with merge commits (never squash, never rebase), so every commit a deleted branch contributed is still reachable from its parent's history. "Cleaned up" and "history preserved" are the same outcome here, not a tradeoff.
 
-- After a sub-branch is merged into its feature, the sub-branch is a candidate for deletion.
-- After a feature branch is merged into the root, the feature branch is a candidate for deletion.
-- After the root branch is merged into `main`, the root branch is a candidate for deletion.
+- After a sub-branch is merged into its feature, delete the sub-branch (local and remote) right away.
+- After a feature branch is merged into the root, delete the feature branch (local and remote) right away.
+- After the root branch is merged into `main`, delete the root branch (local and remote) right away.
 
 Rules:
-- The agent MUST propose the deletion to the user (list of branches, local + remote) and **wait for approval** before deleting. Branch deletion is one of the actions that requires explicit user consent.
-- Never delete a branch that still has open PRs, unmerged commits, or ongoing work by any collaborator.
-- Delete both the local and the remote branch once approved.
+- **Never delete a branch that still has open PRs, unmerged commits, or ongoing work by any collaborator** — that check is what protects real work, not a blanket approval requirement on every deletion. If there is any doubt about whether a branch is fully merged, verify with `git branch --merged` before deleting rather than asking the human to confirm something git can already confirm.
+- Also remove the branch's worktree (`git worktree remove`) when cleaning up a merged branch that had one, so worktree directories don't accumulate as stale residue.
+- Report what was deleted (briefly, batched) rather than proposing it in advance — this is a completed action to log, not a pending one to gate.
 
 ---
 
@@ -518,7 +521,7 @@ The agent MUST NOT:
 - Bypass hooks (`--no-verify`) for any reason.
 - Amend or rewrite commits that have already been pushed.
 - Enable auto-merge on any PR targeting `main`.
-- Delete any branch without user approval.
+- **Delete a branch that still has open PRs, unmerged commits, or ongoing work by any collaborator, without user approval.** (A fully-merged branch does not need this approval — see [§10](#10-phase-8--branch-cleanup) — this prohibition protects unfinished work, not routine cleanup.)
 - Commit secrets, tokens, credentials, or `.env` files. If one is discovered committed, stop and alert the user.
 - Make a genuine-fork decision on the human's behalf — a §11 category (product/UX, public API shape, naming, deps, architecture, security posture) or a choice with multiple materially-different reasonable implementations (see [§11.1](#111-when-to-decide-vs-ask)). Straightforward fixes are the agent's to make.
 - Merge a PR up the tree before the review agent's pass ([§7](#7-phase-5--review-agent)) has been read and triaged (at the Opus tier) for the latest diff.
@@ -549,11 +552,41 @@ Per PR:
 - [ ] Escalated only genuine forks (multiple reasonable implementations, or a §11 decision); recorded the human's answer.
 - [ ] Ran the review loop until it converged (typically 2 rounds); if round 2 still surfaced real substantive issues, split the PR into smaller ones (or simplified the affected section) rather than spawning round 3. Fixed any repeated-pattern finding as a class, not instance-by-instance. Noted the stop-or-split reason on the PR.
 - [ ] Merged up with a **merge commit** (not squash, not rebase).
-- [ ] Proposed branch deletion to the human.
+- [ ] Deleted the merged branch (and its worktree, if any) immediately — local and remote — no separate approval needed for a fully-merged branch.
 
 For `main`:
 - [ ] All features merged into root; CI green.
 - [ ] Posted consolidated summary to the human.
 - [ ] Received **explicit** approval.
 - [ ] Merged via merge commit. No force push. No auto-merge.
-- [ ] Proposed root-branch deletion.
+- [ ] Deleted the root branch (and its worktree, if any) immediately — local and remote.
+
+---
+
+## 14. Markdown Formatting
+
+Every `.md` file in this repository — `CONTRIBUTING.md` itself, everything under `memory/`, every README — follows one rule: **write each sentence on its own line.**
+
+Do not wrap prose into paragraph blocks where multiple sentences share a line.
+This has nothing to do with how the file renders (Markdown collapses single newlines within a block, so rendered output is unaffected) and everything to do with how it diffs.
+A one-sentence edit inside a wrapped paragraph shows a diff of the whole paragraph, because the line boundaries don't line up with the change; a one-sentence edit when each sentence already has its own line shows a diff of exactly that sentence.
+Small, readable diffs are the entire point of this project's small-PR discipline (§1, §6), and paragraph-wrapped Markdown works against that goal every time prose gets touched.
+
+This applies to new content and to content being substantively edited.
+It does not require a one-off pass to reformat every existing file that happens to still be paragraph-wrapped — reformat a file's prose to this convention when you are already editing it for a real reason, not as a standalone mechanical pass.
+
+Bullet points, headings, code blocks, and tables are unaffected by this rule — it governs prose sentences specifically.
+
+---
+
+## 15. Commit Identity
+
+Every commit in this repository is authored as:
+
+```
+name:  HrudithL
+email: hrudith.l@gmail.com
+```
+
+Set this in every fresh clone or worktree before committing — `git config user.name "HrudithL"` and `git config user.email "hrudith.l@gmail.com"`, locally is sufficient if the global config already matches; verify with `git config user.name` / `git config user.email` rather than assuming.
+Do not use a placeholder identity, a tool-generated default, or any other email/name variant, even temporarily — if a commit ever lands under the wrong identity, fix the local config immediately so it does not happen again, but do not amend or rewrite any commit that has already been pushed (§12's hard prohibition on rewriting pushed history applies here too).
