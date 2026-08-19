@@ -148,6 +148,46 @@ main
   The rule is only this: every *non-root* branch has exactly one parent branch it merges up into, that parent is a branch (never `main`), and the chain terminates at the root; root itself is the one branch permitted to merge to `main`. What the intermediate shape looks like — flat fan, deep stack, mixed — is whatever keeps each PR small and each merge clean.
 - **Naming when stacking.** Three-level nesting (`feat/<spec>/<feature>/<slice>`) does not work once `feat/<spec>/<feature>` already exists as a pushed ref — git cannot nest a ref under an existing leaf ref. Use a flattened form for sub-branches: `feat/<spec>/<feature>-<slice>` (e.g. `feat/phase1-equity-pead/audit-reports-equity-data-report`). For a stacked sub-of-sub, append the further slug to the parent sub-branch's full name: e.g. B stacked on A becomes `feat/<spec>/<feature>-<slice-a>-<slice-b>` (e.g. `feat/phase1-equity-pead/audit-reports-equity-data-report-fix-header`) — same principle, one more hyphen, still flat.
 
+### Worktree Data Access — Mandatory Setup and Cleanup Rules
+
+Read this before creating any worktree that needs to read `data/` (gitignored, real, and often irreplaceable — WRDS-pulled and processor-hours-derived research data lives here).
+A junction into `data/` combined with a bare `git worktree remove` destroyed that directory's entire contents on 2026-08-18 (see `memory/repo/current-state-and-next-actions.md` for the full incident writeup).
+Every rule below exists because that actually happened, not as a hypothetical precaution.
+
+**Setup — copy, never symlink or junction.**
+
+- **NEVER create a symlink or junction anywhere inside a worktree that points at `data/` (or any subfolder of it, or anything else outside the worktree).**
+  This is an absolute rule, no exceptions, on any platform — Windows junctions are the specific failure mode that actually happened, but the same class of risk applies to symlinks too, and a true directory symlink was never confirmed safe against git's own removal logic in the first place (it also could not even be created on this device without Administrator privileges or Developer Mode, neither of which is enabled here).
+- Instead, **copy only the specific files the slice's scripts actually read** into the worktree's own `data/` subtree (a real `Copy-Item`, not a link).
+  Most slices only need a handful of small parquet files — e.g. one file under `data/events/`, one under `data/features/positions/`, one under `data/features/portfolio/`.
+  Identify the exact files a slice needs by reading its scripts first; do not copy the whole `data/` tree "just in case."
+- A real copy is safe to delete recursively, because deleting a copy can only ever delete the copy.
+  This is what makes the setup safe: it is a structural property of the files themselves, not a discipline anyone has to remember correctly every time.
+- If a slice's scripts write **new** output (e.g. a new `data/results/...` artifact) inside a worktree, that output is local to the worktree by default.
+  Promoting it to the project's canonical `data/` in the main checkout is a deliberate, explicit, manual copy-back step — never automatic, never a link, and never something that happens as a side effect of a merge (merges only ever move code, never `data/` contents, since `data/` is gitignored and carries no tracked files to merge in the first place).
+
+**Cleanup — `worktree_remove.ps1` only, never a bare `git worktree remove`.**
+
+- This is already a hard prohibition (see [§10](#10-phase-8--branch-cleanup) and [§12](#12-hard-prohibitions)) — repeated here because it is part of the same safety story.
+  `./worktree_remove.ps1 -Path <path>` (gitignored, device-local; recreate it in any fresh clone or device before removing a worktree there) sweeps the target for reparse points, unlinks any it finds non-recursively, verifies the sweep came back clean, and only then calls the real `git worktree remove` — aborting instead of proceeding if anything fails to unlink.
+- Under the copy-only rule above, a worktree should never contain a reparse point in the first place, so the sweep should normally find nothing.
+  Run it anyway, every single time, with no exceptions — the sweep is what catches the case where the copy-only rule was violated by mistake, which is exactly the scenario it exists to catch.
+
+**Recommended additional layers (not yet applied as of 2026-08-18 — worth setting up when convenient, not a blocker to resuming work).**
+
+- An NTFS deny-delete ACL (`icacls <path> /deny "$env:USERNAME:(OI)(CI)(DE,DC)" /T`) on the expensive-to-regenerate raw/processed layers (`data/raw_wrds/`, `data/raw_equity/`, `data/raw_options/`, `data/normalized_equity/`, `data/earnings/`, `data/events/`, `data/metadata/`), leaving `data/features/` and `data/results/` freely writable since those regenerate quickly from the protected layers.
+  This blocks the delete at the filesystem level regardless of which tool or command issues it.
+- An independent offline backup or mirror of `data/` to a location outside this repo entirely (a second drive, a cloud folder, anything not reachable through any checkout of this repo), refreshed periodically or after major milestones.
+  This is the only layer that protects against a failure mode nobody has thought of yet, and it should exist regardless of how strong the other layers are.
+
+**New-worktree checklist.**
+
+1. Cut the branch and worktree per this section's existing rules.
+2. Identify the exact `data/` files the slice's scripts need — read the scripts first, do not guess.
+3. Copy those specific files (never the whole tree, never a link) into the new worktree's own `data/` subtree, creating subfolders as needed.
+4. Do the slice's work.
+5. Remove the worktree with `./worktree_remove.ps1 -Path <path>` only.
+
 ---
 
 ## 5. Phase 3 — Executing Slices (Subagents)
@@ -540,9 +580,11 @@ Before every task:
 
 Per slice:
 - [ ] Cut a sub-branch off its correct parent (feature branch, or another sub-branch when stacking per [§4](#4-phase-2--the-branch-tree)); used the flattened `feat/<spec>/<feature>-<slice>` form.
+- [ ] If the slice's worktree needs `data/` access: copied only the specific files its scripts read (never a symlink/junction, never the whole tree) — see [§4's Worktree Data Access rules](#4-phase-2--the-branch-tree).
 - [ ] Spawned a subagent with a full context contract (goal, branch, files, acceptance, non-goals, escalation triggers).
 - [ ] Made a small number of tightly scoped commits, keeping the diff under the ~800-line split trigger ([§6](#6-phase-4--pull-requests)); split into a stacked sub-branch mid-implementation if it started growing past.
 - [ ] Opened a PR to the parent branch with a complete description.
+- [ ] Removed the worktree with `./worktree_remove.ps1` only, never a bare `git worktree remove`.
 
 Per PR:
 - [ ] Spawned the review subagent as part of opening the PR — on Opus 5/4.8, context-limited to the PR diff + description only, nothing more.
