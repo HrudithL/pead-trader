@@ -1,0 +1,31 @@
+# Raw WRDS pull and normalized equity/earnings/events data -- large, and not ours to redistribute
+data/raw_wrds/
+data/raw_equity/
+data/normalized_equity/
+data/earnings/
+data/events/
+data/results/
+data/metadata/
+
+# Large regeneratable derived data (event panels, position lists) -- rebuilt by the scripts,
+# tens of MB each, not useful to diff or version in git
+data/*.parquet
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Scratch / working files
+*.tmp
+*_to_delete/
