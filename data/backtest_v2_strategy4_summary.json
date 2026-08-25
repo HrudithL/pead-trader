@@ -1,0 +1,23 @@
+{
+  "name": "strategy4_tilted",
+  "trim": 0.15,
+  "tilt_power": 1.0,
+  "base_unit_fraction": 0.002,
+  "liquidity_cap_frac": 0.05,
+  "n_positions": 119130,
+  "total_return": 1.7147442313906933,
+  "annualized_return": 0.05261535259622896,
+  "annualized_vol": 0.08642794704408607,
+  "sharpe": 1.018687882292674,
+  "max_drawdown": -0.13069567778981514,
+  "avg_gross_exposure": 24912033.863095053,
+  "avg_leverage_vs_initial_capital": 2.4912033863095053,
+  "avg_n_open_positions": 1406.0562347188263,
+  "max_n_open_positions": 2586,
+  "total_transaction_costs": 4456823.176114276,
+  "annual_turnover_x_capital": 21.02552138790838,
+  "pct_liquidity_capped": 0.08520600870743592,
+  "final_nav": 27147442.313906934,
+  "n_quarters_leverage_capped": 46,
+  "total_positions_dropped_by_priority_cap": 6763
+}

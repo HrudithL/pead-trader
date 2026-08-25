@@ -1,0 +1,19 @@
+{
+  "name": "balanced",
+  "n_positions": 34343,
+  "total_return": 1.4622255822006338,
+  "annualized_return": 0.04735190613815732,
+  "annualized_vol": 0.09837092638730147,
+  "sharpe": 0.7632092111699125,
+  "max_drawdown": -0.17533114792058116,
+  "avg_gross_exposure": 20224763.320588227,
+  "avg_leverage_vs_initial_capital": 2.022476332058823,
+  "avg_n_open_positions": 457.78932355338225,
+  "max_n_open_positions": 825,
+  "total_transaction_costs": 3158624.502462075,
+  "annual_turnover_x_capital": 16.111896174313905,
+  "pct_liquidity_capped": 0.18297760824622195,
+  "final_nav": 24622255.822006337,
+  "n_quarters_leverage_capped": 0,
+  "max_nav_check_diff": 2.60770320892334e-08
+}

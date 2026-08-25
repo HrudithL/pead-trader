@@ -1,0 +1,19 @@
+{
+  "name": "rankweighted",
+  "n_positions": 173415,
+  "total_return": 1.0996808339894808,
+  "annualized_return": 0.0388213761505698,
+  "annualized_vol": 0.06452376845497551,
+  "sharpe": 0.8750702486702858,
+  "max_drawdown": -0.13962889570946585,
+  "avg_gross_exposure": 20066061.95199777,
+  "avg_leverage_vs_initial_capital": 2.0066061951997773,
+  "avg_n_open_positions": 1934.0941320293398,
+  "max_n_open_positions": 3547,
+  "total_transaction_costs": 3577067.750407052,
+  "annual_turnover_x_capital": 17.72454829520834,
+  "pct_liquidity_capped": 0.9932012801660756,
+  "final_nav": 20996808.33989481,
+  "n_quarters_leverage_capped": 70,
+  "max_nav_check_diff": 2.60770320892334e-08
+}

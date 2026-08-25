@@ -1,0 +1,8 @@
+{
+  "n_pairs": 141406,
+  "autocorrelation_lag4": 0.05046291193690608,
+  "literature_reference_bernard_thomas_1990": -0.24,
+  "decile1_lag4_mean_sue_t": -0.5810730334218726,
+  "decile10_lag4_mean_sue_t": 1.4401624866104157,
+  "conclusion": "persistence_not_reversal"
+}

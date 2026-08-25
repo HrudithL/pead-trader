@@ -1,0 +1,23 @@
+{
+  "name": "strategy5_size_sector_neutral",
+  "trim": 0.15,
+  "tilt_power": 1.0,
+  "base_unit_fraction": 0.0015,
+  "liquidity_cap_frac": 0.05,
+  "n_positions": 119130,
+  "total_return": 1.1709851638994582,
+  "annualized_return": 0.040604165005516446,
+  "annualized_vol": 0.05134982447972894,
+  "sharpe": 1.1708692917633894,
+  "max_drawdown": -0.10831499898947901,
+  "avg_gross_exposure": 15922134.74908865,
+  "avg_leverage_vs_initial_capital": 1.592213474908865,
+  "avg_n_open_positions": 1406.0562347188263,
+  "max_n_open_positions": 2586,
+  "total_transaction_costs": 2848909.235899073,
+  "annual_turnover_x_capital": 13.601607996550939,
+  "pct_liquidity_capped": 0.03149669867081856,
+  "final_nav": 21709851.638994582,
+  "n_quarters_leverage_capped": 0,
+  "total_positions_dropped_by_priority_cap": 0
+}

@@ -1,0 +1,19 @@
+{
+  "name": "extreme",
+  "n_positions": 34343,
+  "total_return": 1.5432376367219407,
+  "annualized_return": 0.049094205939049784,
+  "annualized_vol": 0.1041976827824803,
+  "sharpe": 0.7604501190031218,
+  "max_drawdown": -0.18479505253775402,
+  "avg_gross_exposure": 22103456.011446882,
+  "avg_leverage_vs_initial_capital": 2.210345601144688,
+  "avg_n_open_positions": 457.78932355338225,
+  "max_n_open_positions": 825,
+  "total_transaction_costs": 3476377.3974800548,
+  "annual_turnover_x_capital": 17.75578473313298,
+  "pct_liquidity_capped": 0.34956177386949305,
+  "final_nav": 25432376.367219407,
+  "n_quarters_leverage_capped": 12,
+  "max_nav_check_diff": 2.2351741790771484e-08
+}

@@ -1,0 +1,23 @@
+{
+  "name": "strategy6_leverage25x",
+  "trim": 0.15,
+  "tilt_power": 1.0,
+  "base_unit_fraction": 0.003,
+  "liquidity_cap_frac": 0.05,
+  "n_positions": 119130,
+  "total_return": 2.4048037354128526,
+  "annualized_return": 0.06492771889104043,
+  "annualized_vol": 0.12084947947795689,
+  "sharpe": 1.02171751966166,
+  "max_drawdown": -0.16625828046264454,
+  "avg_gross_exposure": 40002725.772588246,
+  "avg_leverage_vs_initial_capital": 4.000272577258825,
+  "avg_n_open_positions": 1406.0562347188263,
+  "max_n_open_positions": 2586,
+  "total_transaction_costs": 6845799.205628588,
+  "annual_turnover_x_capital": 35.102086636041385,
+  "pct_liquidity_capped": 0.07249661217311075,
+  "final_nav": 34048037.354128525,
+  "n_quarters_leverage_capped": 0,
+  "total_positions_dropped_by_priority_cap": 0
+}
