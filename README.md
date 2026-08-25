@@ -178,6 +178,30 @@ Each v2 backtest script writes `data/backtest_v2_<name>.csv` (daily NAV/exposure
 `data/backtest_v2_<name>_summary.json` (headline stats), and, where applicable,
 `data/backtest_v2_<name>_quarterlog.csv` (the trailing-NAV sizing decision made each quarter).
 
+**Reports (built from the above, locally runnable):**
+```
+scripts/29_v2_strategy_charts.py                # NAV/drawdown/comparison charts for all 8 strategies
+scripts/30_build_strategy_showcase_report.py    # reports/PEAD_Strategy_Showcase.pdf -- performance
+scripts/31_build_development_report.py          # reports/PEAD_Strategy_Development.pdf -- the "why"
+scripts/32_build_evidence_report.py             # reports/PEAD_Report.pdf -- does PEAD exist (v1 evidence)
+```
+`scripts/05_build_pdf.py` (the original, cloud-sandbox-only version of the evidence report,
+including the now-superseded 3-strategy v1 backtest section) is left in place for history but
+superseded by `scripts/32_build_evidence_report.py` for local regeneration.
+
+## Reports
+
+Three PDFs in `reports/`, meant to be read in this order:
+
+1. **`PEAD_Report.pdf`** -- does the PEAD effect actually exist in this data? Decile-sorted event
+   study, quarter-clustered significance test, size/book-to-market robustness check, and
+   sector/size/era subsampling.
+2. **`PEAD_Strategy_Showcase.pdf`** -- given that it exists, how well did each of the 8 ways of
+   trading it actually perform? Full metrics, NAV curves, drawdowns, and a recommendation.
+3. **`PEAD_Strategy_Development.pdf`** -- why was each strategy built the way it was? The
+   diagnostic reasoning behind each iteration, in plain language, including two deliberate dead
+   ends (the EAR signal test and the SUE reversal test).
+
 ## Data
 
 Raw and large intermediate data files are not tracked in this repo (see `.gitignore`) -- they are
