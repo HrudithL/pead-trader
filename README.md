@@ -8,8 +8,9 @@ This repo documents the full evolution: from first establishing that the PEAD ef
 this data, through building and comparing eight distinct trading strategy designs, to an
 evidence-based research pass on how to push the strategy's return higher without simply adding
 uncontrolled risk, to extending the whole question to the options market using OptionMetrics IvyDB
-data. Every numbered script is independently re-runnable, and the run order below reproduces the
-entire project from raw data to final backtest results.
+data and designing a risk-reversal strategy around it. Every numbered script is independently
+re-runnable, and the run order below reproduces the entire project from raw data to final backtest
+results.
 
 ## Results summary
 
@@ -210,9 +211,29 @@ underlying-price file (`secprd2011`) converted cleanly, so the corruption is spe
 option-price file. 2013 is also truncated at end-August in this OptionMetrics extract. See
 `PEAD_Options_Report.pdf` Section 1 for the full writeup.
 
+**Options strategy pipeline (turns the options-PEAD evidence above into a backtested risk-reversal
+strategy, designed against prior research on options/earnings and the volatility risk premium --
+see `PEAD_Options_Strategy.pdf` Section 1 for citations):**
+```
+scripts/40_underlying_spot_price.py           # day0 closing price per event, from secprd (for RR notional)
+scripts/41_risk_reversal_returns.py           # RR returns: gross, net-of-cost, market-adjusted; decile stats
+scripts/42_options_strategy_backtest.py       # quarterly D10/D1 book, naked options vs. risk reversal
+scripts/43_options_strategy_charts.py         # NAV curves, cross-strategy Sharpe comparison (figures 24-27)
+scripts/44_build_options_strategy_report.py   # reports/PEAD_Options_Strategy.pdf
+```
+Headline: a naked long-options book on D10/D1 looks spectacular gross of costs and is barely
+profitable (Sharpe 0.32) net of this project's own empirically-estimated ~11.8% bid-ask cost --
+single-name option spreads are much wider than equity spreads. A **risk reversal** (long call +
+short put on D10, mirrored on D1) expresses the same view for close to zero net premium, avoids
+the equity strategies' unresolved stock-borrow problem, and nets a Sharpe of **1.03** after the
+same realistic costs and a market-beta adjustment -- comparable to the mid-tier equity strategies,
+at a fraction of the capital and no stock borrow. See `PEAD_Options_Strategy.pdf` for the full
+argument, including why naive NAV compounding of a naked-options book is actively misleading
+(Section 2) and a literature-grounded next step (option-implied skew as a refinement, Section 7).
+
 ## Reports
 
-Four PDFs in `reports/`, meant to be read in this order:
+Five PDFs in `reports/`, meant to be read in this order:
 
 1. **`PEAD_Report.pdf`** -- does the PEAD effect actually exist in this data? Decile-sorted event
    study, quarter-clustered significance test, size/book-to-market robustness check, and
@@ -229,6 +250,11 @@ Four PDFs in `reports/`, meant to be read in this order:
    (-10.79%, t=-6.29), and a long-straddle robustness cut shows a smaller but still significant
    decile-ordered residual (+3.98%, t=5.22) -- so leverage amplifies the same directional signal,
    with a real but secondary volatility component alongside it.
+5. **`PEAD_Options_Strategy.pdf`** -- given that options-market PEAD exists, what's the best way
+   to trade it? Reviews prior research on options/earnings and the volatility risk premium, then
+   designs and backtests a risk-reversal strategy (Sharpe 1.03 net of realistic costs, market-
+   adjusted) against a naked-options baseline (Sharpe 0.32 net of costs) and the 8 equity
+   strategies, and explains a naive-NAV-compounding pitfall caught along the way.
 
 ## Data
 
