@@ -7,8 +7,9 @@ WRDS-pulled IBES/CRSP/Compustat data in `data/raw_wrds/`, `data/normalized_equit
 This repo documents the full evolution: from first establishing that the PEAD effect exists in
 this data, through building and comparing eight distinct trading strategy designs, to an
 evidence-based research pass on how to push the strategy's return higher without simply adding
-uncontrolled risk. Every numbered script is independently re-runnable, and the run order below
-reproduces the entire project from raw data to final backtest results.
+uncontrolled risk, to extending the whole question to the options market using OptionMetrics IvyDB
+data. Every numbered script is independently re-runnable, and the run order below reproduces the
+entire project from raw data to final backtest results.
 
 ## Results summary
 
@@ -189,9 +190,29 @@ scripts/32_build_evidence_report.py             # reports/PEAD_Report.pdf -- doe
 including the now-superseded 3-strategy v1 backtest section) is left in place for history but
 superseded by `scripts/32_build_evidence_report.py` for local regeneration.
 
+**Options pipeline (extends the same SUE deciles into the options market via OptionMetrics IvyDB
+data, mounted separately at `D:/OptionMetrics/parquet/` -- not tracked in this repo, ~100GB, see
+[Data](#data) below):**
+```
+scripts/options_lib.py                   # shared helpers: streamed/filtered opprcd scans, contract picker
+scripts/33_build_trading_calendar.py     # OM trading-day calendar from secprd*.parquet (1996-2013 ex-2011)
+scripts/34_link_events_secid.py          # rebuilds the decile event panel locally, links permno -> secid
+scripts/35_select_entry_contracts.py     # per event: near-ATM call + put (delta~+-0.50, DTE>=95d) at day0
+scripts/36_forward_option_prices.py      # same-contract buy-and-hold mid price at +{1,5,10,20,40,60}d
+scripts/37_decile_summary_options.py     # decile x horizon stats for call/put/straddle, quarter-clustered
+scripts/38_charts_options.py             # decile drift, spread, coverage charts (figures 18-23)
+scripts/39_build_options_report.py       # reports/PEAD_Options_Report.pdf
+```
+**2011 is excluded from every options result:** `opprcd2011.sas7bdat` (14.6GB) is present on the
+source drive but structurally corrupt -- confirmed independently with two different SAS readers
+(pyreadstat and pandas both fail, on the first row/chunk respectively). That year's
+underlying-price file (`secprd2011`) converted cleanly, so the corruption is specific to the
+option-price file. 2013 is also truncated at end-August in this OptionMetrics extract. See
+`PEAD_Options_Report.pdf` Section 1 for the full writeup.
+
 ## Reports
 
-Three PDFs in `reports/`, meant to be read in this order:
+Four PDFs in `reports/`, meant to be read in this order:
 
 1. **`PEAD_Report.pdf`** -- does the PEAD effect actually exist in this data? Decile-sorted event
    study, quarter-clustered significance test, size/book-to-market robustness check, and
@@ -201,6 +222,13 @@ Three PDFs in `reports/`, meant to be read in this order:
 3. **`PEAD_Strategy_Development.pdf`** -- why was each strategy built the way it was? The
    diagnostic reasoning behind each iteration, in plain language, including two deliberate dead
    ends (the EAR signal test and the SUE reversal test).
+4. **`PEAD_Options_Report.pdf`** -- does the same decile-sorted drift show up in the *options*
+   market? 126,008 earnings events (1996-2013 ex-2011) matched to a near-ATM call and/or put;
+   the D10-D1 spread on near-ATM calls is +14.38% at 60 days (t=4.69, quarter-clustered) versus
+   +3.05% for the underlying stock over the same events, near-ATM puts show the mirror pattern
+   (-10.79%, t=-6.29), and a long-straddle robustness cut shows a smaller but still significant
+   decile-ordered residual (+3.98%, t=5.22) -- so leverage amplifies the same directional signal,
+   with a real but secondary volatility component alongside it.
 
 ## Data
 
@@ -211,6 +239,13 @@ MB each, rebuilt by running the scripts above in order). Small result files that
 findings (backtest CSVs, summary JSONs, sweep results, the decay-day cell table) are tracked under
 `data/` since they're lightweight and are the actual evidence behind every claim in this README
 and in the conversation history that produced it.
+
+The options pipeline additionally reads raw OptionMetrics IvyDB files from `D:/OptionMetrics/parquet/`
+(an external drive, ~100GB, not tracked in this repo and not reproducible from anything checked in
+here) and writes its own regeneratable intermediates to `data/event_options/`. In this git
+worktree, `data/events/`, `data/earnings/`, `data/metadata/`, and `data/results/` are NTFS
+junctions to the corresponding folders in the main checkout rather than copies, so the raw WRDS
+pull isn't duplicated on disk.
 
 ## Requirements
 

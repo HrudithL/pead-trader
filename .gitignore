@@ -10,6 +10,7 @@ data/metadata/
 # Large regeneratable derived data (event panels, position lists) -- rebuilt by the scripts,
 # tens of MB each, not useful to diff or version in git
 data/*.parquet
+data/event_options/
 
 # Python
 __pycache__/
