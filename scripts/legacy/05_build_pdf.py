@@ -1,19 +1,25 @@
-"""Assemble the final PDF report: data/output/PEAD_Report.pdf"""
-import pandas as pd
+"""Assemble the final PDF report -- ORIGINAL cloud-sandbox version, kept for history.
+
+Superseded by scripts/equity_pead/32_build_evidence_report.py for local regeneration (see
+README). Left runnable in principle (paths now resolve locally, via common.paths, instead of the
+original /root/pead_report cloud-sandbox paths) but its content -- including the since-superseded
+3-strategy v1 backtest section -- is not maintained; writes to PEAD_Report_legacy.pdf, not
+PEAD_Report.pdf, so it can never silently overwrite 32's current output.
+"""
+import sys
 from pathlib import Path
-from reportlab.lib.pagesizes import letter
+import pandas as pd
 from reportlab.lib import colors
 from reportlab.lib.units import inch
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak, HRFlowable,
-    KeepTogether
-)
+from reportlab.platypus import Paragraph, Spacer, Image, PageBreak, KeepTogether
 
-ROOT = Path("/root/pead_report")
-DATA = ROOT / "data"
-FIG = ROOT / "figures"
-OUT = ROOT / "output" / "PEAD_Report.pdf"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, REPORTS_DIR, FIGURES_DIR
+from common.report_pdf import new_report
+
+DATA = DATA_DIR
+FIG = FIGURES_DIR
+OUT = REPORTS_DIR / "PEAD_Report_legacy.pdf"
 OUT.parent.mkdir(exist_ok=True)
 
 decile_stats = pd.read_csv(DATA / "decile_horizon_stats.csv")
@@ -24,46 +30,7 @@ era = pd.read_csv(DATA / "subsample_era.csv")
 ff_spread_stats = pd.read_csv(DATA / "ff_spread_horizon_stats.csv")
 ff_coverage = pd.read_csv(DATA / "ff_coverage_stats.csv")
 
-styles = getSampleStyleSheet()
-styles.add(ParagraphStyle(name="Body", parent=styles["Normal"], fontSize=9.7, leading=13.5, spaceAfter=8))
-styles.add(ParagraphStyle(name="H1", parent=styles["Heading1"], fontSize=16, spaceBefore=4, spaceAfter=8, textColor=colors.HexColor("#1a3a2a")))
-styles.add(ParagraphStyle(name="H2", parent=styles["Heading2"], fontSize=12.5, spaceBefore=14, spaceAfter=6, textColor=colors.HexColor("#1a3a2a")))
-styles.add(ParagraphStyle(name="Caption", parent=styles["Normal"], fontSize=8.3, leading=11, textColor=colors.HexColor("#555555"), spaceAfter=10))
-styles.add(ParagraphStyle(name="Small", parent=styles["Normal"], fontSize=8.3, leading=11.5))
-styles.add(ParagraphStyle(name="TitleSub", parent=styles["Normal"], fontSize=11, textColor=colors.HexColor("#555555"), spaceAfter=4))
-
-story = []
-
-def h1(t): story.append(Paragraph(t, styles["H1"]))
-def h2(t): story.append(Paragraph(t, styles["H2"]))
-def body(t): story.append(Paragraph(t, styles["Body"]))
-def caption(t): story.append(Paragraph(t, styles["Caption"]))
-def rule(): story.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#bbbbbb"), spaceBefore=4, spaceAfter=10))
-def fig(path, width=6.4*inch):
-    img = Image(str(path))
-    ratio = img.imageHeight / img.imageWidth
-    img.drawWidth = width
-    img.drawHeight = width * ratio
-    story.append(img)
-
-def make_table(df_rows, col_widths=None, header_bg="#1a3a2a", fontsize=8.3, align_first_left=True):
-    t = Table(df_rows, colWidths=col_widths, hAlign="LEFT")
-    style = [
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(header_bg)),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTSIZE", (0, 0), (-1, -1), fontsize),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f6f5")]),
-        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
-    ]
-    if align_first_left:
-        style.append(("ALIGN", (0, 0), (0, -1), "LEFT"))
-    t.setStyle(TableStyle(style))
-    return t
+rb, story, styles, h1, h2, h3, body, caption, glossary, rule, fig, make_table = new_report()
 
 # ============================== COVER / TITLE ==============================
 story.append(Spacer(1, 0.3*inch))
@@ -563,11 +530,7 @@ build once options data is pulled.""")
 
 story.append(Spacer(1, 0.3*inch))
 rule()
-caption("Generated from data/events/equity_events_1996_2013.parquet, data/results/event_classification_features.parquet, data/earnings/ibes_clean_1995_2014.parquet, data/normalized_equity/*.parquet, and data/raw_wrds/comp/funda.parquet. Scripts: scripts/01_build_deciles.py through scripts/13_strategy_charts.py.")
+caption("Generated from data/events/equity_events_1996_2013.parquet, data/results/event_classification_features.parquet, data/earnings/ibes_clean_1995_2014.parquet, data/normalized_equity/*.parquet, and data/raw_wrds/comp/funda.parquet. Scripts (original numbering): scripts/equity_pead/01_build_deciles.py through scripts/equity_pead/10_extended_ff_decay.py, scripts/equity_strategy/11_positions.py through scripts/equity_strategy/13_strategy_charts.py.")
 
-doc = SimpleDocTemplate(str(OUT), pagesize=letter,
-                         leftMargin=0.75*inch, rightMargin=0.75*inch,
-                         topMargin=0.7*inch, bottomMargin=0.7*inch,
-                         title="Post-Earnings-Announcement Drift in the IBES Sample")
-doc.build(story)
+rb.save(OUT, title="Post-Earnings-Announcement Drift in the IBES Sample")
 print("wrote", OUT)
