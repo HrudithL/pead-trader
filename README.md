@@ -210,6 +210,25 @@ underlying-price file (`secprd2011`) converted cleanly, so the corruption is spe
 option-price file. 2013 is also truncated at end-August in this OptionMetrics extract. See
 `PEAD_Options_Report.pdf` Section 1 for the full writeup.
 
+**Options-strategy GPU pipeline (turns the above descriptive result into an actual, increasingly
+compute-hungry backtested strategy -- see the full roadmap section below):**
+```
+scripts/gpu_lib.py                        # device backend (numpy/cupy), mock-data generators, checkpoint logging
+scripts/40_options_backtest.py            # Tier 1: real capital-sized, cost-aware options P&L backtest
+scripts/46_build_return_distributions.py  # Tier 1.5: empirical decile-conditioned return distribution
+scripts/47_scan_full_chain_entries.py     # Tier 1.5 data: every strike in the day0 chain, not just near-ATM
+scripts/47b_attach_underlying_price.py    # Tier 1.5 data: underlying spot price per event (from secprd)
+scripts/48_optimal_contract_selector.py   # Tier 1.5: GPU Kelly-optimal strike selection across the full chain
+scripts/49_forward_prices_optimal.py      # Tier 1.5 data: forward mid prices for the selected contracts
+scripts/50_options_backtest_optimal.py    # Tier 1.5: backtests the Kelly-optimal picks, vs. Tier 1's near-ATM
+scripts/41_build_daily_option_paths.py    # Tier 2 data: full daily price path per position (not just 6 checkpoints)
+scripts/42_gpu_exit_optimizer.py          # Tier 2: GPU dynamic stop-loss/profit-target exit-rule search
+scripts/43_gpu_param_sweep.py             # Tier 3: GPU-batched sweep over strike/DTE/sizing/exit-rule combos
+scripts/44_ml_contract_selector.py        # Tier 3: Optuna + PyTorch model, IV/liquidity/sector features
+scripts/45_joint_portfolio_optimizer.py   # Tier 4: joint equity+options+beta allocation search
+scripts/run_pipeline.py                   # unattended driver: runs stages in order, skips completed, logs status
+```
+
 ## Reports
 
 Four PDFs in `reports/`, meant to be read in this order:
@@ -230,6 +249,248 @@ Four PDFs in `reports/`, meant to be read in this order:
    decile-ordered residual (+3.98%, t=5.22) -- so leverage amplifies the same directional signal,
    with a real but secondary volatility component alongside it.
 
+## Options-strategy GPU roadmap
+
+`PEAD_Options_Report.pdf` established that the PEAD signal shows up in options, amplified by
+leverage (call D10-D1 spread +14.38% at 60d vs. +3.05% for the underlying) -- but that's still a
+decile-sorted *descriptive* result on fixed-horizon forward mid prices, not a backtested strategy
+with position sizing, costs, or an exit rule. This section is that missing strategy, built as four
+tiers of deliberately increasing compute cost, each one only justified by a concrete question the
+tier before it couldn't answer:
+
+| Tier | Script(s) | Question it answers | Compute | Where it runs |
+|---|---|---|---|---|
+| 1 | `40_options_backtest.py` | What's the actual Sharpe/return of trading the decile signal via options, with real capital sizing and costs? | CPU, seconds | here |
+| 1.5 | `46-50` | Script 35/40 always take the near-ATM (~50-delta) contract by assumption. Is that actually the best contract in the real day0 chain? | Data extraction: minutes (comparable to script 35/36's scan cost). Kernel: GPU tensor scan over events x strikes x return-distribution states. | ran for real this session, CPU; GPU-batchable for the full chain at scale |
+| 2 | `41_build_daily_option_paths.py`, `42_gpu_exit_optimizer.py` | Fixed horizons ({1..60}d) leave return on the table if the position should really be closed on a stop/target hit mid-holding -- what's the best dynamic exit rule? | Data extraction: hours (heavier OM scan). Kernel: GPU dense-array scan, batched over positions x parameter combos. | data extraction on the 5090; kernel runs anywhere, GPU preferred |
+| 3 | `43_gpu_param_sweep.py`, `44_ml_contract_selector.py` | Tier 1/2 hand-picked (trim, tilt, sizing, exit-rule) constants -- what does a real sweep find, and can a model beat "decile membership" as the entry signal using IV/liquidity/sector features? | GPU-batched sweep across a large parameter grid; Optuna-driven PyTorch training (borrows the Optuna search pattern from `reference/options_content/MSTR_Options_Storage/panel_model.py`, retargeted at OptionMetrics data with a plain feed-forward net) | 5090, unattended, hours-to-a-day |
+| 4 | `45_joint_portfolio_optimizer.py` | Given Tiers 1-3's best options sleeve, Strategy 6 (equity), and the beta overlay all exist independently -- what's the best JOINT allocation and multi-leg structure across all three? | Largest combinatorial search in the project; explicitly the "compute is allowed to be very large" tier | 5090, unattended, multi-day |
+
+### Tier 1.5: mathematically-optimal contract selection (not just near-ATM)
+
+Every prior script (35, 40) picks a contract by MONEYNESS ALONE -- closest to 50-delta. That
+throws away the entire rest of the day0 chain, and it's exactly the thing the prior-art tooling in
+`Options_Content` (`optionExpReturn_v08.py`'s `calcMaxER`) was actually built to do differently:
+score EVERY strike by expected return under a probability distribution of the underlying's future
+price, and take the argmax. This tier rebuilds that idea properly instead of copying it as-is --
+the original's own scenario table (`return_states.csv`) is a hand-typed 3-point guess (`{0%: 25%,
++20%: 50%, 0%: 25%}`) reused for every stock on every day, which is not "mathematically proven"
+by any reasonable definition; and its `calcMaxER` ranks by raw expected value, which is the
+textbook way a leveraged, convex instrument selector blows up (a deep-OTM option with a tiny
+chance of a huge payoff has unbounded E[R] while losing money almost every time).
+
+- **`46_build_return_distributions.py`** replaces the hand-typed scenario table with an empirical,
+  decile-conditioned distribution built from this project's own 182k+ real historical PEAD events
+  -- quantile-bucketed (not fixed-width) so a fixed number of states always carries equal
+  probability and the tails are each represented by their own real conditional mean, not a guess.
+  **A bug this script's own first real run caught and fixed:** built straight from RAW forward
+  returns, every decile's distribution came out net-positive (1996-2013 was a net up market), which
+  swamps the much smaller decile-specific PEAD tilt with ambient market beta. The fix: build the
+  distribution's *shape* from market-adjusted returns (isolating the real PEAD component) and
+  re-center it by the real historical market drift for that horizon (recovered as
+  `mean(raw - mktadj)`) -- see the script's docstring for the full account.
+- **`47_scan_full_chain_entries.py`** / **`47b_attach_underlying_price.py`** fetch every strike (not
+  just one) in each event's day0 chain plus the underlying's own spot price. **A second bug this
+  session's first real run caught:** OptionMetrics stores `strike_price` in 1/1000ths of a dollar; comparing
+  it directly against a computed underlying price without dividing by 1000 makes every put look
+  like a riskless, guaranteed-payoff bet against an absurdly inflated strike (confirmed by the
+  telltale symptom: puts dominating even the highest SUE decile, and Kelly fractions clustering
+  near 100% -- both signs of a "free money" artifact, not a real edge). Fixed at the source and
+  corrected on the already-scanned data without re-running the OM scan.
+- **`48_optimal_contract_selector.py`** is the actual selector: for each event, GPU-batches
+  (events x strikes x return-distribution states) into one payoff tensor, then for a grid of
+  candidate KELLY FRACTIONS finds each contract's expected LOG growth `E[log(1+f*R)]` and its own
+  best fraction `f*` -- comparing contracts by that growth rate, not raw E[R]. This is the
+  principled fix for "leverage means huge profits": a wild OTM lottery-ticket strike is still
+  evaluated, it just gets correctly found to have a tiny optimal `f*` and near-zero growth
+  contribution, rather than being ranked first the way naive expected-value would rank it.
+  **Walk-forward, not full-sample:** each event is scored only against the distribution built from
+  quarters strictly before its own announcement quarter (joined on `ann_quarter` ==
+  `as_of_quarter`) -- events in script 46's 8-quarter warmup window are dropped, not backfilled.
+  Running this for real on the 113,927 events that survive the warmup cut produced a clean,
+  monotonic validation: the selector picks a PUT for 32% of D1 (lowest SUE) events vs. just 5% of
+  D10 events -- the math recovers the PEAD direction on its own, from data alone, with no
+  call/put side hard-coded anywhere in the selection logic.
+- **`49_forward_prices_optimal.py`** / **`50_options_backtest_optimal.py`** backtest the
+  Kelly-optimal picks for real (same checkpoint mark-to-market method as script 40), sized by each
+  position's own **half-Kelly** fraction (full Kelly is a well-documented over-bettor once the
+  probability distribution is itself an estimate, not known exactly -- half-Kelly is the standard
+  practitioner correction for that estimation risk), distributed across each quarter's ~1,000+
+  concurrent candidates in proportion to their own Kelly fraction (sizing each one independently
+  off its own single-bet-optimal fraction was tried first and collapsed the whole 17-year backtest
+  to ~46 funded positions total -- found and fixed on the first real run), and only taking events
+  with `kelly_growth > 0` (a genuine, math-derived edge) rather than script 40's SUE-rank `TRIM`
+  cutoff.
+
+  | | Tier 1 (near-ATM) | Tier 1.5 (Kelly-optimal, walk-forward) |
+  |---|---|---|
+  | 60d ann. return | 9.51% | 15.31% |
+  | 60d Sharpe | 1.04 | 3.56 |
+  | 60d max drawdown | -25.9% | -21.4% |
+
+  **Two look-ahead bugs were found and fixed to get to this number** (full account in
+  `46_build_return_distributions.py`'s docstring): a full-sample distribution originally let a
+  1998 trade get priced with data through 2013 (the same category of mistake script 27's docstring
+  already documents catching for the EAR signal), and per-position Kelly sizing that ignored how
+  many other candidates were competing for the same capital cap first collapsed the whole 17-year
+  backtest to ~46 funded positions. Both are fixed. The Sharpe barely moved after the walk-forward
+  fix (~4.0 -> 3.56), which was itself worth checking rather than trusting: the day-level P&L was
+  inspected directly, and the worst days in the whole 17-year series land on 2008-10-24 and
+  2008-11-20 (the financial crisis) and September 2002 (another real stress window) -- real,
+  economically sensible tail risk showing up where it should, not a flat/smoothed artifact. The
+  Sharpe is high enough (3.5+) to reflect a REAL diversification effect from spreading a fixed 20%
+  premium budget across ~1,200 mostly-independent single-stock earnings bets per quarter (Grinold's
+  "breadth" argument: aggregate risk-adjusted return scales with the number of quasi-independent
+  bets combined) rather than a bug, but it is still **not something to treat as directly
+  achievable**: this many small trades (~4,600/year) would face real bid/ask friction on illiquid
+  strikes likely worse than the flat 3% assumption, real capacity/market-impact limits no backtest
+  captures, and early-window Kelly estimates built on only the just-past 8-quarter minimum are
+  necessarily noisier than later ones that benefit from a decade-plus of accumulated history --
+  none of which this backtest models.
+
+### Cross-machine execution model
+
+Every script above is a plain, argparse-driven `.py` file -- no Jupyter notebooks anywhere in this
+pipeline. That's deliberate: it's the only form that runs identically in all three places this
+code needs to run:
+
+1. **Here** (this Windows dev machine, CPU only) -- for writing and correctness-testing the logic.
+2. **Google Colab from THIS Windows machine**, via the
+   [Colab CLI](https://github.com/googlecolab/google-colab-cli) (`google-colab-cli`, released June
+   2026). It's officially **Linux/macOS only** -- not installable directly on Windows -- but that's
+   solved by **WSL2**, not by giving up on the CLI or converting scripts to notebooks: WSL2 is a
+   real Linux kernel running locally on this same machine, so the CLI runs on it exactly as it
+   would on bare-metal Linux, no code changes and no notebook conversion needed anywhere in this
+   repo. (This is the mirror image of the earlier WSL discussion for the 5090 box: WSL was
+   unnecessary THERE because it's already native Linux; it's exactly what's needed HERE because
+   this machine is Windows.) One-time setup, run by you (installing a Windows feature + a reboot
+   isn't something this session can do on your behalf):
+   ```powershell
+   wsl --install          # run from an elevated PowerShell; reboots when done
+   ```
+   Already done on this machine: `google-colab-cli` 0.6.0 is installed in WSL2 Ubuntu via
+   `uv tool install google-colab-cli` (see "Status: installed" under Authenticating, below). From
+   the WSL terminal -- which sees this repo directly at
+   `/mnt/c/Users/hrudi/Documents/BEI/PEAD_Trading/...`, no separate clone needed for local testing:
+   ```bash
+   colab new -s pead --gpu T4   # first run ever prints an auth URL -- see "Authenticating" below
+   ```
+
+   **Important mechanical note:** `colab run <script.py>` and `colab exec -f <script.py>` transmit
+   only that ONE file's contents into the remote kernel -- they do not upload a directory. Every
+   script here (`sys.path.insert(...); from gpu_lib import ...`) depends on sibling files
+   (`gpu_lib.py`, `options_lib.py`) actually being present on the VM's filesystem, and an exec'd
+   code string may not even have a real `__file__` to resolve that sibling path from. Don't use the
+   single-file `colab run`/`colab exec -f` shortcuts for anything in this repo -- use `colab ssh`
+   for a real remote shell instead, which behaves exactly like running the scripts anywhere else:
+   ```bash
+   zip -r pead_scripts.zip scripts/ requirements.txt requirements-gpu.txt
+   colab upload -s pead pead_scripts.zip pead_scripts.zip
+   colab ssh -s pead                                     # drops into a real shell on the VM
+   #   (on the VM:)
+   unzip pead_scripts.zip
+   pip install -r requirements-gpu.txt                   # torch/numpy/pandas ship with Colab already
+   python scripts/42_gpu_exit_optimizer.py --device cuda --mock-data --smoke-test
+   exit
+   colab stop -s pead
+   ```
+
+   **Zero-setup fallback, if you'd rather test something right now without installing WSL2:** open
+   any Colab notebook in a browser (you already have Jupyter-based Colab access) with a GPU
+   runtime, and paste the same three commands into one cell with `!` prefixes (`!pip install -r
+   requirements-gpu.txt`, `!python scripts/42_gpu_exit_optimizer.py ...`, after uploading the repo
+   via the notebook's file browser or a Drive mount). This does NOT require converting any script
+   to a notebook -- the notebook is just a remote console; the code being run is still the exact
+   same `.py` files. It's just less repeatable/scriptable than the WSL2+CLI path (a human has to
+   click through the browser each time), which is why the CLI is the recommended path going
+   forward, not just a one-off convenience.
+3. **The 5090 box** (bare-metal Linux) -- for the real runs. Being native Linux, not
+   Windows+WSL, it gets first-class support for the whole NVIDIA stack directly; WSL is a
+   Windows-only workaround needed on THIS machine (above), not on the 5090.
+
+**Status: installed.** `google-colab-cli` 0.6.0 is installed inside this machine's WSL2 Ubuntu via
+`uv tool install google-colab-cli` (no `sudo`/system changes needed -- `uv` installs to
+`~/.local/bin`, already on `PATH` in every new WSL shell via `~/.bashrc`). Run `colab version` from
+a WSL terminal to confirm.
+
+**Authenticating (a one-time, interactive step you do yourself -- it's your Google account, so
+this can't be done on your behalf):** this installed version's default auth strategy is actually
+`oauth2` (`colab --help` shows `[default: oauth2]` -- simpler than GitHub's README text suggests,
+and no separate Google Cloud project/`gcloud` setup needed). From a WSL terminal:
+```bash
+colab new -s pead --gpu T4
+```
+This prints an authorization URL -- open it in a browser, sign in with the Google account your
+Colab Pro subscription is on, copy the code Google shows you, and paste it back at the terminal
+prompt. That mints a token cached at `~/.config/colab-cli/token.json`, reused automatically by
+every later command (no need to repeat `--auth oauth2` -- it's already the default).
+
+**GPU library choice: pip-only PyTorch + CuPy, not conda/RAPIDS.** The prior GPU scripts this
+project's roadmap draws on (copied into `reference/options_content/` -- see that folder's own
+README for what's there and why) use RAPIDS (cudf/cupy) for vectorized dataframe joins, but the
+actual GPU-bound work in this pipeline (Tier 2's dense position x day x
+parameter-combo scan, Tier 3's model training) is array/tensor computation, not database-style
+joins -- CuPy arrays and PyTorch tensors cover it completely. Both install with a single `pip
+install` and have much better unattended-Linux reliability than a conda-resolved RAPIDS
+environment, which matters a lot given the very limited hands-on time budgeted for the 5090 box
+(see "Unattended execution" below). See `requirements-gpu.txt`.
+
+**Every GPU script takes `--device {cpu,cuda}` and `--mock-data`** (`scripts/gpu_lib.py`): the
+array backend (numpy vs. cupy) is chosen at runtime, so the identical code path is exercised at
+every scale with zero code changes, and `--mock-data` fabricates a synthetic panel with the same
+schema and the same decile-ordered drift actually measured in `data/option_spread_horizon_stats.csv`
+/ a synthetic daily price path with matching statistical character -- so correctness and GPU-batch
+behavior can be fully validated (on Colab or here) without ever touching the licensed OptionMetrics
+data.
+
+### Data portability: the OptionMetrics drive itself never moves data, only itself
+
+The OptionMetrics IvyDB extract lives permanently on one external drive and is never copied
+anywhere -- not into this repo, not onto the 5090's own disk. It gets to the 5090 by physically
+plugging that drive into it. Two consequences for the code:
+
+- `OM_DIR` (`scripts/options_lib.py`) reads from the `OPTIONMETRICS_DIR` environment variable
+  (default `D:/OptionMetrics/parquet`, this machine's path) rather than being hardcoded, since the
+  mount path is different on Linux (e.g. `/media/<user>/OptionMetrics/parquet` or wherever it
+  auto-mounts) -- set the env var once on the 5090 box rather than editing any script.
+- The actually-required subset is the `parquet/` subfolder specifically -- **31GB** (measured
+  directly with `du`), not the ~100GB this README previously estimated, and much less than the
+  full drive's 618GB (which also holds the original `.sas7bdat` files and other conversions this
+  pipeline never reads).
+- `options_lib.scan_year_for_keys` retries a year's scan up to 4 times with a pause on
+  `OSError: Error reading bytes from file` -- an intermittent, non-deterministic read failure
+  observed at a *different* (non-corrupt) year on 3 separate runs while building this pipeline's
+  own data, almost certainly a USB/controller hiccup rather than file corruption (the one
+  genuinely corrupt file is `opprcd2011`, confirmed separately). Left unhandled, this would
+  silently kill an unattended multi-day run for no real reason.
+
+### Unattended execution: plug in, kick off, walk away for days
+
+Physical access to the 5090 is limited to short windows, and the real Tier 3/4 runs are meant to
+run for days between check-ins. Every stage script is therefore built resumable and checkpointed
+rather than "run once, all or nothing":
+
+- Scripts 35/36/41 write one output file **per year** and skip a year whose output file already
+  exists on restart (see the resume check at the top of each year's loop) -- a crash or reboot
+  loses at most the year in progress, not the whole run.
+- `scripts/gpu_lib.py`'s `StageTimer` records start/done/failed + elapsed time for every stage to
+  `logs/pipeline_status.json`, so checking in after a few days means reading one small JSON file,
+  not scrolling raw stdout.
+- `scripts/run_pipeline.py` is the single command to kick off before walking away: it runs every
+  stage in order, skips a stage whose declared output already exists, and is safe to run under
+  `tmux`/`nohup` so a dropped SSH session (or none at all -- physical-access-only is fine too)
+  doesn't kill the run.
+
+**5090 box setup, once physical/SSH access is available (roughly 15 minutes of actual hands-on
+time):**
+```bash
+git clone <this repo's remote> && cd PEAD_Trading
+pip install -r requirements.txt -r requirements-gpu.txt
+export OPTIONMETRICS_DIR=/path/where/the/drive/mounted/parquet   # after plugging in the drive
+tmux new -s pead                                                 # survive a dropped connection
+python scripts/run_pipeline.py                                   # walk away; check back in days
+```
+
 ## Data
 
 Raw and large intermediate data files are not tracked in this repo (see `.gitignore`) -- they are
@@ -240,13 +501,19 @@ findings (backtest CSVs, summary JSONs, sweep results, the decay-day cell table)
 `data/` since they're lightweight and are the actual evidence behind every claim in this README
 and in the conversation history that produced it.
 
-The options pipeline additionally reads raw OptionMetrics IvyDB files from `D:/OptionMetrics/parquet/`
-(an external drive, ~100GB, not tracked in this repo and not reproducible from anything checked in
-here) and writes its own regeneratable intermediates to `data/event_options/`. In this git
-worktree, `data/events/`, `data/earnings/`, `data/metadata/`, and `data/results/` are NTFS
-junctions to the corresponding folders in the main checkout rather than copies, so the raw WRDS
-pull isn't duplicated on disk.
+The options pipeline additionally reads raw OptionMetrics IvyDB files from an external drive (path
+configurable via `OPTIONMETRICS_DIR`, see the GPU roadmap section above -- 31GB in the `parquet/`
+subfolder this pipeline actually reads, not tracked in this repo, not reproducible from anything
+checked in here, and never copied anywhere, including onto this repo's own disk) and writes its
+own regeneratable intermediates to `data/event_options/`. In the main checkout, `data/events/`,
+`data/earnings/`, `data/metadata/`, and `data/results/` are NTFS junctions to keep the raw WRDS
+pull from being duplicated on disk; this particular worktree (`options-strategy-gpu-compute-131625`)
+holds real copies of those folders instead, so the whole pipeline is runnable from inside this one
+directory tree without depending on the main checkout's junction targets.
 
 ## Requirements
 
-See `requirements.txt`. Python 3.11+, pandas, numpy, reportlab (PDF report generation).
+See `requirements.txt`. Python 3.11+, pandas, numpy, reportlab (PDF report generation). The
+options-strategy GPU pipeline (scripts 40+) additionally needs `requirements-gpu.txt` (PyTorch,
+CuPy, Optuna) -- only required on a machine that's actually running Tier 2-4 on a GPU; every
+script in that pipeline still runs on `--device cpu` with just the base requirements.

@@ -1,0 +1,14 @@
+{
+  "hold_horizon_days": 60,
+  "n_positions_eligible": 99294,
+  "n_positions_sized": 2007,
+  "total_return": 3.5506597048749997,
+  "annualized_return": 0.09508263716758458,
+  "annualized_vol": 0.09156496164411218,
+  "sharpe": 1.0374047010046685,
+  "max_drawdown": -0.25897545428902274,
+  "avg_premium_outstanding": 4330515.087686568,
+  "final_nav": 45506597.04875,
+  "assumed_roundtrip_cost_pct": 0.03,
+  "n_quarters_premium_capped": 66
+}
