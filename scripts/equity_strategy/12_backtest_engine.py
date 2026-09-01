@@ -27,13 +27,17 @@ Design choices, made explicit to avoid the compounding bug found in this project
 Output per strategy: data/backtest_<name>.csv (daily NAV/exposure series),
                       data/backtest_<name>_summary.json (headline metrics)
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 import json
 
-DATA = Path("/root/pead_report/data")
-RAW = Path("/mnt/user-data/uploads/PEAD_Trading/data/normalized_equity")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, RAW_EQUITY_DIR
+
+DATA = DATA_DIR
+RAW = RAW_EQUITY_DIR
 
 BASE_UNIT_NOTIONAL = 10_000.0     # $ per unit of |weight| = 1
 FIXED_CAPITAL = 10_000_000.0      # reference capital base for return-on-capital calcs

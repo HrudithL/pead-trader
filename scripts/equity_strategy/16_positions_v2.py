@@ -8,12 +8,18 @@ quarters/events to trust.
 Output: data/positions_extreme_v2.parquet, data/positions_rankweighted_v2.parquet,
         data/positions_balanced_v2.parquet
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-DATA = Path("/root/pead_report/data")
-RAW = Path("/mnt/user-data/uploads/PEAD_Trading/data/normalized_equity")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.paths import DATA_DIR, RAW_EQUITY_DIR
+from lib.positions import size_balance
+
+DATA = DATA_DIR
+RAW = RAW_EQUITY_DIR
 
 cells = pd.read_parquet(DATA / "event_cells.parquet")
 decay = pd.read_csv(DATA / "cell_decay_days.csv")[["cell", "decay_day"]]
@@ -89,15 +95,6 @@ print(f"Strategy 2 (rank-weighted, per-cell holding): {len(s2):,} positions")
 # ---------- Strategy 3: extreme decile, size-balanced ----------
 s3 = tradeable[tradeable["decile"].isin([1, 10])].copy()
 s3 = s3.dropna(subset=["size_quintile"])
-
-
-def size_balance(df, decile_val, sign):
-    sub = df[df["decile"] == decile_val].copy()
-    counts = sub.groupby(["ann_quarter", "size_quintile"])["event_id"].transform("count")
-    quintiles_per_q = sub.groupby("ann_quarter")["size_quintile"].transform("nunique")
-    sub["weight"] = sign * (1.0 / quintiles_per_q) / counts
-    return sub
-
 
 s3_long = size_balance(s3, 10, 1.0)
 s3_short = size_balance(s3, 1, -1.0)

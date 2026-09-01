@@ -1,24 +1,37 @@
 """
-Push the BASE_UNIT_FRACTION / LIQUIDITY_CAP_FRAC sweep from 18_param_sweep.py much further, to
-find where returns stop being worth their cost: where the 1.5x hard leverage cap saturates (binds
-almost every quarter, meaning further sizing increases just get scaled straight back down and
-burn turnover for nothing), where transaction costs start eating a growing share of gross P&L,
-and where Sharpe degrades fast enough that the extra return is no longer "for free."
+Parameter sensitivity sweep: how do BASE_UNIT_FRACTION (position sizing) and
+LIQUIDITY_CAP_FRAC (per-position cap as a fraction of a stock's own daily dollar volume)
+trade off return against risk (vol, drawdown) and against practical constraints (how much of
+the book ends up liquidity-capped, how often the 1.5x gross leverage cap binds)?
 
-Reuses the same one-time, parameter-independent expansion from 18_param_sweep.py (loading the
-full daily panel and building each strategy's day-by-day position expansion), so a much larger
-grid stays cheap: only the O(quarters) sequential sizing loop re-runs per grid point.
+This does NOT hardcode one "right" answer. It re-runs the same sequential, trailing-NAV
+simulation from 17_backtest_v2.py across a grid of parameter values and reports, for every
+combination, everything needed to reason about the tradeoff: annualized return, annualized vol,
+Sharpe, max drawdown, average realized leverage, how often that leverage bumps into the 1.5x
+safety cap, what fraction of positions get truncated by the liquidity rule, and total transaction
+costs. MAX_GROSS_LEVERAGE (the hard safety cap approved earlier) is held fixed at 1.5x throughout
+-- this sweep is about how hard the strategy pushes *within* that ceiling and how large a single
+position is allowed to get relative to a stock's own trading volume, not about raising the
+ceiling itself.
 
-Output: data/sweep_extended.csv (every combination) plus printed frontier tables per strategy.
+The expensive part (loading the full daily return panel, expanding each position into its
+day-by-day return path) does not depend on either parameter, so it is computed ONCE per strategy
+and reused across every grid point -- only the O(quarters) sequential sizing loop and the final
+aggregation are re-run per combination, which is what actually keeps a ~30-point grid across 3
+strategies tractable.
+
+Output: data/sweep_base_unit_fraction.csv, data/sweep_liquidity_cap_frac.csv
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-DATA = Path("/root/pead_report/data")
-RAW = Path("/mnt/user-data/uploads/PEAD_Trading/data/normalized_equity")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, RAW_EQUITY_DIR, INITIAL_CAPITAL
 
-INITIAL_CAPITAL = 10_000_000.0
+DATA = DATA_DIR
+RAW = RAW_EQUITY_DIR
 MAX_GROSS_LEVERAGE = 1.5
 COST_BPS = {1: 25, 2: 15, 3: 10, 4: 7, 5: 5}
 DEFAULT_COST_BPS = 15
@@ -47,6 +60,7 @@ quarter_code_of_day = np.array([quarter_code_map[q] for q in quarter_of])
 
 
 def prepare_strategy(positions_path):
+    """One-time, param-independent setup: load positions, expand into day-by-day return rows."""
     pos = pd.read_parquet(DATA / positions_path).reset_index(drop=True)
     pos = pos.dropna(subset=["entry_row_idx", "exit_row_idx"]).copy().reset_index(drop=True)
     pos["entry_row_idx"] = pos["entry_row_idx"].astype(int)
@@ -55,8 +69,10 @@ def prepare_strategy(positions_path):
     pos["exit_date"] = pd.to_datetime(pos["exit_date"])
     n_pos = len(pos)
 
-    entry_qcode = pos["day0_date"].dt.to_period("Q").map(quarter_code_map).to_numpy()
-    exit_qcode = pos["exit_date"].dt.to_period("Q").map(quarter_code_map).to_numpy()
+    entry_quarter = pos["day0_date"].dt.to_period("Q")
+    exit_quarter = pos["exit_date"].dt.to_period("Q")
+    entry_qcode = entry_quarter.map(quarter_code_map).to_numpy()
+    exit_qcode = exit_quarter.map(quarter_code_map).to_numpy()
 
     weight = pos["weight"].to_numpy()
     liq_q = pos["liquidity_quintile"] if "liquidity_quintile" in pos.columns else pd.Series(np.nan, index=pos.index)
@@ -107,6 +123,7 @@ def simulate(prep, base_unit_fraction, liquidity_cap_frac, max_gross_leverage=MA
     notional = np.zeros(n_pos)
     base_unit_at_entry = np.zeros(n_pos)
     n_capped_quarters = 0
+    quarter_pnls = []
 
     for qi in range(n_quarters):
         q_mask = entry_qcode == qi
@@ -129,7 +146,9 @@ def simulate(prep, base_unit_fraction, liquidity_cap_frac, max_gross_leverage=MA
         entry_cost_q = float(np.sum(np.abs(notional[q_mask]) * cost_bps[q_mask] / 10_000.0)) if q_mask.any() else 0.0
         exit_mask = exit_qcode == qi
         exit_cost_q = float(np.sum(np.abs(notional[exit_mask]) * cost_bps[exit_mask] / 10_000.0)) if exit_mask.any() else 0.0
-        trailing_nav += trade_pnl_q - entry_cost_q - exit_cost_q
+        quarter_pnl = trade_pnl_q - entry_cost_q - exit_cost_q
+        quarter_pnls.append(quarter_pnl)
+        trailing_nav += quarter_pnl
 
     entry_costs = np.abs(notional) * (cost_bps / 10_000.0)
     exit_costs = entry_costs.copy()
@@ -137,7 +156,6 @@ def simulate(prep, base_unit_fraction, liquidity_cap_frac, max_gross_leverage=MA
     np.add.at(daily_pnl, prep["entry_cal_idx"], -entry_costs)
     np.add.at(daily_pnl, prep["exit_cal_idx"], -exit_costs)
     flat_notional = notional[prep["rep_pos_idx"]]
-    gross_pnl_from_trading = float(np.sum(flat_notional * prep["flat_ret"]))
     np.add.at(daily_pnl, prep["flat_cal_idx"], flat_notional * prep["flat_ret"])
 
     exposure_delta = np.zeros(n_days + 1)
@@ -155,16 +173,14 @@ def simulate(prep, base_unit_fraction, liquidity_cap_frac, max_gross_leverage=MA
     running_max = np.maximum.accumulate(nav)
     max_dd = ((nav - running_max) / running_max).min()
     liquidity_capped = (np.abs(weight * base_unit_at_entry) > np.abs(notional) + 1e-6) & (base_unit_at_entry > 0)
-    total_costs = entry_costs.sum() + exit_costs.sum()
 
     return dict(
         base_unit_fraction=base_unit_fraction, liquidity_cap_frac=liquidity_cap_frac,
         annualized_return=ann_ret, annualized_vol=ann_vol, sharpe=sharpe, max_drawdown=max_dd,
         avg_leverage=float(gross_exposure.mean() / INITIAL_CAPITAL),
-        pct_leverage_capped_quarters=float(n_capped_quarters / n_quarters),
         pct_liquidity_capped=float(liquidity_capped.mean()),
-        total_transaction_costs=float(total_costs),
-        cost_pct_of_gross_pnl=float(total_costs / gross_pnl_from_trading) if gross_pnl_from_trading > 0 else np.nan,
+        n_quarters_leverage_capped=n_capped_quarters,
+        total_transaction_costs=float(entry_costs.sum() + exit_costs.sum()),
         final_nav=float(nav[-1]),
     )
 
@@ -176,30 +192,32 @@ STRATEGIES = [("positions_extreme_v2.parquet", "extreme"),
 print("preparing strategies (one-time, parameter-independent expansion)...")
 preps = {name: prepare_strategy(path) for path, name in STRATEGIES}
 
-# push BASE_UNIT_FRACTION much further, at each of a few liquidity-cap settings, to see where the
-# leverage cap saturates (binds every quarter) and cost/Sharpe start degrading fast
-buf_grid = [0.001, 0.0015, 0.002, 0.003, 0.004, 0.005, 0.0075, 0.010, 0.015, 0.020, 0.030, 0.050]
-liq_settings = [0.01, 0.05, 0.10]
-
-rows = []
+# ---------- sweep 1: BASE_UNIT_FRACTION, liquidity cap held at current 1% ----------
+buf_grid = [0.0010, 0.0015, 0.0020, 0.0025, 0.0030, 0.0040, 0.0050]
+rows1 = []
 for path, name in STRATEGIES:
-    for lf in liq_settings:
-        for buf in buf_grid:
-            r = simulate(preps[name], buf, lf)
-            r["strategy"] = name
-            rows.append(r)
+    for buf in buf_grid:
+        r = simulate(preps[name], buf, liquidity_cap_frac=0.01)
+        r["strategy"] = name
+        rows1.append(r)
+sweep1 = pd.DataFrame(rows1)
+sweep1.to_csv(DATA / "sweep_base_unit_fraction.csv", index=False)
+print("\n=== BASE_UNIT_FRACTION sweep (liquidity_cap_frac fixed at 1%) ===")
+print(sweep1[["strategy", "base_unit_fraction", "annualized_return", "annualized_vol", "sharpe",
+              "max_drawdown", "avg_leverage", "pct_liquidity_capped", "n_quarters_leverage_capped"]]
+      .to_string(index=False))
 
-sweep = pd.DataFrame(rows)
-sweep.to_csv(DATA / "sweep_extended.csv", index=False)
-
-pd.set_option("display.width", 160)
-for name in ["extreme", "rankweighted", "balanced"]:
-    print(f"\n=== {name} ===")
-    for lf in liq_settings:
-        sub = sweep[(sweep.strategy == name) & (sweep.liquidity_cap_frac == lf)]
-        print(f"-- liquidity_cap_frac={lf} --")
-        print(sub[["base_unit_fraction", "annualized_return", "annualized_vol", "sharpe",
-                    "max_drawdown", "avg_leverage", "pct_leverage_capped_quarters",
-                    "pct_liquidity_capped", "cost_pct_of_gross_pnl"]].to_string(index=False))
-
-print("\nwrote data/sweep_extended.csv")
+# ---------- sweep 2: LIQUIDITY_CAP_FRAC, base unit fraction held at 0.002 (a candidate mid point) ----------
+liq_grid = [0.005, 0.0075, 0.010, 0.015, 0.020, 0.030, 0.050]
+rows2 = []
+for path, name in STRATEGIES:
+    for lf in liq_grid:
+        r = simulate(preps[name], base_unit_fraction=0.002, liquidity_cap_frac=lf)
+        r["strategy"] = name
+        rows2.append(r)
+sweep2 = pd.DataFrame(rows2)
+sweep2.to_csv(DATA / "sweep_liquidity_cap_frac.csv", index=False)
+print("\n=== LIQUIDITY_CAP_FRAC sweep (base_unit_fraction fixed at 0.002) ===")
+print(sweep2[["strategy", "liquidity_cap_frac", "annualized_return", "annualized_vol", "sharpe",
+              "max_drawdown", "avg_leverage", "pct_liquidity_capped", "n_quarters_leverage_capped"]]
+      .to_string(index=False))

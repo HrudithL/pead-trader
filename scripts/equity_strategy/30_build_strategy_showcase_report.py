@@ -7,69 +7,29 @@ tradeable effect (see PEAD_Report.pdf) and wants to know how well each way of
 trading it actually did. For the story of *why* each strategy was built the way
 it was, see PEAD_Strategy_Development.pdf.
 """
-import pandas as pd
+import sys
 from pathlib import Path
-from reportlab.lib.pagesizes import letter
+import json
+import pandas as pd
 from reportlab.lib import colors
 from reportlab.lib.units import inch
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak, HRFlowable,
-    KeepTogether
-)
+from reportlab.platypus import Paragraph, Spacer, Image, PageBreak, KeepTogether
 
-ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
-FIG = ROOT / "reports" / "figures"
-OUT = ROOT / "reports" / "PEAD_Strategy_Showcase.pdf"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, REPORTS_DIR, FIGURES_DIR
+from common.report_pdf import new_report
+
+DATA = DATA_DIR
+FIG = FIGURES_DIR
+OUT = REPORTS_DIR / "PEAD_Strategy_Showcase.pdf"
 
 summary = pd.read_csv(DATA / "results_summary_v2_FINAL.csv").set_index("strategy")
 
 def js(name):
-    import json
     with open(DATA / f"backtest_v2_{name}_summary.json") as f:
         return json.load(f)
 
-styles = getSampleStyleSheet()
-styles.add(ParagraphStyle(name="Body", parent=styles["Normal"], fontSize=9.7, leading=13.5, spaceAfter=8))
-styles.add(ParagraphStyle(name="H1", parent=styles["Heading1"], fontSize=16, spaceBefore=4, spaceAfter=8, textColor=colors.HexColor("#1a3a2a")))
-styles.add(ParagraphStyle(name="H2", parent=styles["Heading2"], fontSize=12.5, spaceBefore=14, spaceAfter=6, textColor=colors.HexColor("#1a3a2a")))
-styles.add(ParagraphStyle(name="H3", parent=styles["Heading3"], fontSize=10.8, spaceBefore=10, spaceAfter=4, textColor=colors.HexColor("#2f4f3f")))
-styles.add(ParagraphStyle(name="Caption", parent=styles["Normal"], fontSize=8.3, leading=11, textColor=colors.HexColor("#555555"), spaceAfter=10))
-styles.add(ParagraphStyle(name="TitleSub", parent=styles["Normal"], fontSize=11, textColor=colors.HexColor("#555555"), spaceAfter=4))
-
-story = []
-def h1(t): story.append(Paragraph(t, styles["H1"]))
-def h2(t): story.append(Paragraph(t, styles["H2"]))
-def h3(t): story.append(Paragraph(t, styles["H3"]))
-def body(t): story.append(Paragraph(t, styles["Body"]))
-def caption(t): story.append(Paragraph(t, styles["Caption"]))
-def rule(): story.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#bbbbbb"), spaceBefore=4, spaceAfter=10))
-def fig(path, width=6.4*inch):
-    img = Image(str(path))
-    ratio = img.imageHeight / img.imageWidth
-    img.drawWidth = width
-    img.drawHeight = width * ratio
-    story.append(img)
-
-def make_table(rows, col_widths=None, header_bg="#1a3a2a", fontsize=8.3, align_first_left=True):
-    t = Table(rows, colWidths=col_widths, hAlign="LEFT")
-    style = [
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(header_bg)),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTSIZE", (0, 0), (-1, -1), fontsize),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f6f5")]),
-        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
-    ]
-    if align_first_left:
-        style.append(("ALIGN", (0, 0), (0, -1), "LEFT"))
-    t.setStyle(TableStyle(style))
-    return t
+rb, story, styles, h1, h2, h3, body, caption, glossary, rule, fig, make_table = new_report()
 
 # ============================== COVER ==============================
 story.append(Spacer(1, 0.3*inch))
@@ -299,12 +259,9 @@ of this sample.""")
 story.append(Spacer(1, 0.3*inch))
 rule()
 caption("""Generated from data/results_summary_v2_FINAL.csv and data/backtest_v2_*_summary.json.
-Scripts: scripts/14_daily_decay.py through scripts/26_strategy7_unconstrained_netexposure.py,
-scripts/29_v2_strategy_charts.py, scripts/30_build_strategy_showcase_report.py.""")
+Scripts: scripts/equity_strategy/14_daily_decay.py through
+scripts/equity_strategy/26_strategy7_unconstrained_netexposure.py,
+scripts/equity_strategy/29_v2_strategy_charts.py, scripts/equity_strategy/30_build_strategy_showcase_report.py.""")
 
-doc = SimpleDocTemplate(str(OUT), pagesize=letter,
-                         leftMargin=0.75*inch, rightMargin=0.75*inch,
-                         topMargin=0.7*inch, bottomMargin=0.7*inch,
-                         title="PEAD Strategy Showcase")
-doc.build(story)
+rb.save(OUT, title="PEAD Strategy Showcase")
 print("wrote", OUT)

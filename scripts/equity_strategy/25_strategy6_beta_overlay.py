@@ -16,14 +16,17 @@ layered on top as an independent position.
 
 Output: data/backtest_v2_strategy6_beta050.csv, data/backtest_v2_strategy6_beta050_summary.json
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 import json
 
-DATA = Path("/root/pead_report/data")
-RAW = Path("/mnt/user-data/uploads/PEAD_Trading/data/normalized_equity")
-INITIAL_CAPITAL = 10_000_000.0
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, RAW_EQUITY_DIR, INITIAL_CAPITAL
+
+DATA = DATA_DIR
+RAW = RAW_EQUITY_DIR
 BETA_TARGET = 0.5
 OVERLAY_COST_BPS = 2.0  # one-way, a large liquid index future/ETF -- much cheaper than single names
 

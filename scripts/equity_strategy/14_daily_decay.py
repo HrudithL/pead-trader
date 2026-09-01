@@ -27,12 +27,16 @@ Output: data/event_cells.parquet (event -> assigned cell + cell metadata)
         data/cell_daily_curve.csv (cell x day -> cumulative & marginal adjusted return)
         data/cell_decay_days.csv (cell -> exact decay day)
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-DATA = Path("/root/pead_report/data")
-RAW = Path("/mnt/user-data/uploads/PEAD_Trading/data/normalized_equity")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, RAW_EQUITY_DIR
+
+DATA = DATA_DIR
+RAW = RAW_EQUITY_DIR
 
 MAX_DAYS = 200
 MIN_QUARTERS = 20      # a holding-period cell needs at least this many announcement quarters...

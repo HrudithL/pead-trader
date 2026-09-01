@@ -34,12 +34,17 @@ quarter's other announcers) and on risk construction (sizing, sector/size
 neutrality, leverage) to improve the strategy.
 """
 
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
 
-DATA = "data/decile_events.parquet"
-OUT_SUMMARY = "data/sue_reversal_summary.json"
-OUT_DECILE = "data/sue_reversal_by_decile.csv"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR
+
+DATA = DATA_DIR / "decile_events.parquet"
+OUT_SUMMARY = DATA_DIR / "sue_reversal_summary.json"
+OUT_DECILE = DATA_DIR / "sue_reversal_by_decile.csv"
 
 LAG_DAYS_MIN = 340
 LAG_DAYS_MAX = 400

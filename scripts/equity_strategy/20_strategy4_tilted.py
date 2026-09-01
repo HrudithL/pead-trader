@@ -46,15 +46,17 @@ Output: data/positions_strategy4_v2.parquet, data/backtest_v2_strategy4.csv,
         data/sweep_strategy4.csv (the grid search), data/backtest_v2_comparison.csv (updated,
         now with all four strategies)
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 import json
 
-DATA = Path("/root/pead_report/data")
-RAW = Path("/mnt/user-data/uploads/PEAD_Trading/data/normalized_equity")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, RAW_EQUITY_DIR, INITIAL_CAPITAL
 
-INITIAL_CAPITAL = 10_000_000.0
+DATA = DATA_DIR
+RAW = RAW_EQUITY_DIR
 MAX_GROSS_LEVERAGE = 1.5
 LIQUIDITY_CAP_FRAC = 0.05
 COST_BPS = {1: 25, 2: 15, 3: 10, 4: 7, 5: 5}

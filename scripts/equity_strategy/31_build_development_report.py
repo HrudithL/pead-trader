@@ -6,69 +6,25 @@ what changed as a result. It is the narrative companion to PEAD_Strategy_Showcas
 (which has the full performance numbers) and assumes the reader already accepts
 PEAD_Report.pdf's finding that the underlying signal is real.
 """
-import pandas as pd
+import sys
 from pathlib import Path
-from reportlab.lib.pagesizes import letter
+import pandas as pd
 from reportlab.lib import colors
 from reportlab.lib.units import inch
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak, HRFlowable,
-    KeepTogether
-)
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.platypus import Paragraph, Spacer, Image, PageBreak, KeepTogether
 
-ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
-FIG = ROOT / "reports" / "figures"
-OUT = ROOT / "reports" / "PEAD_Strategy_Development.pdf"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, REPORTS_DIR, FIGURES_DIR
+from common.report_pdf import new_report
+
+DATA = DATA_DIR
+FIG = FIGURES_DIR
+OUT = REPORTS_DIR / "PEAD_Strategy_Development.pdf"
 
 summary = pd.read_csv(DATA / "results_summary_v2_FINAL.csv").set_index("strategy")
 
-styles = getSampleStyleSheet()
-styles.add(ParagraphStyle(name="Body", parent=styles["Normal"], fontSize=9.7, leading=13.5, spaceAfter=8))
-styles.add(ParagraphStyle(name="H1", parent=styles["Heading1"], fontSize=16, spaceBefore=4, spaceAfter=8, textColor=colors.HexColor("#1a3a2a")))
-styles.add(ParagraphStyle(name="H2", parent=styles["Heading2"], fontSize=12.5, spaceBefore=14, spaceAfter=6, textColor=colors.HexColor("#1a3a2a")))
-styles.add(ParagraphStyle(name="H3", parent=styles["Heading3"], fontSize=10.8, spaceBefore=10, spaceAfter=4, textColor=colors.HexColor("#2f4f3f")))
-styles.add(ParagraphStyle(name="Caption", parent=styles["Normal"], fontSize=8.3, leading=11, textColor=colors.HexColor("#555555"), spaceAfter=10))
-styles.add(ParagraphStyle(name="TitleSub", parent=styles["Normal"], fontSize=11, textColor=colors.HexColor("#555555"), spaceAfter=4))
-styles.add(ParagraphStyle(name="Glossary", parent=styles["Normal"], fontSize=9.0, leading=12.5,
-                           textColor=colors.HexColor("#1a3a2a"), backColor=colors.HexColor("#f0f4f1"),
-                           borderColor=colors.HexColor("#c8d8cc"), borderWidth=0.6, borderPadding=8,
-                           spaceAfter=10))
-
-story = []
-def h1(t): story.append(Paragraph(t, styles["H1"]))
-def h2(t): story.append(Paragraph(t, styles["H2"]))
-def h3(t): story.append(Paragraph(t, styles["H3"]))
-def body(t): story.append(Paragraph(t, styles["Body"]))
-def caption(t): story.append(Paragraph(t, styles["Caption"]))
-def glossary(t): story.append(Paragraph(t, styles["Glossary"]))
-def rule(): story.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#bbbbbb"), spaceBefore=4, spaceAfter=10))
-def fig(path, width=6.2*inch):
-    img = Image(str(path))
-    ratio = img.imageHeight / img.imageWidth
-    img.drawWidth = width
-    img.drawHeight = width * ratio
-    story.append(img)
-
-def make_table(rows, col_widths=None, header_bg="#1a3a2a", fontsize=8.3, align_first_left=True):
-    t = Table(rows, colWidths=col_widths, hAlign="LEFT")
-    style = [
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(header_bg)),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTSIZE", (0, 0), (-1, -1), fontsize),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f6f5")]),
-        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
-    ]
-    if align_first_left:
-        style.append(("ALIGN", (0, 0), (0, -1), "LEFT"))
-    t.setStyle(TableStyle(style))
-    return t
+rb, story, styles, h1, h2, h3, body, caption, glossary, rule, fig, make_table = new_report(fig_width=6.2 * inch)
 
 # ============================== COVER ==============================
 story.append(Spacer(1, 0.3*inch))
@@ -323,13 +279,10 @@ story.append(Spacer(1, 0.3*inch))
 rule()
 caption("""Sources: README.md's documented strategy evolution, data/sweep_strategy4_leverage.csv,
 data/sue_reversal_summary.json, data/sue_reversal_by_decile.csv, and the sector-concentration and
-EAR diagnostics printed by scripts/21_leverage_and_improvements.py, scripts/22_sector_neutral_and_cadence.py,
-and scripts/27_ear_signal_diagnostic.py. Scripts: scripts/20_strategy4_tilted.py through
-scripts/28_sue_reversal_test.py, scripts/29_v2_strategy_charts.py, scripts/31_build_development_report.py.""")
+EAR diagnostics printed by scripts/equity_strategy/21_leverage_and_improvements.py,
+scripts/equity_strategy/22_sector_neutral_and_cadence.py, and scripts/equity_strategy/27_ear_signal_diagnostic.py.
+Scripts: scripts/equity_strategy/20_strategy4_tilted.py through scripts/equity_strategy/28_sue_reversal_test.py,
+scripts/equity_strategy/29_v2_strategy_charts.py, scripts/equity_strategy/31_build_development_report.py.""")
 
-doc = SimpleDocTemplate(str(OUT), pagesize=letter,
-                         leftMargin=0.75*inch, rightMargin=0.75*inch,
-                         topMargin=0.7*inch, bottomMargin=0.7*inch,
-                         title="From Signal to Strategy: The Development Story")
-doc.build(story)
+rb.save(OUT, title="From Signal to Strategy: The Development Story")
 print("wrote", OUT)

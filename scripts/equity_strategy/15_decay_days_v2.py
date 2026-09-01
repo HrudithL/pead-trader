@@ -16,11 +16,15 @@ one noisy crossing doesn't trigger a false decay call).
 
 Output: data/cell_decay_days.csv (overwritten with the fixed logic)
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-DATA = Path("/root/pead_report/data")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR
+
+DATA = DATA_DIR
 WINDOW = 20
 BURN_IN = 30
 PERSIST = 10

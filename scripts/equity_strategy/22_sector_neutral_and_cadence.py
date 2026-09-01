@@ -22,15 +22,17 @@ re-risking after a good one measurably smooths the NAV curve.
 Output: data/positions_strategy5_v2.parquet (if experiment A helps),
         data/backtest_v2_strategy5.csv/_summary.json, printed comparison table.
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 import json
 
-DATA = Path("/root/pead_report/data")
-RAW = Path("/mnt/user-data/uploads/PEAD_Trading/data/normalized_equity")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, RAW_EQUITY_DIR, INITIAL_CAPITAL
 
-INITIAL_CAPITAL = 10_000_000.0
+DATA = DATA_DIR
+RAW = RAW_EQUITY_DIR
 LIQUIDITY_CAP_FRAC = 0.05
 MAX_GROSS_LEVERAGE = 1.5
 COST_BPS = {1: 25, 2: 15, 3: 10, 4: 7, 5: 5}

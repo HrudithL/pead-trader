@@ -1,43 +1,35 @@
 """
-Strategy 7: same trimmed/tilted signal and the same size+sector diversification as Strategy 5/6,
-but WITHOUT forcing the long leg and short leg to be dollar-equal every quarter.
+Finalize Strategy 6: same size + FF12-sector neutralized signal as Strategy 5 (trim=0.15,
+tilt_power=1.0), but with MAX_GROSS_LEVERAGE raised from 1.5x to 2.5x and base_unit_fraction
+retuned to 0.003 -- the point identified in the leverage-cap sweep where this specific,
+well-diversified signal's own natural demand stops growing (cap-binding drops to 0% of quarters
+by 2.5x). Unlike the earlier (pre-neutralization) strategies, raising the cap here does not
+introduce concentration risk, because sector+size neutralization already prevents capital from
+piling into a small number of names -- so this is a case where loosening the safety cap is
+actually justified by the diversification already built in, not just chasing return.
 
-Why this matters, and what changes mechanically: Strategy 5/6's neutralization groups events by
-(quarter, SIDE, sector, size_quintile) -- crossing the group key with side is what forces the
-long leg's total budget and the short leg's total budget to each land at the same fixed
-constant every quarter, regardless of how lopsided the actual signal is that quarter. If a
-quarter's earnings season produces a lot more strong positive surprises than strong negative
-ones (which happens, surprise counts are not symmetric quarter to quarter, e.g. broad economic
-expansions skew the SUE distribution), the old construction throws that information away by
-re-forcing 50/50 dollar balance anyway.
+Result vs. Strategy 5: ann.ret 5.08%->6.49%, Sharpe 1.00->1.02 (improves, not just return),
+max_drawdown -10.4%->-16.6% (the honest cost: more gross exposure means a deeper worst case even
+though the risk-adjusted ratio holds up).
 
-Strategy 7 drops SIDE from the group key -- neutralization is by (quarter, sector, size_quintile)
-only. Each such cell still gets a fixed capital budget (for diversification: no single
-sector/size bucket can dominate), but WITHIN a cell, the actual mix of long and short signals
-keeps its natural relative weight. A cell with only positive-surprise names that quarter comes
-out net long; a mixed cell nets out more balanced. Aggregated across the whole book, this lets
-the portfolio's net exposure drift with the natural asymmetry of the earnings-surprise signal
-itself, instead of being reset to flat every quarter by construction. This is the "unrestricted"
-alternative flagged in conversation to raising beta via a separate market overlay -- same
-directional idea (let some net exposure through), different implementation (emerges from the
-signal itself rather than a bolted-on index position), with the explicit tradeoff that it now
-mixes a market-timing-like effect into the same weights used for the earnings-surprise bet,
-rather than keeping the two sources of return cleanly separable.
-
-Output: data/positions_strategy7_v2.parquet, data/backtest_v2_strategy7.csv,
-        data/backtest_v2_strategy7_quarterlog.csv, data/backtest_v2_strategy7_summary.json
+Produces the same output shape as strategy 5 (23) so it drops into the same report/charting
+pipeline: data/positions_strategy6_v2.parquet, data/backtest_v2_strategy6.csv,
+data/backtest_v2_strategy6_quarterlog.csv, data/backtest_v2_strategy6_summary.json, and an updated
+data/backtest_v2_comparison.csv with all six strategies.
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 import json
 
-DATA = Path("/root/pead_report/data")
-RAW = Path("/mnt/user-data/uploads/PEAD_Trading/data/normalized_equity")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, RAW_EQUITY_DIR, INITIAL_CAPITAL
 
-INITIAL_CAPITAL = 10_000_000.0
+DATA = DATA_DIR
+RAW = RAW_EQUITY_DIR
 LIQUIDITY_CAP_FRAC = 0.05
-MAX_GROSS_LEVERAGE = 2.5  # same cap Strategy 6 uses -- this is a like-for-like comparison to it
+MAX_GROSS_LEVERAGE = 2.5
 COST_BPS = {1: 25, 2: 15, 3: 10, 4: 7, 5: 5}
 DEFAULT_COST_BPS = 15
 TRIM, TILT_POWER, BUF = 0.15, 1.0, 0.003
@@ -53,12 +45,6 @@ eq["ret_mktadj"] = (eq["ret"] - eq["vwretd"]).fillna(0.0)
 eq = eq.sort_values(["permno", "date"]).drop_duplicates(subset=["permno", "date"]).reset_index(drop=True)
 eq_ret = eq["ret_mktadj"].to_numpy()
 eq_date_arr = eq["date"].to_numpy()
-eq_raw_ret = eq["ret"].fillna(0.0).to_numpy()  # RAW (not market-adjusted) return -- needed because a book
-                                    # that's no longer dollar-neutral actually carries real market
-                                    # exposure now, so its P&L must be computed on raw returns,
-                                    # not market-adjusted ones (adjusting would silently strip
-                                    # the very net-exposure effect this strategy is designed to let
-                                    # through).
 
 calendar_dt = pd.DatetimeIndex(sorted(mkt["date"].unique()))
 date_to_idx = {d: i for i, d in enumerate(calendar_dt)}
@@ -93,16 +79,16 @@ starts = entry_idx + 1
 rep_pos_idx = np.repeat(np.arange(n_pos), lengths)
 offsets = np.arange(total_rows) - np.repeat(np.cumsum(lengths) - lengths, lengths)
 flat_eq_row = np.repeat(starts, lengths) + offsets
-flat_ret_raw = eq_raw_ret[flat_eq_row]
+flat_ret = eq_ret[flat_eq_row]
 flat_date = eq_date_arr[flat_eq_row]
 flat_cal_idx = calendar_dt.searchsorted(flat_date)
 flat_qcode = quarter_code_of_day[flat_cal_idx]
 order = np.argsort(flat_qcode, kind="stable")
-flat_qcode_sorted, flat_ret_sorted, rep_pos_idx_sorted = flat_qcode[order], flat_ret_raw[order], rep_pos_idx[order]
+flat_qcode_sorted, flat_ret_sorted, rep_pos_idx_sorted = flat_qcode[order], flat_ret[order], rep_pos_idx[order]
 boundaries = np.searchsorted(flat_qcode_sorted, np.arange(n_quarters + 1))
 
 
-def compute_weights_unconstrained(trim, tilt_power):
+def compute_weights_size_sector(trim, tilt_power):
     d = pos["sue_rank_pct"].to_numpy() - 0.5
     frac = np.clip(np.abs(d) / 0.5, 0, 1)
     tilt = np.sign(d) * (frac ** tilt_power)
@@ -110,17 +96,13 @@ def compute_weights_unconstrained(trim, tilt_power):
     w = np.where(keep, tilt, 0.0)
     df = pos[["ann_quarter", "size_quintile", "ff12_sector"]].copy()
     df["w"] = w
+    df["side"] = np.sign(w)
     kept_idx = np.where(keep)[0]
     sub = df.iloc[kept_idx].copy()
-    # group key WITHOUT side: (quarter, sector, size_quintile) only -- this is the one change
-    # from Strategy 5/6's neutralization that lets net long/short exposure emerge naturally.
-    grp_key = list(zip(sub["ann_quarter"], sub["ff12_sector"], sub["size_quintile"]))
+    grp_key = list(zip(sub["ann_quarter"], sub["side"], sub["ff12_sector"], sub["size_quintile"]))
     sub["grp_key"] = grp_key
-    # normalize by the group's total ABSOLUTE weight (for diversification: no cell dominates)
-    # but keep each position's actual SIGN and relative magnitude within the cell -- so a cell
-    # that's mostly positive surprises comes out net long, not forced back to zero.
     grp_totals = sub.groupby("grp_key")["w"].transform(lambda x: x.abs().sum()).to_numpy()
-    n_groups = sub.groupby("ann_quarter")["grp_key"].transform("nunique").to_numpy()
+    n_groups = sub.groupby([sub["ann_quarter"], sub["side"]])["grp_key"].transform("nunique").to_numpy()
     safe = grp_totals > 0
     w_neutral = np.zeros(len(sub))
     w_neutral[safe] = sub["w"].to_numpy()[safe] / grp_totals[safe] / n_groups[safe]
@@ -132,16 +114,7 @@ def compute_weights_unconstrained(trim, tilt_power):
     return out
 
 
-weight = compute_weights_unconstrained(TRIM, TILT_POWER)
-
-# quick diagnostic: how net long/short does this actually run, quarter to quarter?
-active = pos[weight != 0].copy()
-active["w"] = weight[weight != 0]
-net_by_q = active.groupby("ann_quarter")["w"].sum()
-gross_by_q = active.groupby("ann_quarter")["w"].apply(lambda x: x.abs().sum())
-net_frac = (net_by_q / gross_by_q)
-print(f"net exposure as a fraction of gross, by quarter: mean={net_frac.mean():.3f}, "
-      f"std={net_frac.std():.3f}, min={net_frac.min():.3f}, max={net_frac.max():.3f}")
+weight = compute_weights_size_sector(TRIM, TILT_POWER)
 
 liq_cap_dollars = np.where(np.isfinite(adv21), LIQUIDITY_CAP_FRAC * adv21, np.inf)
 trailing_nav = INITIAL_CAPITAL
@@ -187,14 +160,13 @@ for qi in range(n_quarters):
     quarter_log.append(dict(quarter=str(unique_quarters[qi]), trailing_nav_used=trailing_nav,
                              base_unit=base_unit, n_new_positions=int(q_mask.sum()),
                              cap_status=scale_note, n_dropped_low_conviction=n_dropped_q,
-                             net_exposure=float(np.sum(target)) if q_mask.any() else 0.0,
                              quarter_realized_pnl=quarter_pnl))
     trailing_nav += quarter_pnl
 
 pos_out = pos.copy()
 pos_out["weight"] = weight
 pos_out = pos_out[pos_out["weight"] != 0].reset_index(drop=True)
-pos_out.to_parquet(DATA / "positions_strategy7_v2.parquet", index=False)
+pos_out.to_parquet(DATA / "positions_strategy6_v2.parquet", index=False)
 
 entry_costs = np.abs(notional) * (cost_bps / 10_000.0)
 exit_costs = entry_costs.copy()
@@ -202,61 +174,64 @@ daily_pnl = np.zeros(n_days)
 np.add.at(daily_pnl, entry_cal_idx, -entry_costs)
 np.add.at(daily_pnl, exit_cal_idx, -exit_costs)
 flat_notional = notional[rep_pos_idx]
-np.add.at(daily_pnl, flat_cal_idx, flat_notional * flat_ret_raw)
+np.add.at(daily_pnl, flat_cal_idx, flat_notional * flat_ret)
 
 turnover_dollars = np.zeros(n_days)
 np.add.at(turnover_dollars, entry_cal_idx, np.abs(notional))
 np.add.at(turnover_dollars, exit_cal_idx, np.abs(notional))
+
 exposure_delta = np.zeros(n_days + 1)
 open_delta = np.zeros(n_days + 1)
-net_exposure_delta = np.zeros(n_days + 1)
 np.add.at(exposure_delta, entry_cal_idx, np.abs(notional))
 np.add.at(exposure_delta, exit_cal_idx, -np.abs(notional))
-np.add.at(net_exposure_delta, entry_cal_idx, notional)
-np.add.at(net_exposure_delta, exit_cal_idx, -notional)
 np.add.at(open_delta, entry_cal_idx, (weight != 0).astype(float))
 np.add.at(open_delta, exit_cal_idx, -(weight != 0).astype(float))
 gross_exposure = np.cumsum(exposure_delta[:n_days])
-net_exposure = np.cumsum(net_exposure_delta[:n_days])
 n_open = np.cumsum(open_delta[:n_days]).astype(int)
 
 nav = INITIAL_CAPITAL + np.cumsum(daily_pnl)
-true_daily_ret = np.diff(nav, prepend=INITIAL_CAPITAL) / np.concatenate([[INITIAL_CAPITAL], nav[:-1]])
+daily_ret = np.diff(nav, prepend=INITIAL_CAPITAL) / INITIAL_CAPITAL
 
 out = pd.DataFrame({"date": list(calendar_dt), "daily_pnl": daily_pnl, "nav": nav,
-                     "gross_exposure": gross_exposure, "net_exposure": net_exposure,
-                     "n_open_positions": n_open, "turnover_dollars": turnover_dollars,
-                     "daily_return": true_daily_ret})
-out.to_csv(DATA / "backtest_v2_strategy7.csv", index=False)
-pd.DataFrame(quarter_log).to_csv(DATA / "backtest_v2_strategy7_quarterlog.csv", index=False)
+                     "gross_exposure": gross_exposure, "n_open_positions": n_open,
+                     "turnover_dollars": turnover_dollars, "daily_return": daily_ret})
+out.to_csv(DATA / "backtest_v2_strategy6.csv", index=False)
+pd.DataFrame(quarter_log).to_csv(DATA / "backtest_v2_strategy6_quarterlog.csv", index=False)
 
 years = n_days / 252.0
 total_ret = (nav[-1] - INITIAL_CAPITAL) / INITIAL_CAPITAL
 ann_ret = (1 + total_ret) ** (1 / years) - 1
-ann_vol = pd.Series(true_daily_ret).std(ddof=1) * np.sqrt(252)
-sharpe = (pd.Series(true_daily_ret).mean() * 252) / ann_vol
+ann_vol = daily_ret.std(ddof=1) * np.sqrt(252)
+sharpe = (daily_ret.mean() * 252) / ann_vol if ann_vol > 0 else np.nan
 running_max = np.maximum.accumulate(nav)
 max_dd = ((nav - running_max) / running_max).min()
 liquidity_capped = (np.abs(weight * base_unit_at_entry) > np.abs(notional) + 1e-6) & (base_unit_at_entry > 0)
 total_costs = entry_costs.sum() + exit_costs.sum()
 annual_turnover = turnover_dollars.sum() / years / INITIAL_CAPITAL
-# correlation to the market -- the whole point of this diagnostic: how much beta crept in
-corr_to_mkt = np.corrcoef(true_daily_ret, mkt.set_index("date").reindex(calendar_dt)["vwretd"].fillna(0.0).to_numpy())[0, 1]
 
 summary = dict(
-    name="strategy7_unconstrained_net_exposure", trim=TRIM, tilt_power=TILT_POWER,
-    base_unit_fraction=BUF, liquidity_cap_frac=LIQUIDITY_CAP_FRAC, max_gross_leverage=MAX_GROSS_LEVERAGE,
+    name="strategy6_leverage25x", trim=TRIM, tilt_power=TILT_POWER,
+    base_unit_fraction=BUF, liquidity_cap_frac=LIQUIDITY_CAP_FRAC,
     n_positions=int((weight != 0).sum()), total_return=total_ret, annualized_return=ann_ret,
     annualized_vol=ann_vol, sharpe=sharpe, max_drawdown=max_dd,
-    avg_gross_exposure=float(gross_exposure.mean()), avg_net_exposure=float(net_exposure.mean()),
-    avg_net_exposure_pct_of_gross=float((net_exposure / np.where(gross_exposure == 0, np.nan, gross_exposure)).mean()),
-    correlation_to_market=float(corr_to_mkt),
+    avg_gross_exposure=float(gross_exposure.mean()),
+    avg_leverage_vs_initial_capital=float(gross_exposure.mean() / INITIAL_CAPITAL),
     avg_n_open_positions=float(n_open.mean()), max_n_open_positions=int(n_open.max()),
     total_transaction_costs=float(total_costs), annual_turnover_x_capital=float(annual_turnover),
     pct_liquidity_capped=float(liquidity_capped.mean()), final_nav=float(nav[-1]),
     n_quarters_leverage_capped=int(sum(1 for q in quarter_log if q["cap_status"] == "priority_capped")),
+    total_positions_dropped_by_priority_cap=int(sum(q["n_dropped_low_conviction"] for q in quarter_log)),
 )
-with open(DATA / "backtest_v2_strategy7_summary.json", "w") as f:
+with open(DATA / "backtest_v2_strategy6_summary.json", "w") as f:
     json.dump(summary, f, indent=2)
-print(f"strategy7: ann.ret={ann_ret:.2%} ann.vol={ann_vol:.2%} Sharpe={sharpe:.3f} "
-      f"maxDD={max_dd:.2%} final_nav=${nav[-1]:,.0f} corr_to_mkt={corr_to_mkt:.3f}")
+print(f"strategy6: ann.ret={ann_ret:.2%} ann.vol={ann_vol:.2%} Sharpe={sharpe:.3f} "
+      f"maxDD={max_dd:.2%} final_nav=${nav[-1]:,.0f}")
+
+# ---------- update the comparison table to include all 6 strategies ----------
+comparison_rows = []
+for fname in ["extreme", "rankweighted", "balanced", "strategy4", "strategy5"]:
+    with open(DATA / f"backtest_v2_{fname}_summary.json") as f:
+        comparison_rows.append(json.load(f))
+comparison_rows.append(summary)
+pd.DataFrame(comparison_rows).to_csv(DATA / "backtest_v2_comparison.csv", index=False)
+print("\nwrote data/backtest_v2_comparison.csv (6 strategies)")
