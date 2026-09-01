@@ -74,12 +74,12 @@ real fund's Sharpe (1.30 vs. 0.69).
 
 Institutional practice for closing this gap, confirmed against the actual research literature
 (Frazzini/Israel/Moskowitz on real-world trading costs; Acadian on 130/30 mechanics -- see
-citations in `scripts/24_finalize_strategy6.py` and the conversation history), is not to trade
+citations in `scripts/equity_strategy/24_finalize_strategy6.py` and the conversation history), is not to trade
 PEAD harder on its own -- it's usually blended into a multi-factor book and implemented via a
 130/30-style long-extension structure: keep the alpha book's market-neutral construction intact,
 and add market exposure back as a *separate* position on top of it, rather than distorting the
 alpha signal itself to let beta leak in. That's exactly what **Strategy 6 + 0.5x beta overlay**
-does (`scripts/25_strategy6_beta_overlay.py`): the alpha book is untouched, and a synthetic
+does (`scripts/equity_strategy/25_strategy6_beta_overlay.py`): the alpha book is untouched, and a synthetic
 market-index position sized to 0.5x trailing NAV (rebalanced on the same quarterly cadence,
 2bps overlay transaction cost) is held alongside it. Result: 10.08% return, Sharpe 0.97 -- inside
 the 10-15% target band, with much better risk-adjusted and drawdown characteristics than simply
@@ -87,7 +87,7 @@ holding the market (9.94% return, Sharpe 0.59, -55.5% max drawdown).
 
 ### Why Strategy 7 is not simply a cheaper way to add beta
 
-Strategy 7 (`scripts/26_strategy7_unconstrained_netexposure.py`) tests the other way to let some
+Strategy 7 (`scripts/equity_strategy/26_strategy7_unconstrained_netexposure.py`) tests the other way to let some
 market exposure through: stop forcing the long leg's and short leg's dollar totals to match every
 quarter (Strategy 5/6's neutralization does this by construction, crossing its diversification
 groups with side). Removing that constraint required switching from market-adjusted to raw
@@ -113,6 +113,43 @@ strategies doesn't change, but the true Sharpe ratios are meaningfully better th
 originally reported mid-project. The results table above and `data/results_summary_v2_FINAL.csv`
 use the corrected `nav.pct_change()`-based calculation.
 
+## Repository layout
+
+`scripts/` is organized as a small package, not a flat pile of numbered files: a `common/`
+module of code genuinely shared across every stage, four domain folders that each answer one
+question, and a `legacy/` attic for superseded-but-kept-for-history code. Original script numbers
+are unchanged (they encode run order and are cited by exact name inside the PDF reports below) --
+only the folder each one lives in is new.
+
+```
+scripts/
+  common/                 # cross-domain shared code, imported by everything below
+    paths.py              # every data/reports/raw-data location, env-var overridable
+    stats.py              # fama_macbeth() -- one implementation, not five
+    report_pdf.py          # shared ReportLab stylesheet + h1/h2/fig/make_table/... helpers
+    plotting.py            # shared matplotlib style for every chart script
+
+  equity_pead/            # "does PEAD exist in equities?" -- v1 evidence pipeline + PEAD_Report.pdf
+  equity_strategy/         # backtest engines, all 8 strategies, and the two showcase/development reports
+    lib/positions.py        # size_balance(), shared by the two position-construction scripts
+
+  options_pead/            # "does the drift show up in options?" -- evidence pipeline + PEAD_Options_Report.pdf
+  options_strategy/         # option contract selection + forward pricing (the substrate for a future options backtest)
+    lib/options.py           # streamed/filtered opprcd scans, contract picker (moved from options_lib.py)
+
+  legacy/
+    05_build_pdf.py         # original cloud-sandbox evidence report, superseded by equity_pead/32
+```
+
+`common/paths.py` resolves every location relative to the repo root by default (replacing a set of
+dead, cloud-sandbox-specific absolute paths -- `/root/pead_report/...`, `/mnt/user-data/...` --
+that most scripts originally hardcoded and that never actually resolved on any machine this repo
+has been checked out on). Each one can still be overridden with an environment variable, e.g.
+`OPTIONMETRICS_DIR=/content/drive/MyDrive/OptionMetrics/parquet` to run the options pipeline from a
+Google Drive mount on a Colab GPU runtime instead of the local `D:/OptionMetrics/parquet`. A script
+is run exactly the same way as before, just from its new path, e.g.
+`python scripts/equity_strategy/17_backtest_v2.py`.
+
 ## Run order
 
 The full pipeline, in the order each stage depends on the last. Everything is re-runnable from
@@ -122,39 +159,40 @@ this repo plus the raw WRDS pull already present under `data/`.
 Fama-French-style characteristic robustness check, and the original fixed-notional backtest
 engine):**
 ```
-scripts/01_build_deciles.py        # decile construction from IBES SUE + CRSP/Compustat
-scripts/02_decile_summary.py       # Fama-MacBeth quarter-clustered decile statistics
-scripts/03_subsample.py            # subsample similarity tests (sector, size, era)
-scripts/04_charts.py               # decile drift / spread charts
-scripts/05_build_pdf.py            # assembles the PDF report
-scripts/06_ff_adjustment.py        # size + book-to-market characteristic adjustment
-scripts/07_ff_charts.py            # characteristic-adjusted charts
-scripts/08_extended_horizons.py    # checkpointed return horizons out to 180 days
-scripts/09_decay_analysis.py       # early (checkpoint-based) decay-day estimate
-scripts/10_extended_ff_decay.py    # characteristic-adjusted decay analysis
-scripts/11_positions.py            # v1 position construction (3 strategies)
-scripts/12_backtest_engine.py      # v1 fixed-notional backtest engine
-scripts/13_strategy_charts.py      # v1 NAV / drawdown / exposure charts
+scripts/equity_pead/01_build_deciles.py        # decile construction from IBES SUE + CRSP/Compustat
+scripts/equity_pead/02_decile_summary.py       # Fama-MacBeth quarter-clustered decile statistics
+scripts/equity_pead/03_subsample.py            # subsample similarity tests (sector, size, era)
+scripts/equity_pead/04_charts.py               # decile drift / spread charts
+scripts/legacy/05_build_pdf.py                 # assembles the PDF report (legacy, see below)
+scripts/equity_pead/06_ff_adjustment.py        # size + book-to-market characteristic adjustment
+scripts/equity_pead/07_ff_charts.py            # characteristic-adjusted charts
+scripts/equity_pead/08_extended_horizons.py    # checkpointed return horizons out to 180 days
+scripts/equity_pead/09_decay_analysis.py       # early (checkpoint-based) decay-day estimate
+scripts/equity_pead/10_extended_ff_decay.py    # characteristic-adjusted decay analysis
+scripts/equity_strategy/11_positions.py        # v1 position construction (3 strategies)
+scripts/equity_strategy/12_backtest_engine.py  # v1 fixed-notional backtest engine
+scripts/equity_strategy/13_strategy_charts.py  # v1 NAV / drawdown / exposure charts
 ```
 
 **v2 pipeline (daily-precision decay curve, decile x size x BM holding-period cells,
-trailing-NAV compounding backtest, and every strategy from "the initial 3" onward):**
+trailing-NAV compounding backtest, and every strategy from "the initial 3" onward -- all in
+`equity_strategy/`):**
 ```
-scripts/14_daily_decay.py                       # 200-day daily decay curve + holding-period cells
-scripts/15_decay_days_v2.py                     # windowed-slope decay-day detection (fixes 14's noise)
-scripts/16_positions_v2.py                      # per-cell holding periods for the initial 3 strategies
-scripts/17_backtest_v2.py                       # trailing-NAV backtest: extreme, rankweighted, balanced
-scripts/18_param_sweep.py                       # base_unit_fraction / liquidity_cap_frac sweep
-scripts/19_param_sweep_extended.py              # wider sweep to find the sizing "elbow"
-scripts/20_strategy4_tilted.py                  # Strategy 4: trimmed/tilted, priority-based cap
-scripts/21_leverage_and_improvements.py         # leverage-cap justification test + sector diagnostic
-scripts/22_sector_neutral_and_cadence.py        # sector-neutral test + monthly-cadence test
-scripts/23_finalize_strategy5.py                # Strategy 5: + sector-neutral, finalized
-scripts/24_finalize_strategy6.py                # Strategy 6: + leverage cap raised to 2.5x
-scripts/25_strategy6_beta_overlay.py            # Strategy 6 + 0.5x market beta overlay
-scripts/26_strategy7_unconstrained_netexposure.py  # Strategy 7: no long=short dollar constraint
-scripts/27_ear_signal_diagnostic.py             # EAR (announcement-window return) signal research, leak-free
-scripts/28_sue_reversal_test.py                 # SUE lag-4 autocorrelation / reversal test
+14_daily_decay.py                       # 200-day daily decay curve + holding-period cells
+15_decay_days_v2.py                     # windowed-slope decay-day detection (fixes 14's noise)
+16_positions_v2.py                      # per-cell holding periods for the initial 3 strategies
+17_backtest_v2.py                       # trailing-NAV backtest: extreme, rankweighted, balanced
+18_param_sweep.py                       # base_unit_fraction / liquidity_cap_frac sweep
+19_param_sweep_extended.py              # wider sweep to find the sizing "elbow"
+20_strategy4_tilted.py                  # Strategy 4: trimmed/tilted, priority-based cap
+21_leverage_and_improvements.py         # leverage-cap justification test + sector diagnostic
+22_sector_neutral_and_cadence.py        # sector-neutral test + monthly-cadence test
+23_finalize_strategy5.py                # Strategy 5: + sector-neutral, finalized
+24_finalize_strategy6.py                # Strategy 6: + leverage cap raised to 2.5x
+25_strategy6_beta_overlay.py            # Strategy 6 + 0.5x market beta overlay
+26_strategy7_unconstrained_netexposure.py  # Strategy 7: no long=short dollar constraint
+27_ear_signal_diagnostic.py             # EAR (announcement-window return) signal research, leak-free
+28_sue_reversal_test.py                 # SUE lag-4 autocorrelation / reversal test
 ```
 
 **Two negative results (27, 28) are included deliberately.** Not every research thread in this
@@ -179,29 +217,31 @@ Each v2 backtest script writes `data/backtest_v2_<name>.csv` (daily NAV/exposure
 `data/backtest_v2_<name>_summary.json` (headline stats), and, where applicable,
 `data/backtest_v2_<name>_quarterlog.csv` (the trailing-NAV sizing decision made each quarter).
 
-**Reports (built from the above, locally runnable):**
+**Reports (built from the above, locally runnable, in `equity_strategy/`):**
 ```
-scripts/29_v2_strategy_charts.py                # NAV/drawdown/comparison charts for all 8 strategies
-scripts/30_build_strategy_showcase_report.py    # reports/PEAD_Strategy_Showcase.pdf -- performance
-scripts/31_build_development_report.py          # reports/PEAD_Strategy_Development.pdf -- the "why"
-scripts/32_build_evidence_report.py             # reports/PEAD_Report.pdf -- does PEAD exist (v1 evidence)
+29_v2_strategy_charts.py                # NAV/drawdown/comparison charts for all 8 strategies
+30_build_strategy_showcase_report.py    # reports/PEAD_Strategy_Showcase.pdf -- performance
+31_build_development_report.py          # reports/PEAD_Strategy_Development.pdf -- the "why"
 ```
-`scripts/05_build_pdf.py` (the original, cloud-sandbox-only version of the evidence report,
-including the now-superseded 3-strategy v1 backtest section) is left in place for history but
-superseded by `scripts/32_build_evidence_report.py` for local regeneration.
+`scripts/equity_pead/32_build_evidence_report.py` builds `reports/PEAD_Report.pdf` -- does PEAD
+exist (v1 evidence). `scripts/legacy/05_build_pdf.py` (the original, cloud-sandbox-only version of
+the evidence report, including the now-superseded 3-strategy v1 backtest section) is left in place
+for history but superseded by `32_build_evidence_report.py` for local regeneration.
 
 **Options pipeline (extends the same SUE deciles into the options market via OptionMetrics IvyDB
-data, mounted separately at `D:/OptionMetrics/parquet/` -- not tracked in this repo, ~100GB, see
-[Data](#data) below):**
+data, mounted separately at `OPTIONMETRICS_DIR` -- default `D:/OptionMetrics/parquet/`, not
+tracked in this repo, ~100GB, see [Data](#data) below). Split across `options_pead/` (the evidence
+question) and `options_strategy/` (contract selection and pricing, the substrate for that
+evidence and for a future options backtest):**
 ```
-scripts/options_lib.py                   # shared helpers: streamed/filtered opprcd scans, contract picker
-scripts/33_build_trading_calendar.py     # OM trading-day calendar from secprd*.parquet (1996-2013 ex-2011)
-scripts/34_link_events_secid.py          # rebuilds the decile event panel locally, links permno -> secid
-scripts/35_select_entry_contracts.py     # per event: near-ATM call + put (delta~+-0.50, DTE>=95d) at day0
-scripts/36_forward_option_prices.py      # same-contract buy-and-hold mid price at +{1,5,10,20,40,60}d
-scripts/37_decile_summary_options.py     # decile x horizon stats for call/put/straddle, quarter-clustered
-scripts/38_charts_options.py             # decile drift, spread, coverage charts (figures 18-23)
-scripts/39_build_options_report.py       # reports/PEAD_Options_Report.pdf
+scripts/options_strategy/lib/options.py         # shared helpers: streamed/filtered opprcd scans, contract picker
+scripts/options_pead/33_build_trading_calendar.py     # OM trading-day calendar from secprd*.parquet (1996-2013 ex-2011)
+scripts/options_pead/34_link_events_secid.py          # rebuilds the decile event panel locally, links permno -> secid
+scripts/options_strategy/35_select_entry_contracts.py # per event: near-ATM call + put (delta~+-0.50, DTE>=95d) at day0
+scripts/options_strategy/36_forward_option_prices.py  # same-contract buy-and-hold mid price at +{1,5,10,20,40,60}d
+scripts/options_pead/37_decile_summary_options.py     # decile x horizon stats for call/put/straddle, quarter-clustered
+scripts/options_pead/38_charts_options.py             # decile drift, spread, coverage charts (figures 18-23)
+scripts/options_pead/39_build_options_report.py       # reports/PEAD_Options_Report.pdf
 ```
 **2011 is excluded from every options result:** `opprcd2011.sas7bdat` (14.6GB) is present on the
 source drive but structurally corrupt -- confirmed independently with two different SAS readers
@@ -209,6 +249,19 @@ source drive but structurally corrupt -- confirmed independently with two differ
 underlying-price file (`secprd2011`) converted cleanly, so the corruption is specific to the
 option-price file. 2013 is also truncated at end-August in this OptionMetrics extract. See
 `PEAD_Options_Report.pdf` Section 1 for the full writeup.
+
+**Note on the reorganization itself:** the numbered scripts were moved into the domain folders
+above (and their internal duplication -- `fama_macbeth`, the PDF report boilerplate, matplotlib
+styling, path constants -- was consolidated into `common/`) without changing any algorithm, weight
+formula, or NAV/Sharpe calculation. `04, 07, 13, 29` (charts) and `30, 31, 32` (reports) were
+re-run after the move and diffed against the previously committed output to confirm no drift;
+the rest of the pipeline needs the raw WRDS/OptionMetrics pulls to re-verify end-to-end, which
+aren't present in every checkout. Two already-built PDFs' embedded source citations still name
+the old flat `scripts/NN_....py` paths rather than the new nested ones, because regenerating them
+needs data this repo doesn't always have on hand: `PEAD_Options_Report.pdf` (needs
+`data/event_options/`) and `scripts/legacy/05_build_pdf.py`'s own historical output (superseded
+regardless, see above). Their source code is already updated; only those two already-built PDF
+files are stale until someone reruns them with full data access.
 
 ## Reports
 
@@ -240,9 +293,11 @@ findings (backtest CSVs, summary JSONs, sweep results, the decay-day cell table)
 `data/` since they're lightweight and are the actual evidence behind every claim in this README
 and in the conversation history that produced it.
 
-The options pipeline additionally reads raw OptionMetrics IvyDB files from `D:/OptionMetrics/parquet/`
-(an external drive, ~100GB, not tracked in this repo and not reproducible from anything checked in
-here) and writes its own regeneratable intermediates to `data/event_options/`. In this git
+The options pipeline additionally reads raw OptionMetrics IvyDB files from `OPTIONMETRICS_DIR`
+(`scripts/common/paths.py`; defaults to `D:/OptionMetrics/parquet/`, an external drive, ~100GB, not
+tracked in this repo and not reproducible from anything checked in here -- override the env var to
+point at a different mount, e.g. a Colab Drive mount) and writes its own regeneratable
+intermediates to `data/event_options/`. In this git
 worktree, `data/events/`, `data/earnings/`, `data/metadata/`, and `data/results/` are NTFS
 junctions to the corresponding folders in the main checkout rather than copies, so the raw WRDS
 pull isn't duplicated on disk.
