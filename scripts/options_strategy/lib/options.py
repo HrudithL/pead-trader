@@ -1,9 +1,11 @@
-"""Shared helpers for the options-PEAD pipeline (scripts 33-39)."""
+"""Shared helpers for the options pipeline (options_strategy/35-36, and options_pead as needed)."""
 import gc
 import pandas as pd
 import pyarrow.parquet as pq
 
-OM_DIR = "D:/OptionMetrics/parquet"
+from common.paths import OPTIONMETRICS_DIR
+
+OM_DIR = str(OPTIONMETRICS_DIR)
 OPPRCD_COLS = ["secid", "date", "exdate", "cp_flag", "strike_price", "best_bid",
                "best_offer", "delta", "impl_volatility", "volume", "open_interest", "optionid"]
 

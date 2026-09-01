@@ -2,8 +2,8 @@
 For every linked PEAD event (data/event_options/decile_events_secid.parquet), select a near-ATM
 call and a near-ATM put quoted on day0_date for that event's secid, from the raw OptionMetrics
 opprcd{year}.parquet files (100GB+ across 1996-2013, not tracked in this repo -- read via
-D:/OptionMetrics/parquet, streamed in batches and filtered down to only the (secid, date) pairs
-we need to keep peak memory low).
+common.paths.OPTIONMETRICS_DIR, streamed in batches and filtered down to only the (secid, date)
+pairs we need to keep peak memory low).
 
 Selection rule per event:
   - candidates = all quotes for that secid on day0_date with a valid two-sided market
@@ -24,14 +24,17 @@ Output: data/event_options/entry_contracts_<year>.parquet (one row per event x {
 """
 import sys
 import time
-import pandas as pd
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
-from options_lib import scan_year_for_keys, pick_best_contracts_vectorized
+import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.paths import DATA_DIR
+from lib.options import scan_year_for_keys, pick_best_contracts_vectorized
 
 MIN_DTE = 95
 TARGET_DTE = 120
-OUT_DIR = Path("data/event_options")
+OUT_DIR = DATA_DIR / "event_options"
 YEARS = [y for y in range(1996, 2014) if y != 2011]
 
 events = pd.read_parquet(OUT_DIR / "decile_events_secid.parquet",
