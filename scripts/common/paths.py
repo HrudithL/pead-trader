@@ -22,8 +22,14 @@ EARNINGS_DIR = Path(os.environ.get("PEAD_EARNINGS_DIR", DATA_DIR / "earnings"))
 RESULTS_DIR = Path(os.environ.get("PEAD_RESULTS_DIR", DATA_DIR / "results"))
 METADATA_DIR = Path(os.environ.get("PEAD_METADATA_DIR", DATA_DIR / "metadata"))
 
-# ~100GB OptionMetrics IvyDB extract, not tracked in this repo -- see README "Data" section.
+# OptionMetrics IvyDB extract (31GB in this specific parquet/ subfolder; the full external drive
+# is larger but this pipeline only ever reads this subfolder), not tracked in this repo, never
+# copied off its physical drive -- see README "Data" section and "Data portability".
 OPTIONMETRICS_DIR = Path(os.environ.get("OPTIONMETRICS_DIR", "D:/OptionMetrics/parquet"))
+
+# Operational logs (pipeline_status.json, pipeline_run.log) for the options-strategy GPU pipeline's
+# unattended multi-day runs -- not research output, so not under DATA_DIR.
+LOGS_DIR = Path(os.environ.get("PEAD_LOGS_DIR", REPO_ROOT / "logs"))
 
 # Backtest engines (scripts 12, 17-27) all size positions against this starting NAV.
 INITIAL_CAPITAL = 10_000_000.0
