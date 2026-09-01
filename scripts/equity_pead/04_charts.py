@@ -1,30 +1,18 @@
 """Build the report's charts as PNG files in figures/."""
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-import matplotlib
-matplotlib.use("Agg")
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, FIGURES_DIR
+from common.plotting import apply_style
 import matplotlib.pyplot as plt
-from pathlib import Path
 
-DATA = Path("/root/pead_report/data")
-FIG = Path("/root/pead_report/figures")
-FIG.mkdir(exist_ok=True)
-
-plt.rcParams.update({
-    "figure.facecolor": "white",
-    "axes.facecolor": "white",
-    "axes.edgecolor": "#444444",
-    "axes.labelcolor": "#222222",
-    "text.color": "#222222",
-    "xtick.color": "#444444",
-    "ytick.color": "#444444",
-    "font.size": 10.5,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-    "axes.grid": True,
-    "grid.color": "#e5e5e5",
-    "grid.linewidth": 0.7,
-})
+DATA = DATA_DIR
+FIG = FIGURES_DIR
+FIG.mkdir(exist_ok=True, parents=True)
+apply_style()
 
 # ---------- Chart 1: decile drift curves ----------
 decile_stats = pd.read_csv(DATA / "decile_horizon_stats.csv")

@@ -32,12 +32,17 @@ survives, the drift is not simply compensation for carrying more size/value risk
 Output: data/ff_decile_horizon_stats.csv, data/ff_spread_horizon_stats.csv,
         data/ff_coverage_stats.csv
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-DATA = Path("/root/pead_report/data")
-RAW = Path("/mnt/user-data/uploads/PEAD_Trading/data")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR
+from common.stats import fama_macbeth
+
+DATA = DATA_DIR
+RAW = DATA_DIR
 
 ev = pd.read_parquet(DATA / "decile_events.parquet")
 funda = pd.read_parquet(RAW / "raw_wrds/comp/funda.parquet")
@@ -114,15 +119,6 @@ for h in HORIZONS:
 usable.to_parquet(DATA / "decile_events_ff_adjusted.parquet", index=False)
 
 # ---------- 4. Fama-MacBeth decile stats + D10-D1 spread on the adjusted return ----------
-def fama_macbeth(df, ret_col, q_col="ann_quarter"):
-    sub = df[[q_col, ret_col]].dropna(subset=[ret_col])
-    qmeans = sub.groupby(q_col)[ret_col].mean()
-    n_q = qmeans.shape[0]
-    mean = qmeans.mean()
-    se = qmeans.std(ddof=1) / np.sqrt(n_q)
-    t = mean / se if se > 0 else np.nan
-    return mean, se, t, len(sub), n_q
-
 decile_rows = []
 for h in HORIZONS:
     col = f"{RET_COLS[h]}_adj"

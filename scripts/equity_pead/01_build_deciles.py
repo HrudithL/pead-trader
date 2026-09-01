@@ -15,13 +15,17 @@ in data/events/FINDINGS.md and data/results/FINDINGS.md:
 
 Output: data/interim/decile_events.parquet
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-IN_EVENTS = "/mnt/user-data/uploads/PEAD_Trading/data/events/equity_events_1996_2013.parquet"
-IN_FEATURES = "/mnt/user-data/uploads/PEAD_Trading/data/results/event_classification_features.parquet"
-OUT_DIR = Path("/root/pead_report/data")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import EVENTS_DIR, RESULTS_DIR, DATA_DIR
+
+IN_EVENTS = EVENTS_DIR / "equity_events_1996_2013.parquet"
+IN_FEATURES = RESULTS_DIR / "event_classification_features.parquet"
+OUT_DIR = DATA_DIR
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 ev = pd.read_parquet(IN_EVENTS)

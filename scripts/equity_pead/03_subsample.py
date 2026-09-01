@@ -17,12 +17,16 @@ Method per group dimension (sector / size / era):
 
 Output: data/subsample_<dim>.csv for dim in {sector, size, era}, plus a combined tiers CSV.
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
 from scipy import stats
-from pathlib import Path
 
-DATA = Path("/root/pead_report/data")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR
+
+DATA = DATA_DIR
 ev = pd.read_parquet(DATA / "decile_events.parquet")
 
 HORIZON_COL = "ret_fwd_60d_mktadj"

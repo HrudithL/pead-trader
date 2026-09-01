@@ -11,27 +11,20 @@ its own quarter-clustered standard error so a single noisy segment doesn't trigg
 
 Output: data/decile_all_horizons.csv, data/decay_points.csv
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-DATA = Path("/root/pead_report/data")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR
+from common.stats import fama_macbeth
+
+DATA = DATA_DIR
 ev = pd.read_parquet(DATA / "decile_events_extended.parquet")
 
 ALL_HORIZONS = [1, 5, 10, 20, 40, 60, 80, 100, 120, 150, 180]
 RET_COLS = {h: f"ret_fwd_{h}d_mktadj" for h in ALL_HORIZONS}
-
-
-def fama_macbeth(df, ret_col, q_col="ann_quarter"):
-    sub = df[[q_col, ret_col]].dropna(subset=[ret_col])
-    qmeans = sub.groupby(q_col)[ret_col].mean()
-    n_q = qmeans.shape[0]
-    if n_q < 2:
-        return np.nan, np.nan, np.nan, len(sub), n_q
-    mean = qmeans.mean()
-    se = qmeans.std(ddof=1) / np.sqrt(n_q)
-    t = mean / se if se > 0 else np.nan
-    return mean, se, t, len(sub), n_q
 
 
 rows = []

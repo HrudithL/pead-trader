@@ -9,11 +9,16 @@ actual earnings-surprise signal itself stops paying.
 
 Output: data/ff_decile_all_horizons.csv, data/ff_decay_points.csv, data/ff_marginal_returns.csv
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-DATA = Path("/root/pead_report/data")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR
+from common.stats import fama_macbeth
+
+DATA = DATA_DIR
 
 ext = pd.read_parquet(DATA / "decile_events_extended.parquet")
 ff = pd.read_parquet(DATA / "decile_events_ff_adjusted.parquet")
@@ -35,19 +40,6 @@ for h in NEW_HORIZONS:
     ff[f"{col}_adj"] = ff[col] - loo_mean
 
 ff.to_parquet(DATA / "decile_events_ff_adjusted_extended.parquet", index=False)
-
-
-def fama_macbeth(df, ret_col, q_col="ann_quarter"):
-    sub = df[[q_col, ret_col]].dropna(subset=[ret_col])
-    qmeans = sub.groupby(q_col)[ret_col].mean()
-    n_q = qmeans.shape[0]
-    if n_q < 2:
-        return np.nan, np.nan, np.nan, len(sub), n_q
-    mean = qmeans.mean()
-    se = qmeans.std(ddof=1) / np.sqrt(n_q)
-    t = mean / se if se > 0 else np.nan
-    return mean, se, t, len(sub), n_q
-
 
 rows = []
 for h in ALL_HORIZONS:

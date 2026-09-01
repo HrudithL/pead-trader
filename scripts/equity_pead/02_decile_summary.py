@@ -16,26 +16,20 @@ Output:
   data/decile_horizon_stats.csv   -- decile x horizon x return-type summary
   data/spread_horizon_stats.csv   -- D10-D1 spread x horizon summary
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-DATA = Path("/root/pead_report/data")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR
+from common.stats import fama_macbeth
+
+DATA = DATA_DIR
 ev = pd.read_parquet(DATA / "decile_events.parquet")
 
 HORIZONS = [1, 5, 10, 20, 40, 60]
 RET_COLS = {h: f"ret_fwd_{h}d_mktadj" for h in HORIZONS}
-
-
-def fama_macbeth(df, group_col, ret_col, q_col="ann_quarter"):
-    """Return (mean, se, t, n_events, n_quarters) via Fama-MacBeth over q_col."""
-    sub = df[[group_col, q_col, ret_col]].dropna(subset=[ret_col])
-    qmeans = sub.groupby(q_col)[ret_col].mean()
-    n_q = qmeans.shape[0]
-    mean = qmeans.mean()
-    se = qmeans.std(ddof=1) / np.sqrt(n_q)
-    t = mean / se if se > 0 else np.nan
-    return mean, se, t, len(sub), n_q
 
 
 rows = []
@@ -43,7 +37,7 @@ for h in HORIZONS:
     col = RET_COLS[h]
     for d in range(1, 11):
         sub = ev[ev["decile"] == d]
-        mean, se, t, n, nq = fama_macbeth(sub, "decile", col)
+        mean, se, t, n, nq = fama_macbeth(sub, col)
         rows.append(dict(horizon=h, decile=d, mean=mean, se=se, t_stat=t, n_events=n, n_quarters=nq))
 
 decile_stats = pd.DataFrame(rows)

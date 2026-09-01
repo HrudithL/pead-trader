@@ -10,12 +10,16 @@ already covers 1, 5, 10, 20, 40, 60).
 
 Output: data/decile_events_extended.parquet (decile_events.parquet + new ret columns)
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-RAW = Path("/mnt/user-data/uploads/PEAD_Trading/data/normalized_equity")
-DATA = Path("/root/pead_report/data")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, RAW_EQUITY_DIR
+
+RAW = RAW_EQUITY_DIR
+DATA = DATA_DIR
 
 HORIZONS = [80, 100, 120, 150, 180]
 
