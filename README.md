@@ -134,12 +134,17 @@ scripts/
     lib/positions.py        # size_balance(), shared by the two position-construction scripts
 
   options_pead/            # "does the drift show up in options?" -- evidence pipeline + PEAD_Options_Report.pdf
-  options_strategy/         # option contract selection + forward pricing (the substrate for a future options backtest)
+  options_strategy/         # contract selection/pricing + the GPU-tiered backtested strategy + its own report
     lib/options.py           # streamed/filtered opprcd scans, contract picker (moved from options_lib.py)
+    lib/gpu.py                # device backend (numpy/cupy), mock-data generators, checkpoint logging
+    run_pipeline.py            # unattended driver for the Tier 1-4 GPU pipeline (scripts 40-50)
 
   legacy/
     05_build_pdf.py         # original cloud-sandbox evidence report, superseded by equity_pead/32
 ```
+
+See "Options-strategy GPU roadmap" below for what each numbered script in `options_strategy/`
+(35-52) actually does -- that section has its own full script listing.
 
 `common/paths.py` resolves every location relative to the repo root by default (replacing a set of
 dead, cloud-sandbox-specific absolute paths -- `/root/pead_report/...`, `/mnt/user-data/...` --
@@ -445,11 +450,15 @@ code needs to run:
 
    **Important mechanical note:** `colab run <script.py>` and `colab exec -f <script.py>` transmit
    only that ONE file's contents into the remote kernel -- they do not upload a directory. Every
-   script here (`sys.path.insert(...); from gpu_lib import ...`) depends on sibling files
-   (`gpu_lib.py`, `options_lib.py`) actually being present on the VM's filesystem, and an exec'd
-   code string may not even have a real `__file__` to resolve that sibling path from. Don't use the
-   single-file `colab run`/`colab exec -f` shortcuts for anything in this repo -- use `colab ssh`
-   for a real remote shell instead, which behaves exactly like running the scripts anywhere else:
+   script here (`sys.path.insert(...); from lib.gpu import ...` / `from common.paths import ...`)
+   depends on sibling package directories (`scripts/common/`, and each domain's own `lib/` --
+   `scripts/options_strategy/lib/gpu.py`, `scripts/options_strategy/lib/options.py`) actually being
+   present on the VM's filesystem at the same relative layout, and an exec'd code string may not
+   even have a real `__file__` to resolve those sibling paths from. Don't use the single-file
+   `colab run`/`colab exec -f` shortcuts for anything in this repo -- use `colab ssh` for a real
+   remote shell instead, which behaves exactly like running the scripts anywhere else (and, being a
+   real shell with the full `scripts/` tree present, needs no path changes for the reorganized
+   layout beyond the ones already made):
    ```bash
    zip -r pead_scripts.zip scripts/ requirements.txt requirements-gpu.txt
    colab upload -s pead pead_scripts.zip pead_scripts.zip
@@ -457,7 +466,7 @@ code needs to run:
    #   (on the VM:)
    unzip pead_scripts.zip
    pip install -r requirements-gpu.txt                   # torch/numpy/pandas ship with Colab already
-   python scripts/42_gpu_exit_optimizer.py --device cuda --mock-data --smoke-test
+   python scripts/options_strategy/42_gpu_exit_optimizer.py --device cuda --mock-data --smoke-test
    exit
    colab stop -s pead
    ```
@@ -465,8 +474,8 @@ code needs to run:
    **Zero-setup fallback, if you'd rather test something right now without installing WSL2:** open
    any Colab notebook in a browser (you already have Jupyter-based Colab access) with a GPU
    runtime, and paste the same three commands into one cell with `!` prefixes (`!pip install -r
-   requirements-gpu.txt`, `!python scripts/42_gpu_exit_optimizer.py ...`, after uploading the repo
-   via the notebook's file browser or a Drive mount). This does NOT require converting any script
+   requirements-gpu.txt`, `!python scripts/options_strategy/42_gpu_exit_optimizer.py ...`, after
+   uploading the repo via the notebook's file browser or a Drive mount). This does NOT require converting any script
    to a notebook -- the notebook is just a remote console; the code being run is still the exact
    same `.py` files. It's just less repeatable/scriptable than the WSL2+CLI path (a human has to
    click through the browser each time), which is why the CLI is the recommended path going
@@ -502,7 +511,7 @@ install` and have much better unattended-Linux reliability than a conda-resolved
 environment, which matters a lot given the very limited hands-on time budgeted for the 5090 box
 (see "Unattended execution" below). See `requirements-gpu.txt`.
 
-**Every GPU script takes `--device {cpu,cuda}` and `--mock-data`** (`scripts/gpu_lib.py`): the
+**Every GPU script takes `--device {cpu,cuda}` and `--mock-data`** (`scripts/options_strategy/lib/gpu.py`): the
 array backend (numpy vs. cupy) is chosen at runtime, so the identical code path is exercised at
 every scale with zero code changes, and `--mock-data` fabricates a synthetic panel with the same
 schema and the same decile-ordered drift actually measured in `data/option_spread_horizon_stats.csv`
@@ -516,7 +525,7 @@ The OptionMetrics IvyDB extract lives permanently on one external drive and is n
 anywhere -- not into this repo, not onto the 5090's own disk. It gets to the 5090 by physically
 plugging that drive into it. Two consequences for the code:
 
-- `OM_DIR` (`scripts/options_lib.py`) reads from the `OPTIONMETRICS_DIR` environment variable
+- `OM_DIR` (`scripts/options_strategy/lib/options.py`, sourced from `common.paths.OPTIONMETRICS_DIR`) reads from the `OPTIONMETRICS_DIR` environment variable
   (default `D:/OptionMetrics/parquet`, this machine's path) rather than being hardcoded, since the
   mount path is different on Linux (e.g. `/media/<user>/OptionMetrics/parquet` or wherever it
   auto-mounts) -- set the env var once on the 5090 box rather than editing any script.
@@ -540,13 +549,13 @@ rather than "run once, all or nothing":
 - Scripts 35/36/41 write one output file **per year** and skip a year whose output file already
   exists on restart (see the resume check at the top of each year's loop) -- a crash or reboot
   loses at most the year in progress, not the whole run.
-- `scripts/gpu_lib.py`'s `StageTimer` records start/done/failed + elapsed time for every stage to
-  `logs/pipeline_status.json`, so checking in after a few days means reading one small JSON file,
-  not scrolling raw stdout.
-- `scripts/run_pipeline.py` is the single command to kick off before walking away: it runs every
-  stage in order, skips a stage whose declared output already exists, and is safe to run under
-  `tmux`/`nohup` so a dropped SSH session (or none at all -- physical-access-only is fine too)
-  doesn't kill the run.
+- `scripts/options_strategy/lib/gpu.py`'s `StageTimer` records start/done/failed + elapsed time for every stage to
+  `logs/pipeline_status.json` (`common.paths.LOGS_DIR`, repo-root-relative), so checking in after a
+  few days means reading one small JSON file, not scrolling raw stdout.
+- `scripts/options_strategy/run_pipeline.py` is the single command to kick off before walking
+  away: it runs every stage in order, skips a stage whose declared output already exists, and is
+  safe to run under `tmux`/`nohup` so a dropped SSH session (or none at all -- physical-access-only
+  is fine too) doesn't kill the run.
 
 **5090 box setup, once physical/SSH access is available (roughly 15 minutes of actual hands-on
 time):**
@@ -555,7 +564,7 @@ git clone <this repo's remote> && cd PEAD_Trading
 pip install -r requirements.txt -r requirements-gpu.txt
 export OPTIONMETRICS_DIR=/path/where/the/drive/mounted/parquet   # after plugging in the drive
 tmux new -s pead                                                 # survive a dropped connection
-python scripts/run_pipeline.py                                   # walk away; check back in days
+python scripts/options_strategy/run_pipeline.py                  # walk away; check back in days
 ```
 
 ## Data
