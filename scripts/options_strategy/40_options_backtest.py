@@ -58,11 +58,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
-from gpu_lib import make_mock_option_event_panel, add_mock_data_arg, StageTimer
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.paths import DATA_DIR, INITIAL_CAPITAL
+from lib.gpu import make_mock_option_event_panel, add_mock_data_arg, StageTimer
 
-DATA = Path("data")
-INITIAL_CAPITAL = 10_000_000.0
+DATA = DATA_DIR
 TRIM, TILT_POWER = 0.15, 1.0
 # Rough starting point, not yet swept -- with ~165k events over 65 quarters (~2,500/quarter) and
 # roughly 80% surviving TRIM, sizing every one of them at BASE_UNIT_FRACTION=0.05 (the equity

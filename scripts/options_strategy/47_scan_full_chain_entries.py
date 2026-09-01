@@ -15,14 +15,17 @@ Output: data/event_options/full_chain_<year>.parquet (one row per event x contra
 """
 import sys
 import time
-import pandas as pd
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
-from options_lib import scan_year_for_keys, pick_full_chain_vectorized
+import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.paths import DATA_DIR
+from lib.options import scan_year_for_keys, pick_full_chain_vectorized
 
 MIN_DTE = 95
 TARGET_DTE = 120
-OUT_DIR = Path("data/event_options")
+OUT_DIR = DATA_DIR / "event_options"
 YEARS = [y for y in range(1996, 2014) if y != 2011]
 
 events = pd.read_parquet(OUT_DIR / "decile_events_secid.parquet",

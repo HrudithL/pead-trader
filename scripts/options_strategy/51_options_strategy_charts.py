@@ -6,24 +6,19 @@ bar chart for the two options tiers, and the put-share-by-decile validation char
 Kelly-optimal selector discovering the PEAD direction from data alone, with no call/put rule
 hard-coded anywhere in its logic.
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-import matplotlib
-matplotlib.use("Agg")
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, FIGURES_DIR
+from common.plotting import apply_style
 import matplotlib.pyplot as plt
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
-FIG = ROOT / "reports" / "figures"
-
-plt.rcParams.update({
-    "figure.facecolor": "white", "axes.facecolor": "white",
-    "axes.edgecolor": "#444444", "axes.labelcolor": "#222222", "text.color": "#222222",
-    "xtick.color": "#444444", "ytick.color": "#444444", "font.size": 10.5,
-    "axes.spines.top": False, "axes.spines.right": False,
-    "axes.grid": True, "grid.color": "#e5e5e5", "grid.linewidth": 0.7,
-})
+DATA = DATA_DIR
+FIG = FIGURES_DIR
+apply_style()
 
 # ---------- Figure 24: NAV curves, equity Strategy 6 vs. options Tier 1 vs. Tier 1.5 (60d) ----------
 fig, ax = plt.subplots(figsize=(9.0, 5.2))

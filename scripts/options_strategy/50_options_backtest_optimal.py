@@ -46,11 +46,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
-from gpu_lib import StageTimer
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.paths import DATA_DIR, INITIAL_CAPITAL
+from lib.gpu import StageTimer
 
-DATA = Path("data")
-INITIAL_CAPITAL = 10_000_000.0
+DATA = DATA_DIR
 HALF_KELLY = 0.5
 MAX_PREMIUM_FRAC = 0.20
 ASSUMED_ROUNDTRIP_COST_PCT = 0.03  # same documented assumption as script 40 -- see its docstring

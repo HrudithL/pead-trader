@@ -11,15 +11,18 @@ a straight read + filter per year is enough.
 
 Output: data/event_options/full_chain_with_underlying.parquet
 """
+import sys
 import time
+from pathlib import Path
 import pandas as pd
 import pyarrow.parquet as pq
-from pathlib import Path
-import sys
-sys.path.insert(0, str(Path(__file__).parent))
-from options_lib import OM_DIR
 
-OUT_DIR = Path("data/event_options")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.paths import DATA_DIR
+from lib.options import OM_DIR
+
+OUT_DIR = DATA_DIR / "event_options"
 YEARS = [y for y in range(1996, 2014) if y != 2011]
 
 chain = pd.read_parquet(OUT_DIR / "full_chain_all.parquet")

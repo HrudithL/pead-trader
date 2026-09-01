@@ -28,11 +28,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
-from gpu_lib import get_backend, to_host, add_device_arg, add_mock_data_arg, add_smoke_test_arg, \
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.paths import DATA_DIR
+from lib.gpu import get_backend, to_host, add_device_arg, add_mock_data_arg, add_smoke_test_arg, \
     make_mock_option_event_panel, StageTimer
 
-DATA = Path("data")
+DATA = DATA_DIR
 HORIZONS = [1, 5, 10, 20, 40, 60]
 
 

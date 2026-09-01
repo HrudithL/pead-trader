@@ -28,11 +28,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
-from options_lib import scan_year_for_keys
-from gpu_lib import StageTimer
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.paths import DATA_DIR, METADATA_DIR
+from lib.options import scan_year_for_keys
+from lib.gpu import StageTimer
 
-OUT_DIR = Path("data/event_options")
+OUT_DIR = DATA_DIR / "event_options"
 DEFAULT_MAX_HOLD_DAYS = 60
 
 
@@ -46,7 +48,7 @@ def main():
     args = parser.parse_args()
 
     with StageTimer("41_build_daily_option_paths", extra={"max_hold_days": args.max_hold_days}):
-        cal = pd.read_parquet("data/metadata/om_trading_calendar.parquet").sort_values("date")
+        cal = pd.read_parquet(METADATA_DIR / "om_trading_calendar.parquet").sort_values("date")
         cal_dates = cal["date"].to_numpy()
 
         entries = pd.read_parquet(OUT_DIR / "entry_contracts_all.parquet").reset_index(drop=True)

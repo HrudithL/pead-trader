@@ -34,10 +34,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
-from gpu_lib import add_mock_data_arg, add_smoke_test_arg, make_mock_option_event_panel, StageTimer
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.paths import DATA_DIR
+from lib.gpu import add_mock_data_arg, add_smoke_test_arg, make_mock_option_event_panel, StageTimer
 
-DATA = Path("data")
+DATA = DATA_DIR
 TARGET_HORIZON = 60
 FEATURE_COLS_NUMERIC = ["decile_signed", "size_quintile", "iv", "dte", "delta",
                          "entry_volume_log", "entry_oi_log"]

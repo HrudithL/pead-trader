@@ -45,11 +45,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
-from gpu_lib import get_backend, to_host, add_device_arg, add_mock_data_arg, add_smoke_test_arg, \
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.paths import DATA_DIR, INITIAL_CAPITAL
+from lib.gpu import get_backend, to_host, add_device_arg, add_mock_data_arg, add_smoke_test_arg, \
     StageTimer
 
-DATA = Path("data")
+DATA = DATA_DIR
 
 
 def load_pnl_series(path, mock_seed=0, mock_mean_pnl=2000.0, mock_vol_pnl=60000.0, n_days=4500):
@@ -79,9 +81,6 @@ def pick_best_options_horizon(comparison_path, requested_horizon=None):
         return 60
     comp = pd.read_csv(comparison_path)
     return int(comp.sort_values("sharpe", ascending=False).iloc[0]["hold_horizon_days"])
-
-
-INITIAL_CAPITAL = 10_000_000.0  # matches every other backtest in this repo (script 24 etc.)
 
 
 def sharpe_return_dd(daily_pnl: np.ndarray):

@@ -50,13 +50,17 @@ Output: data/metadata/decile_return_distributions.parquet
                  this value), decile, horizon, state, prob, ret_state
 """
 import argparse
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-DATA = Path("data")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, METADATA_DIR, EVENTS_DIR
+
+DATA = DATA_DIR
 HORIZONS = [1, 5, 10, 20, 40, 60]
 N_STATES_DEFAULT = 40
 MIN_WARMUP_QUARTERS = 8    # >= 2 years of prior history before this script will price anything
@@ -115,7 +119,7 @@ def main():
                          help="quantile buckets per (decile, horizon) cell. Default: %(default)s")
     args = parser.parse_args()
 
-    events = pd.read_parquet("data/events/equity_events_1996_2013.parquet")
+    events = pd.read_parquet(EVENTS_DIR / "equity_events_1996_2013.parquet")
     events = events[(events["day0_status"] == "ok") & (events["sue_source"] == "analyst")].copy()
     events["decile"] = build_decile(events)
     events["ann_quarter"] = pd.to_datetime(events["anndats"]).dt.to_period("Q")
@@ -141,7 +145,7 @@ def main():
         all_rows.extend(rows)
 
     dist = pd.DataFrame(all_rows)
-    out_path = Path("data/metadata/decile_return_distributions.parquet")
+    out_path = METADATA_DIR / "decile_return_distributions.parquet"
     dist.to_parquet(out_path, index=False)
 
     n_priced = len(quarters) - len(skipped_quarters)

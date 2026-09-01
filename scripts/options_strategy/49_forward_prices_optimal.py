@@ -10,16 +10,19 @@ Output: data/event_options/optimal_forward_prices.parquet -- one row per event w
 """
 import sys
 import time
+from pathlib import Path
 import numpy as np
 import pandas as pd
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
-from options_lib import scan_year_for_keys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.paths import DATA_DIR, METADATA_DIR
+from lib.options import scan_year_for_keys
 
 HORIZONS = [1, 5, 10, 20, 40, 60]
-OUT_DIR = Path("data/event_options")
+OUT_DIR = DATA_DIR / "event_options"
 
-cal = pd.read_parquet("data/metadata/om_trading_calendar.parquet").sort_values("date").reset_index(drop=True)
+cal = pd.read_parquet(METADATA_DIR / "om_trading_calendar.parquet").sort_values("date").reset_index(drop=True)
 cal_dates = cal["date"].values
 cal_index = {d: i for i, d in enumerate(cal_dates)}
 gap_days = pd.Series(cal_dates).diff().dt.days

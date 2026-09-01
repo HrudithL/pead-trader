@@ -12,24 +12,28 @@ appended, so the whole history survives even if a stage's own log wasn't watched
 
 Usage on the 5090 (real run, needs OPTIONMETRICS_DIR set and the drive attached):
     tmux new -s pead
-    python scripts/run_pipeline.py --device cuda
+    python scripts/options_strategy/run_pipeline.py --device cuda
 
 Usage anywhere, to validate the orchestrator itself end-to-end in seconds with no GPU/data needed:
-    python scripts/run_pipeline.py --device cpu --mock-data --smoke-test
+    python scripts/options_strategy/run_pipeline.py --device cpu --mock-data --smoke-test
 """
 import argparse
-import json
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-STATUS_PATH = Path("logs/pipeline_status.json")
-LOG_PATH = Path("logs/pipeline_run.log")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, LOGS_DIR
+
+THIS_DIR = Path(__file__).resolve().parent
+STATUS_PATH = LOGS_DIR / "pipeline_status.json"
+LOG_PATH = LOGS_DIR / "pipeline_run.log"
 
 
 def stage(name, script, output, extra_args=()):
-    return dict(name=name, script=script, output=Path(output), extra_args=list(extra_args))
+    return dict(name=name, script=str(THIS_DIR / script), output=DATA_DIR / output,
+                extra_args=list(extra_args))
 
 
 def build_stages(args):
@@ -41,21 +45,21 @@ def build_stages(args):
     mock_flag = ["--mock-data"] if args.mock_data else []
 
     stages = [
-        stage("40_options_backtest", "scripts/40_options_backtest.py",
-              "data/backtest_options_v1_comparison.csv", mock_flag),
+        stage("40_options_backtest", "40_options_backtest.py",
+              "backtest_options_v1_comparison.csv", mock_flag),
     ]
     if not args.skip_daily_paths:
-        stages.append(stage("41_build_daily_option_paths", "scripts/41_build_daily_option_paths.py",
-                             "data/event_options/daily_price_paths.parquet"))
-    stages.append(stage("42_gpu_exit_optimizer", "scripts/42_gpu_exit_optimizer.py",
-                         "data/gpu_exit_optimizer_results.csv", common_gpu))
+        stages.append(stage("41_build_daily_option_paths", "41_build_daily_option_paths.py",
+                             "event_options/daily_price_paths.parquet"))
+    stages.append(stage("42_gpu_exit_optimizer", "42_gpu_exit_optimizer.py",
+                         "gpu_exit_optimizer_results.csv", common_gpu))
     # 43/44/45 are the Tier 3/4 stages -- wired in as they're built out; run_pipeline.py already
     # skips any stage whose script doesn't exist yet rather than failing the whole run, so this
     # driver is safe to use incrementally as later tiers land.
     for name, script, output in [
-        ("43_gpu_param_sweep", "scripts/43_gpu_param_sweep.py", "data/gpu_param_sweep_results.csv"),
-        ("44_ml_contract_selector", "scripts/44_ml_contract_selector.py", "data/ml_contract_selector_summary.json"),
-        ("45_joint_portfolio_optimizer", "scripts/45_joint_portfolio_optimizer.py", "data/joint_portfolio_summary.json"),
+        ("43_gpu_param_sweep", "43_gpu_param_sweep.py", "gpu_param_sweep_results.csv"),
+        ("44_ml_contract_selector", "44_ml_contract_selector.py", "ml_contract_selector_summary.json"),
+        ("45_joint_portfolio_optimizer", "45_joint_portfolio_optimizer.py", "joint_portfolio_summary.json"),
     ]:
         stages.append(stage(name, script, output, common_gpu))
     return stages

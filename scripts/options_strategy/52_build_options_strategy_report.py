@@ -8,22 +8,22 @@ This report picks up exactly where that one's Section 8 ("Suggested next steps")
 numbers below are computed live from the CSVs/JSON this pipeline produces (scripts 40, 46-51),
 not hardcoded, so the report always matches whatever the current data run actually found.
 """
+import sys
 import json
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
-from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.units import inch
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak, HRFlowable
-)
+from reportlab.platypus import Paragraph, Spacer, Image, PageBreak
 
-ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
-FIG = ROOT / "reports" / "figures"
-OUT = ROOT / "reports" / "PEAD_Options_Strategy_Report.pdf"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR, REPORTS_DIR, FIGURES_DIR
+from common.report_pdf import new_report
+
+DATA = DATA_DIR
+FIG = FIGURES_DIR
+OUT = REPORTS_DIR / "PEAD_Options_Strategy_Report.pdf"
 
 # ---------- live data ----------
 eq_final = pd.read_csv(DATA / "results_summary_v2_FINAL.csv")
@@ -49,45 +49,7 @@ best_tilt = param_sweep.sort_values("sharpe_proxy", ascending=False).iloc[0]
 
 t1_60, t15_60 = t1.loc[60], t15.loc[60]
 
-# ---------- styling (matches script 39's report) ----------
-styles = getSampleStyleSheet()
-styles.add(ParagraphStyle(name="Body", parent=styles["Normal"], fontSize=9.7, leading=13.5, spaceAfter=8))
-styles.add(ParagraphStyle(name="H1", parent=styles["Heading1"], fontSize=16, spaceBefore=4, spaceAfter=8, textColor=colors.HexColor("#1a3a2a")))
-styles.add(ParagraphStyle(name="H2", parent=styles["Heading2"], fontSize=12.5, spaceBefore=14, spaceAfter=6, textColor=colors.HexColor("#1a3a2a")))
-styles.add(ParagraphStyle(name="Caption", parent=styles["Normal"], fontSize=8.3, leading=11, textColor=colors.HexColor("#555555"), spaceAfter=10))
-styles.add(ParagraphStyle(name="TitleSub", parent=styles["Normal"], fontSize=11, textColor=colors.HexColor("#555555"), spaceAfter=4))
-
-story = []
-def h1(t): story.append(Paragraph(t, styles["H1"]))
-def h2(t): story.append(Paragraph(t, styles["H2"]))
-def body(t): story.append(Paragraph(t, styles["Body"]))
-def caption(t): story.append(Paragraph(t, styles["Caption"]))
-def rule(): story.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#bbbbbb"), spaceBefore=4, spaceAfter=10))
-def fig(path, width=6.4*inch):
-    img = Image(str(path))
-    ratio = img.imageHeight / img.imageWidth
-    img.drawWidth = width
-    img.drawHeight = width * ratio
-    story.append(img)
-
-def make_table(rows, col_widths=None, header_bg="#1a3a2a", fontsize=8.3, align_first_left=True):
-    t = Table(rows, colWidths=col_widths, hAlign="LEFT")
-    style = [
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(header_bg)),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTSIZE", (0, 0), (-1, -1), fontsize),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f6f5")]),
-        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
-    ]
-    if align_first_left:
-        style.append(("ALIGN", (0, 0), (0, -1), "LEFT"))
-    t.setStyle(TableStyle(style))
-    return t
+rb, story, styles, h1, h2, h3, body, caption, glossary, rule, fig, make_table = new_report()
 
 # ============================== COVER ==============================
 story.append(Spacer(1, 0.3*inch))
@@ -123,7 +85,7 @@ h2("1. Tier 1: a real backtest of the original near-ATM heuristic")
 body("""<i>PEAD_Options_Report.pdf</i> measured decile-sorted forward RETURNS on a near-ATM call
 or put -- informative about whether the effect exists, but silent on what a real trader would
 actually earn: what fraction of NAV to risk, what it costs to trade, and which events are even
-worth trading. <font face="Courier">scripts/40_options_backtest.py</font> answers that: SUE-decile
+worth trading. <font face="Courier">scripts/options_strategy/40_options_backtest.py</font> answers that: SUE-decile
 tilt selects which events to trade (same trim/tilt scheme as equity Strategy 5/6, but the "short
 leg" becomes "buy a put" instead of "sell the stock," since these are long-only option positions),
 sized via quarterly trailing-NAV compounding with a portfolio-level premium-at-risk cap (the
@@ -359,12 +321,8 @@ rule()
 caption(f"""Generated from data/backtest_options_v1_comparison.csv, data/backtest_options_optimal_comparison.csv,
 data/event_options/optimal_contracts.parquet, data/results_summary_v2_FINAL.csv,
 data/joint_portfolio_sweep.csv, and data/gpu_param_sweep_results.csv.
-Scripts: scripts/40, scripts/46 through scripts/51, and the README's "Options-strategy GPU
-roadmap" section for full infrastructure detail.""")
+Scripts: scripts/options_strategy/40 through scripts/options_strategy/51, and the README's
+"Options-strategy GPU roadmap" section for full infrastructure detail.""")
 
-doc = SimpleDocTemplate(str(OUT), pagesize=letter,
-                         leftMargin=0.75*inch, rightMargin=0.75*inch,
-                         topMargin=0.7*inch, bottomMargin=0.7*inch,
-                         title="From Evidence to Strategy: Trading the Options-Market PEAD Signal")
-doc.build(story)
+rb.save(OUT, title="From Evidence to Strategy: Trading the Options-Market PEAD Signal")
 print("wrote", OUT)

@@ -29,7 +29,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-STATUS_PATH = Path("logs/pipeline_status.json")
+from common.paths import LOGS_DIR
+
+STATUS_PATH = LOGS_DIR / "pipeline_status.json"
 
 
 # ---------------------------------------------------------------------------
