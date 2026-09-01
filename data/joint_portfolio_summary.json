@@ -1,0 +1,14 @@
+{
+  "options_horizon_used": 60,
+  "n_days": 4196,
+  "n_combos": 150,
+  "best": {
+    "w_equity": 2.0,
+    "w_options": 1.0,
+    "w_beta": 0.25,
+    "sharpe": 1.8182677966027418,
+    "annualized_return": 0.14557147920762636,
+    "annualized_vol": 0.07636496771038674,
+    "max_drawdown": -0.16630468080483257
+  }
+}

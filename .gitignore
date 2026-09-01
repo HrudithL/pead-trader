@@ -31,3 +31,6 @@ Thumbs.db
 # Scratch / working files
 *.tmp
 *_to_delete/
+
+# Pipeline run logs (operational, not a research finding) -- see scripts/run_pipeline.py
+logs/

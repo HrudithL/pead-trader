@@ -47,6 +47,11 @@ for year in YEARS:
     ev_y = events[events["year"] == year]
     if ev_y.empty:
         continue
+    year_out_path = OUT_DIR / f"entry_contracts_{year}.parquet"
+    if year_out_path.exists():
+        print(f"{year}: already written, skipping ({year_out_path})", flush=True)
+        all_rows.append(pd.read_parquet(year_out_path))
+        continue
     t0 = time.time()
     needed_keys = ev_y.rename(columns={"day0_date": "date"})[["secid", "date"]]
     raw = scan_year_for_keys(year, needed_keys)

@@ -1,0 +1,16 @@
+# Additional requirements for the options-strategy GPU pipeline (scripts/40+ -- see the
+# "Options-strategy GPU roadmap" section of the README). Install alongside requirements.txt:
+#   pip install -r requirements.txt -r requirements-gpu.txt
+#
+# Deliberately pip-only, no conda/RAPIDS -- see the README's "GPU library choice" note for why.
+# torch and cupy both need a build matching the machine's actual CUDA version:
+#   - torch: pick the index URL for this machine's CUDA from https://pytorch.org/get-started/locally/
+#       e.g. pip install torch --index-url https://download.pytorch.org/whl/cu124
+#   - cupy: package name encodes the CUDA major version, e.g. cupy-cuda12x for CUDA 12.x
+#       (check with `nvidia-smi`, then see https://docs.cupy.dev/en/stable/install.html)
+# The plain `torch`/`cupy-cuda12x` lines below assume a recent CUDA 12.x driver (typical for a
+# 5090); override them explicitly if the 5090 box turns out to have a different CUDA version.
+
+torch>=2.4
+cupy-cuda12x>=13.0
+optuna>=3.6
