@@ -7,12 +7,16 @@ calendar for ret_fwd_*d.
 
 Output: data/metadata/om_trading_calendar.parquet (single column 'date', sorted, deduped)
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import pyarrow.parquet as pq
-from pathlib import Path
 
-OM_DIR = Path("D:/OptionMetrics/parquet")
-OUT = Path("C:/Users/hrudi/Documents/BEI/PEAD_Trading/data/metadata/om_trading_calendar.parquet")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import OPTIONMETRICS_DIR, METADATA_DIR
+
+OM_DIR = OPTIONMETRICS_DIR
+OUT = METADATA_DIR / "om_trading_calendar.parquet"
 
 years = [y for y in range(1996, 2014) if y != 2011]
 all_dates = set()

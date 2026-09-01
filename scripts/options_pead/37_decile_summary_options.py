@@ -2,7 +2,7 @@
 Headline options-PEAD result: decile-sorted forward option returns (near-ATM call and near-ATM
 put, entry at day0, buy-and-hold to day0+{1,5,10,20,40,60} trading days), with the same
 Fama-MacBeth (across-announcement-quarter) clustered inference used for the equity result in
-scripts/02_decile_summary.py -- same rationale: earnings cluster heavily in fiscal-quarter
+scripts/equity_pead/02_decile_summary.py -- same rationale: earnings cluster heavily in fiscal-quarter
 "seasons", so treat the ~quarterly decile means as the unit of inference rather than treating
 individual events as independent.
 
@@ -17,29 +17,22 @@ Output:
   data/option_spread_horizon_stats.csv   -- D10-D1 spread x horizon x {call,put} summary
   data/option_coverage_stats.csv         -- match/coverage counts per decile x horizon
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-DATA = Path("data")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import DATA_DIR
+from common.stats import fama_macbeth
+
+DATA = DATA_DIR
 panel = pd.read_parquet(DATA / "event_options" / "option_event_panel.parquet")
 panel = panel[panel["decile"].notna()].copy()
 panel["decile"] = panel["decile"].astype(int)
 
 HORIZONS = [1, 5, 10, 20, 40, 60]
 CP_TYPES = ["call", "put", "straddle"]
-
-
-def fama_macbeth(df, ret_col, q_col="ann_quarter"):
-    sub = df[[q_col, ret_col]].dropna(subset=[ret_col])
-    if sub.empty:
-        return np.nan, np.nan, np.nan, 0, 0
-    qmeans = sub.groupby(q_col)[ret_col].mean()
-    n_q = qmeans.shape[0]
-    mean = qmeans.mean()
-    se = qmeans.std(ddof=1) / np.sqrt(n_q) if n_q > 1 else np.nan
-    t = mean / se if se and se > 0 else np.nan
-    return mean, se, t, len(sub), n_q
 
 
 rows, cov_rows = [], []

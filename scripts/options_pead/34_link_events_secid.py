@@ -1,6 +1,6 @@
 """
 Rebuild the decile-sorted PEAD event panel (same construction as the original
-scripts/01_build_deciles.py, adapted from cloud-sandbox paths to this local repo), then link
+scripts/equity_pead/01_build_deciles.py, adapted from cloud-sandbox paths to this local repo), then link
 each event's CRSP permno to an OptionMetrics secid via data/metadata/resolved_universe_ids.parquet
 (already built by an earlier session -- 98.3% match rate against the analyst+ok event set).
 
@@ -11,15 +11,19 @@ data for.
 
 Output: data/event_options/decile_events_secid.parquet
 """
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 
-IN_EVENTS = "data/events/equity_events_1996_2013.parquet"
-IN_FEATURES = "data/results/event_classification_features.parquet"
-IN_UNIVERSE = "data/metadata/resolved_universe_ids.parquet"
-IN_CALENDAR = "data/metadata/om_trading_calendar.parquet"
-OUT = Path("data/event_options/decile_events_secid.parquet")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import EVENTS_DIR, RESULTS_DIR, METADATA_DIR, DATA_DIR
+
+IN_EVENTS = EVENTS_DIR / "equity_events_1996_2013.parquet"
+IN_FEATURES = RESULTS_DIR / "event_classification_features.parquet"
+IN_UNIVERSE = METADATA_DIR / "resolved_universe_ids.parquet"
+IN_CALENDAR = METADATA_DIR / "om_trading_calendar.parquet"
+OUT = DATA_DIR / "event_options" / "decile_events_secid.parquet"
 
 ev = pd.read_parquet(IN_EVENTS)
 print(f"raw events: {len(ev):,}")
