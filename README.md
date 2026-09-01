@@ -227,11 +227,13 @@ scripts/43_gpu_param_sweep.py             # Tier 3: GPU-batched sweep over strik
 scripts/44_ml_contract_selector.py        # Tier 3: Optuna + PyTorch model, IV/liquidity/sector features
 scripts/45_joint_portfolio_optimizer.py   # Tier 4: joint equity+options+beta allocation search
 scripts/run_pipeline.py                   # unattended driver: runs stages in order, skips completed, logs status
+scripts/51_options_strategy_charts.py     # NAV/comparison/validation charts (figures 24-26)
+scripts/52_build_options_strategy_report.py  # reports/PEAD_Options_Strategy_Report.pdf
 ```
 
 ## Reports
 
-Four PDFs in `reports/`, meant to be read in this order:
+Five PDFs in `reports/`, meant to be read in this order:
 
 1. **`PEAD_Report.pdf`** -- does the PEAD effect actually exist in this data? Decile-sorted event
    study, quarter-clustered significance test, size/book-to-market robustness check, and
@@ -248,6 +250,13 @@ Four PDFs in `reports/`, meant to be read in this order:
    (-10.79%, t=-6.29), and a long-straddle robustness cut shows a smaller but still significant
    decile-ordered residual (+3.98%, t=5.22) -- so leverage amplifies the same directional signal,
    with a real but secondary volatility component alongside it.
+5. **`PEAD_Options_Strategy_Report.pdf`** -- given that it exists, does an actual backtested
+   options strategy work? Turns the descriptive result above into a real, capital-sized, cost-aware
+   backtest (Tier 1: 9.51% ann. return, Sharpe 1.04 at 60d), then replaces the near-ATM contract
+   heuristic with a Kelly-criterion selector scoring every strike in the real day0 chain against an
+   empirical, walk-forward return distribution (Tier 1.5: 15.31% ann. return, Sharpe 3.56) --
+   documents the three real bugs found and fixed getting there, and the GPU compute roadmap
+   (Tiers 2-4) built for a dedicated 5090 machine to push further.
 
 ## Options-strategy GPU roadmap
 
