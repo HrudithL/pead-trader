@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR
 from lib.gpu import add_mock_data_arg, add_smoke_test_arg, make_mock_option_event_panel, StageTimer
-from lib.hw import recommended_cpu_jobs
+from lib.hw import recommended_cpu_jobs, cpu_count
 
 DATA = DATA_DIR
 TARGET_HORIZON = 60
@@ -197,6 +197,16 @@ def main():
             print(f"--n-jobs {args.n_jobs} requested but device=cuda -- forcing n_jobs=1 to avoid "
                   f"concurrent trials contending for the same GPU's VRAM")
             n_jobs = 1
+        if device == "cpu" and n_jobs > 1:
+            # each of the n_jobs concurrent trials ALSO runs its own multi-threaded torch intra-op
+            # pool (torch.get_num_threads() defaults to every core) -- without capping that, n_jobs
+            # trials each spinning up a full-core-count thread pool oversubscribes this machine's
+            # cores by roughly n_jobs x, thrashing instead of the intended speedup (or OOMing on a
+            # many-core box). Give each trial a fair share instead.
+            threads_per_trial = max(1, cpu_count() // n_jobs)
+            torch.set_num_threads(threads_per_trial)
+            print(f"n_jobs={n_jobs} concurrent trials on CPU: capping torch to "
+                  f"{threads_per_trial} intra-op thread(s)/trial ({cpu_count()} cores total)")
         print(f"optuna: {n_trials} trials, n_jobs={n_jobs}, device={device}")
 
         def objective(trial):

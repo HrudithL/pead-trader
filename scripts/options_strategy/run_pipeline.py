@@ -60,6 +60,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR, EVENTS_DIR, METADATA_DIR, REPORTS_DIR, FIGURES_DIR, LOGS_DIR
 from lib.hw import add_jobs_arg, cpu_count, gpu_summary, hardware_report
+from lib.gpu import _status_file_lock, _load_status, _save_status
 
 THIS_DIR = Path(__file__).resolve().parent
 EVENT_DIR = DATA_DIR / "event_options"
@@ -224,6 +225,19 @@ def build_command(s, args, resolved_device):
     return cmd
 
 
+def _record_status(name, **fields):
+    """Record this stage's state into logs/pipeline_status.json, using the SAME cross-process
+    lock/file lib.gpu.StageTimer uses. Several of this pipeline's own stages (35/36/46/47/47b/49/
+    51/52) never wrap themselves in a StageTimer, so without this the operator's own documented
+    "check logs/pipeline_status.json" workflow would silently omit them (or show stale state from
+    an earlier run) during a multi-day unattended run. Merged into any existing entry rather than
+    overwritten, so a stage that DOES use StageTimer keeps whatever extra fields it recorded."""
+    with _status_file_lock():
+        status = _load_status()
+        status[name] = {**status.get(name, {}), **fields}
+        _save_status(status)
+
+
 def run_stage(s, args, resolved_device, sema):
     cmd = build_command(s, args, resolved_device)
     queued_at = time.time()
@@ -235,6 +249,8 @@ def run_stage(s, args, resolved_device, sema):
         queued_for = t0 - queued_at
         suffix = f" (queued {queued_for:.0f}s)" if queued_for > 1.0 else ""
         _log(f"[{s['name']}] STARTING{suffix}: {' '.join(cmd)}")
+        _record_status(s["name"], state="running",
+                        started_at=time.strftime("%Y-%m-%d %H:%M:%S"))
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                  text=True, bufsize=1)
         for line in proc.stdout:
@@ -245,8 +261,11 @@ def run_stage(s, args, resolved_device, sema):
         sema.release()
     if returncode != 0:
         _log(f"[{s['name']}] FAILED after {elapsed:.0f}s (exit {returncode})")
+        _record_status(s["name"], state="failed", elapsed_sec=round(elapsed, 1),
+                        returncode=returncode)
         return s["name"], False, elapsed
     _log(f"[{s['name']}] done in {elapsed:.0f}s")
+    _record_status(s["name"], state="done", elapsed_sec=round(elapsed, 1))
     return s["name"], True, elapsed
 
 

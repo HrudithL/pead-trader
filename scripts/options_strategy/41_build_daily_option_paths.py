@@ -23,6 +23,9 @@ defaulting to every CPU core: the OM drive is a single physical volume on this d
 
 Output: data/event_options/daily_paths_<year>.parquet (long format: event_id, day_offset, mid)
         data/event_options/daily_price_paths.parquet   (combined, long format)
+        (--limit-events writes daily_paths_smoke_<year>.parquet /
+        daily_price_paths_smoke.parquet instead -- a truncated "quick real-data smoke test" slice
+        must never be mistakable for, or silently satisfy the resume check of, the real full run)
 """
 import argparse
 import sys
@@ -44,8 +47,8 @@ OUT_DIR = DATA_DIR / "event_options"
 DEFAULT_MAX_HOLD_DAYS = 60
 
 
-def _process_year(year, grp, force=False):
-    year_out = OUT_DIR / f"daily_paths_{year}.parquet"
+def _process_year(year, grp, force=False, out_tag=""):
+    year_out = OUT_DIR / f"daily_paths{out_tag}_{year}.parquet"
     if year_out.exists() and not force:
         return year, pd.read_parquet(year_out), f"{year}: already written, skipping ({year_out})"
 
@@ -85,8 +88,15 @@ def main():
 
         entries = pd.read_parquet(OUT_DIR / "entry_contracts_all.parquet").reset_index(drop=True)
         entries["event_id"] = entries.index
+        # --limit-events makes this a SAMPLE, not the real per-year/combined output -- write it
+        # under a distinct name so it can never satisfy this script's own or run_pipeline.py's
+        # resume/skip check for a real full run (a truncated "quick real-data smoke test" run must
+        # not be mistakable for -- or silently stand in for -- the genuine ~165k-event dataset).
+        out_tag = "_smoke" if args.limit_events else ""
         if args.limit_events:
             entries = entries.head(args.limit_events)
+            print(f"--limit-events {args.limit_events}: writing to daily_price_paths{out_tag}.parquet, "
+                  f"NOT the canonical daily_price_paths.parquet")
         print(f"entries: {len(entries):,} rows, max_hold_days={args.max_hold_days}")
 
         entry_idx_in_cal = np.searchsorted(cal_dates, entries["day0_date"].to_numpy())
@@ -123,12 +133,12 @@ def main():
         results = {}
         if args.jobs <= 1 or len(year_groups) <= 1:
             for year, grp in year_groups.items():
-                year, matched, msg = _process_year(year, grp, args.force)
+                year, matched, msg = _process_year(year, grp, args.force, out_tag)
                 print(msg, flush=True)
                 results[year] = matched
         else:
             with ProcessPoolExecutor(max_workers=args.jobs) as ex:
-                futures = {ex.submit(_process_year, year, grp, args.force): year
+                futures = {ex.submit(_process_year, year, grp, args.force, out_tag): year
                            for year, grp in year_groups.items()}
                 for fut in as_completed(futures):
                     year, matched, msg = fut.result()
@@ -137,7 +147,7 @@ def main():
 
         all_paths = [results[y] for y in sorted(results) if results[y] is not None]
         combined = pd.concat(all_paths, ignore_index=True) if all_paths else pd.DataFrame()
-        out_path = OUT_DIR / "daily_price_paths.parquet"
+        out_path = OUT_DIR / f"daily_price_paths{out_tag}.parquet"
         combined.to_parquet(out_path, index=False)
         print(f"\nwrote {out_path} ({len(combined):,} rows)")
 
