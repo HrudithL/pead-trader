@@ -11,6 +11,7 @@ data/metadata/
 # tens of MB each, not useful to diff or version in git
 data/*.parquet
 data/event_options/
+data/equity_walkforward_folds/
 
 # Python
 __pycache__/

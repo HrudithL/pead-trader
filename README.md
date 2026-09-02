@@ -33,6 +33,14 @@ overlay (if a return closer to a 10-15% target, with correspondingly more market
 is preferred over a pure, uncorrelated alpha stream).** Strategy 7 is documented for completeness
 and as a cautionary result -- see [Strategy 7's caveat](#why-strategy-7-is-not-simply-a-cheaper-way-to-add-beta) below.
 
+A ninth design, **Strategy 8**, has since been built (see "Equity-strategy GPU roadmap" below) --
+it blends a walk-forward-trained ML score with the SUE-rank tilt and picks its own
+(trim/tilt/leverage/sizing) constants via a real GPU-batched search instead of the hand-picked
+values strategies 4-7 use, the same escalation in compute the options side went through in its own
+roadmap. Its pipeline is fully built and `--mock-data`-verified end to end, but **not yet run for
+real**: this dev machine has neither the raw WRDS pull nor a GPU attached (see "Data" below) --
+running it for real, and adding its row to this table, is the next step on a machine that has both.
+
 ## Strategy evolution, in order
 
 1. **Extreme decile L/S** -- the simplest form of the classic PEAD trade: long the most positive
@@ -128,15 +136,26 @@ scripts/
     stats.py              # fama_macbeth() -- one implementation, not five
     report_pdf.py          # shared ReportLab stylesheet + h1/h2/fig/make_table/... helpers
     plotting.py            # shared matplotlib style for every chart script
+    gpu.py                 # device backend (numpy/cupy), --device/--smoke-test flags, checkpoint/
+                            # status logging (StageTimer) -- shared by BOTH GPU-tiered pipelines
+                            # below, factored out of options_strategy/lib/gpu.py so equity_strategy
+                            # didn't need a second copy
 
   equity_pead/            # "does PEAD exist in equities?" -- v1 evidence pipeline + PEAD_Report.pdf
-  equity_strategy/         # backtest engines, all 8 strategies, and the two showcase/development reports
-    lib/positions.py        # size_balance(), shared by the two position-construction scripts
+  equity_strategy/         # backtest engines, all 8 hand-built strategies, Strategy 8's GPU
+                            # pipeline, and the two showcase/development reports
+    lib/positions.py        # size_balance(), weights_size_sector_neutral() -- shared weight
+                             # construction, used by strategies 3/5-8
+    lib/gpu.py               # equity-specific mock daily-panel/position/feature generators,
+                              # built on common/gpu.py's device backend
+    run_pipeline.py            # concurrent driver: runs every independent stage (11-35) in
+                                # parallel across CPU cores, GPU-tiered stages (32-34) serialized
+                                # to one at a time -- see "Equity-strategy GPU roadmap" below
 
   options_pead/            # "does the drift show up in options?" -- evidence pipeline + PEAD_Options_Report.pdf
   options_strategy/         # contract selection/pricing + the GPU-tiered backtested strategy + its own report
     lib/options.py           # streamed/filtered opprcd scans, contract picker (moved from options_lib.py)
-    lib/gpu.py                # device backend (numpy/cupy), mock-data generators, checkpoint logging
+    lib/gpu.py                # options-specific mock-data generators, built on common/gpu.py's device backend
     run_pipeline.py            # unattended driver for the Tier 1-4 GPU pipeline (scripts 40-50)
 
   legacy/
@@ -232,6 +251,18 @@ Each v2 backtest script writes `data/backtest_v2_<name>.csv` (daily NAV/exposure
 exist (v1 evidence). `scripts/legacy/05_build_pdf.py` (the original, cloud-sandbox-only version of
 the evidence report, including the now-superseded 3-strategy v1 backtest section) is left in place
 for history but superseded by `32_build_evidence_report.py` for local regeneration.
+
+**Strategy 8: GPU-tiered equity pipeline (extends the v2 backtest engine above with a learned
+signal and a real hyperparameter search instead of the hand-picked constants strategies 4-7 use --
+see "Equity-strategy GPU roadmap" below for what each script does):**
+```
+scripts/equity_strategy/lib/gpu.py                    # device backend (numpy/cupy) + mock-data generators, built on common/gpu.py
+scripts/equity_strategy/32_gpu_feature_panel.py        # Tier 1: trailing-window momentum/vol features + fwd_realized_ret label
+scripts/equity_strategy/33_gpu_walkforward_signal.py   # Tier 2: walk-forward-trained MLP, hand-rolled directly against numpy/cupy
+scripts/equity_strategy/34_gpu_param_sweep.py          # Tier 3: GPU-batched sweep over trim/tilt/ML-blend-weight/sizing/leverage
+scripts/equity_strategy/35_finalize_strategy8.py       # Tier 4: full daily-precision backtest at the sweep-selected combo
+scripts/equity_strategy/run_pipeline.py                 # concurrent driver: every independent stage (11-35) in parallel
+```
 
 **Options pipeline (extends the same SUE deciles into the options market via OptionMetrics IvyDB
 data, mounted separately at `OPTIONMETRICS_DIR` -- default `D:/OptionMetrics/parquet/`, not
@@ -567,6 +598,105 @@ tmux new -s pead                                                 # survive a dro
 python scripts/options_strategy/run_pipeline.py                  # walk away; check back in days
 ```
 
+## Equity-strategy GPU roadmap
+
+Every strategy above (1-7) tilts and sizes positions off ONE hand-built signal (SUE rank), with
+constants (trim, tilt_power, base_unit_fraction, leverage cap) chosen by looking at a handful of
+sweep results and picking what looked best. That is exactly the same starting point the options
+side was at before its own GPU roadmap (see above): the strategy works, but nothing about it
+scales with more compute. Strategy 8 is the equity side going through that same escalation --
+four tiers, each only justified by a question the tier before it couldn't answer, reusing the
+`common/gpu.py` device backend (numpy on CPU, cupy on GPU, selected by `--device`) the options
+pipeline already established rather than inventing a second one:
+
+| Tier | Script | Question it answers | Compute |
+|---|---|---|---|
+| 1 | `32_gpu_feature_panel.py` | Every prior strategy uses SUE rank alone -- does a firm's OWN trailing momentum/volatility carry extra information, and what's the position's actual realized return (the label a model would need)? | Dense (n_events x 252-day window) trailing gather, GPU-batchable |
+| 2 | `33_gpu_walkforward_signal.py` | Can a model combining SUE rank with size/sector/momentum/vol/EAR beat SUE rank alone, trained walk-forward (leak-free) instead of fit once on the whole sample? | One MLP retrain per calendar-year fold, expanding window -- more history each fold, genuinely GPU-bound at full scale |
+| 3 | `34_gpu_param_sweep.py` | Tier 1/2 still leave (trim, tilt_power, how much to trust the ML score vs. SUE rank, sizing, leverage cap) to hand-tune -- what does a real grid search find? | GPU-batched: every (base_unit_fraction, leverage) combo simulated as one extra array axis per quarter |
+| 4 | `35_finalize_strategy8.py` | Given the sweep's selected combo, what's the real daily-precision backtest (matching every prior strategy's own NAV-loop convention)? | CPU, seconds -- the search already did the expensive part |
+
+### Design choices worth calling out
+
+- **No new dependency for the model.** `33_gpu_walkforward_signal.py`'s MLP is hand-rolled directly
+  against the `xp` backend (numpy/cupy) -- forward pass, backward pass, and Adam optimizer all
+  written out explicitly -- rather than using torch (which the options side's
+  `44_ml_contract_selector.py` already depends on). That means the whole equity GPU pipeline needs
+  nothing beyond `cupy`, already in `requirements-gpu.txt` for the options pipeline, and
+  `--device cpu --mock-data` works with zero extra installs anywhere numpy already runs.
+- **Walk-forward, not fit-once.** Exactly the discipline `options_strategy/48_optimal_contract_selector.py`
+  applies to contract selection: each year's predictions come from a model trained only on strictly
+  earlier data (expanding window, `--warmup-years` years of history required before the first
+  fold), with feature standardization computed from that fold's training window only. Events in
+  the warmup window get no ML score and Strategy 8 does not trade them -- the same honest cost the
+  options roadmap's Tier 1.5 walk-forward cut pays for its own warmup window.
+- **Two different kinds of loop in the sweep, on purpose.** `trim`/`tilt_power`/the ML-blend weight
+  change WHICH positions are held, so each combination needs its own weight vector -- a (small)
+  Python loop. `base_unit_fraction`/`max_gross_leverage` only rescale and cap an already-fixed
+  weight vector, so that axis is the one actually vectorized as an extra array dimension: every
+  (sizing, leverage) combination's full quarterly NAV path is simulated in one batch of dense array
+  ops per quarter, not one Python-level backtest per combination.
+- **Search window vs. holdout, not full-sample.** Combos are ranked by Sharpe on the first
+  `--search-frac` (default 70%) of quarters only; the remaining quarters are reported for the
+  winning combo but never used to choose it -- the same "don't let the search see the answer"
+  logic the options roadmap's Kelly selector was built around, applied here to hyperparameter
+  selection instead of contract selection. The sweep itself uses quarterly-granularity P&L to keep
+  the grid search cheap; `35_finalize_strategy8.py` reruns only the ONE selected combo at full
+  daily precision for the real reported numbers.
+- **Every stage is independently `--mock-data`-testable**, same convention as
+  `options_strategy/42_gpu_exit_optimizer.py`: each script can fabricate its own synthetic daily
+  panel + positions (with a real decile-ordered return spread injected into the mock data, not
+  pure noise) rather than requiring the stage before it to have actually been run, so
+  `run_pipeline.py --mock-data --smoke-test` exercises the full 32->33->34->35 chain in seconds
+  with no raw WRDS data or GPU present. **Status: this has been run and passes** on this CPU-only
+  dev machine; a real run (real WRDS data, ideally a real GPU) has not been done here -- see
+  "Data" below for why, and the "Currently recommended" note at the top of this README.
+
+### `run_pipeline.py`: using the actual hardware, not just running scripts one at a time
+
+The README's own "Run order" section above shows every script invoked one at a time -- correct,
+but it leaves a dedicated multi-core/GPU machine mostly idle, since most of that run order is not
+actually a dependency chain, just the order the strategies were historically built in. Once
+`16_positions_v2.py` has written `positions_rankweighted_v2.parquet`, scripts 17-22 and 26-28 (and,
+for Strategy 8, 32) all read only THAT one file (+ the raw equity panel) and write to entirely
+distinct output files -- nothing about running `21_leverage_and_improvements.py` requires
+`20_strategy4_tilted.py` to have finished first, they just happen to be numbered in research order.
+
+`scripts/equity_strategy/run_pipeline.py` is a single command that runs every stage whose
+dependencies (built from what each script actually reads/writes, not its number) are satisfied,
+concurrently, as real OS-level subprocesses:
+
+- A `ThreadPoolExecutor` drives up to `--max-workers` stages at once (default `os.cpu_count()`) --
+  each worker thread just blocks inside `subprocess.run`, releasing the GIL for the stage's whole
+  runtime, so the actual parallel work happens across separate OS processes/cores, not threads
+  fighting each other for the interpreter lock.
+- Each subprocess gets `OMP_NUM_THREADS`/`MKL_NUM_THREADS`/`OPENBLAS_NUM_THREADS`/
+  `NUMEXPR_NUM_THREADS` set to a fair share of the machine's cores, so N concurrently-running
+  stages don't each try to grab every core for their own numpy/pandas BLAS calls and thrash each
+  other -- this is the actual "use the cores and threads properly" mechanism.
+- The three GPU-tiered stages (32-34) are additionally capped to at most ONE running at a time --
+  there is exactly one physical GPU to share -- while still running concurrently alongside
+  unrelated CPU-only stages.
+- A stage whose declared output files already exist is skipped (`--force` to override); if a stage
+  fails, only the stages that actually (transitively) depend on it are skipped -- the rest of the
+  independent graph still finishes rather than the whole run stopping on one broken branch.
+- Per-stage stdout/stderr goes to its own file under `logs/equity_pipeline/<stage>.log` (concurrent
+  stages writing to one shared log would interleave into something unreadable), with a run-level
+  summary at `logs/equity_pipeline_status.json`.
+
+```bash
+# real run (needs the raw WRDS pull under data/normalized_equity/, data/events/, etc.):
+python scripts/equity_strategy/run_pipeline.py --device cuda
+
+# validate the whole Strategy 8 GPU pipeline (32-35) in seconds, no raw data or GPU needed --
+# 11-31 have no --mock-data path (they need real data unconditionally) and are skipped in this mode:
+python scripts/equity_strategy/run_pipeline.py --device cpu --mock-data --smoke-test
+
+# also build 29-31 (charts + PDF reports) -- needs data/results_summary_v2_FINAL.csv, which is
+# manually curated (not generated by any script), so this is opt-in rather than default:
+python scripts/equity_strategy/run_pipeline.py --device cuda --include-reports
+```
+
 ## Data
 
 Raw and large intermediate data files are not tracked in this repo (see `.gitignore`) -- they are
@@ -591,7 +721,9 @@ given checkout before assuming either.
 
 ## Requirements
 
-See `requirements.txt`. Python 3.11+, pandas, numpy, reportlab (PDF report generation). The
-options-strategy GPU pipeline (scripts 40+) additionally needs `requirements-gpu.txt` (PyTorch,
-CuPy, Optuna) -- only required on a machine that's actually running Tier 2-4 on a GPU; every
-script in that pipeline still runs on `--device cpu` with just the base requirements.
+See `requirements.txt`. Python 3.11+, pandas, numpy, reportlab (PDF report generation). Both
+GPU-tiered pipelines -- options-strategy (scripts 40+) and equity-strategy Strategy 8 (scripts
+32-35) -- additionally need `requirements-gpu.txt` (PyTorch, CuPy, Optuna) only on a machine
+actually running their GPU tiers; every script in both pipelines still runs on `--device cpu` with
+just the base requirements (equity's `33_gpu_walkforward_signal.py` needs only CuPy of the three,
+since its model is hand-rolled against the numpy/cupy backend rather than PyTorch).

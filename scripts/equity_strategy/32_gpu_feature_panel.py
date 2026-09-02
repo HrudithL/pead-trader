@@ -1,0 +1,132 @@
+"""
+Strategy 8, Tier 1: build a richer per-event feature panel than any prior equity strategy used.
+
+Every strategy through 7 sizes and tilts positions off ONE signal: SUE rank, optionally
+size/sector-neutralized. This script builds the substrate for going further -- a feature per
+event that requires scanning a real trailing window of that firm's OWN daily return history,
+which is exactly the kind of workload the 5090's extra RAM/VRAM/cores exists for: for every one
+of the ~100k+ tradeable events, gather up to 252 trailing daily returns from the full
+multi-decade panel and reduce them to two cross-sectional features, entirely as dense array ops
+(no python-level loop over events) so the identical code path scales from this CPU dev machine to
+a batched GPU kernel with zero changes -- see `compute_trailing_features` below.
+
+Features added on top of what positions_rankweighted_v2.parquet already carries:
+  - ear               announcement-day return (day0's own realized return, mkt-adjusted) --
+                       reused directly from decile_events_ff_adjusted_extended.parquet's
+                       ret_fwd_1d_mktadj field, the exact leak-free definition
+                       27_ear_signal_diagnostic.py's docstring documents fixing.
+  - bm_tercile         book-to-market tercile, merged in from the same extended event file
+                       (already computed upstream, just never carried into the position files).
+  - momentum_12_1      classic 12-month-minus-1-month momentum: cumulative return over the 252
+                       trading days ending 21 days before day0, skipping the most recent month
+                       (the reversal-prone part of raw momentum).
+  - vol_60d            trailing 60-trading-day realized volatility of daily returns ending the
+                       day before day0.
+  - fwd_realized_ret   the event's own realized market-adjusted return over its holding window
+                       (entry_row_idx+1 .. exit_row_idx) -- NOT a tradeable signal, this is the
+                       supervised-learning TARGET 33_gpu_walkforward_signal.py trains against.
+                       Computed via a prefix-sum of log(1+ret), not a per-position gather loop:
+                       O(n_days) once, then an O(n_positions) lookup -- deliberately the cheap
+                       path, since (unlike momentum/vol) every position's own window is already
+                       known to be single-permno-contiguous (16_positions_v2.py validated that
+                       building entry_row_idx/exit_row_idx in the first place).
+
+Momentum and volatility are the two engineered features that actually need the trailing-window
+gather (a value 21-252 days before an arbitrary row can belong to a DIFFERENT permno if the
+window runs past that permno's own history start -- unlike the forward/holding window, which
+16_positions_v2.py already validated stays single-permno). `compute_trailing_features` masks
+those out explicitly rather than silently including a different stock's returns.
+
+Output: data/equity_feature_panel.parquet (one row per tradeable event, superset of
+positions_rankweighted_v2.parquet's columns).
+"""
+import argparse
+import sys
+from pathlib import Path
+
+import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.paths import DATA_DIR, RAW_EQUITY_DIR
+from lib.gpu import (get_backend, add_device_arg, add_mock_data_arg, add_smoke_test_arg,
+                      StageTimer, compute_trailing_features, compute_fwd_realized_return,
+                      make_mock_feature_panel)
+
+DATA = DATA_DIR
+RAW = RAW_EQUITY_DIR
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_device_arg(parser)
+    add_mock_data_arg(parser)
+    add_smoke_test_arg(parser)
+    args = parser.parse_args()
+    xp, device = get_backend(args.device)
+
+    with StageTimer("32_gpu_feature_panel", extra={"device": device, "mock_data": args.mock_data}):
+        if args.mock_data:
+            n_events = 300 if args.smoke_test else args.mock_n_events
+            n_permnos = 40 if args.smoke_test else args.mock_n_permnos
+            print(f"building mock feature panel ({n_permnos} permnos, {n_events} events)...")
+            pos = make_mock_feature_panel(n_events=n_events, n_permnos=n_permnos, seed=0)
+            out_path = DATA / "equity_feature_panel.parquet"
+            pos.to_parquet(out_path, index=False)
+            print(f"wrote {out_path} ({len(pos):,} rows, {len(pos.columns)} columns)")
+            return
+
+        print("loading positions_rankweighted_v2.parquet...")
+        pos = pd.read_parquet(DATA / "positions_rankweighted_v2.parquet").reset_index(drop=True)
+        pos = pos.dropna(subset=["entry_row_idx", "exit_row_idx"]).copy().reset_index(drop=True)
+        pos["entry_row_idx"] = pos["entry_row_idx"].astype(int)
+        pos["exit_row_idx"] = pos["exit_row_idx"].astype(int)
+        pos["day0_date"] = pd.to_datetime(pos["day0_date"])
+
+        print("merging bm_tercile + EAR from decile_events_ff_adjusted_extended.parquet...")
+        ev_extra = pd.read_parquet(
+            DATA / "decile_events_ff_adjusted_extended.parquet",
+            columns=["permno", "day0_date", "bm_tercile", "ret_fwd_1d_mktadj"])
+        ev_extra["day0_date"] = pd.to_datetime(ev_extra["day0_date"])
+        ev_extra = ev_extra.rename(columns={"ret_fwd_1d_mktadj": "ear"})
+        pos = pos.merge(ev_extra, on=["permno", "day0_date"], how="left")
+
+        print("loading daily market-adjusted return panel...")
+        frames = []
+        for y in range(1995, 2015):
+            frames.append(pd.read_parquet(RAW / f"equity_{y}.parquet",
+                                           columns=["permno", "date", "ret"]))
+        eq = pd.concat(frames, ignore_index=True)
+        mkt = pd.read_parquet(RAW / "market_benchmark.parquet", columns=["date", "vwretd"])
+        eq = eq.merge(mkt, on="date", how="left")
+        eq["ret_mktadj"] = (eq["ret"] - eq["vwretd"]).fillna(0.0)
+        eq = eq.sort_values(["permno", "date"]).drop_duplicates(
+            subset=["permno", "date"]).reset_index(drop=True)
+        eq_ret = eq["ret_mktadj"].to_numpy()
+        eq_permno = eq["permno"].to_numpy()
+
+        print(f"computing trailing momentum/volatility features on {device} for {len(pos):,} events...")
+        eq_ret_xp = xp.asarray(eq_ret)
+        eq_permno_xp = xp.asarray(eq_permno)
+        entry_row_idx_xp = xp.asarray(pos["entry_row_idx"].to_numpy())
+        event_permno_xp = xp.asarray(pos["permno"].to_numpy())
+        momentum, vol = compute_trailing_features(xp, eq_ret_xp, eq_permno_xp,
+                                                    entry_row_idx_xp, event_permno_xp)
+        pos["momentum_12_1"] = momentum
+        pos["vol_60d"] = vol
+
+        print("computing per-position realized forward return (walk-forward training label)...")
+        pos["fwd_realized_ret"] = compute_fwd_realized_return(
+            eq_ret, pos["entry_row_idx"].to_numpy(), pos["exit_row_idx"].to_numpy())
+
+        n_missing_mom = pos["momentum_12_1"].isna().sum()
+        print(f"events with insufficient trailing history for momentum: {n_missing_mom:,} / {len(pos):,} "
+              f"(dropped by 34/35, not by this stage -- kept here so coverage is visible)")
+
+        out_path = DATA / "equity_feature_panel.parquet"
+        pos.to_parquet(out_path, index=False)
+        print(f"wrote {out_path} ({len(pos):,} rows, {len(pos.columns)} columns)")
+
+
+if __name__ == "__main__":
+    main()

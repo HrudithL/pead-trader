@@ -1,5 +1,6 @@
-# Additional requirements for the options-strategy GPU pipeline (scripts/40+ -- see the
-# "Options-strategy GPU roadmap" section of the README). Install alongside requirements.txt:
+# Additional requirements for the GPU-tiered pipelines (options_strategy/40+ and
+# equity_strategy/32-35, "Strategy 8" -- see the README's "Options-strategy GPU roadmap" and
+# "Equity-strategy GPU roadmap" sections). Install alongside requirements.txt:
 #   pip install -r requirements.txt -r requirements-gpu.txt
 #
 # Deliberately pip-only, no conda/RAPIDS -- see the README's "GPU library choice" note for why.
@@ -10,6 +11,9 @@
 #       (check with `nvidia-smi`, then see https://docs.cupy.dev/en/stable/install.html)
 # The plain `torch`/`cupy-cuda12x` lines below assume a recent CUDA 12.x driver (typical for a
 # 5090); override them explicitly if the 5090 box turns out to have a different CUDA version.
+# equity_strategy/33_gpu_walkforward_signal.py's MLP is hand-rolled directly against the cupy/numpy
+# backend (not torch) specifically so the equity GPU pipeline needs nothing beyond cupy here --
+# torch below is only required for options_strategy/44_ml_contract_selector.py.
 
 torch>=2.4
 cupy-cuda12x>=13.0
