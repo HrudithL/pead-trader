@@ -30,15 +30,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR, METADATA_DIR
 from lib.options import scan_year_for_keys
-from lib.hw import add_jobs_arg
+from lib.hw import add_jobs_arg, add_force_arg
 
 HORIZONS = [1, 5, 10, 20, 40, 60]
 OUT_DIR = DATA_DIR / "event_options"
 
 
-def _process_year(year, grp):
+def _process_year(year, grp, force=False):
     year_out_path = OUT_DIR / f"forward_prices_{year}.parquet"
-    if year_out_path.exists():
+    if year_out_path.exists() and not force:
         return year, pd.read_parquet(year_out_path), \
             f"{year}: already written, skipping ({year_out_path})"
 
@@ -64,6 +64,7 @@ def _process_year(year, grp):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_jobs_arg(parser)
+    add_force_arg(parser)
     args = parser.parse_args()
 
     cal = pd.read_parquet(METADATA_DIR / "om_trading_calendar.parquet")
@@ -127,12 +128,12 @@ def main():
     results = {}
     if args.jobs <= 1 or len(year_groups) <= 1:
         for year, grp in year_groups.items():
-            year, matched, msg = _process_year(year, grp)
+            year, matched, msg = _process_year(year, grp, args.force)
             print(msg, flush=True)
             results[year] = matched
     else:
         with ProcessPoolExecutor(max_workers=args.jobs) as ex:
-            futures = {ex.submit(_process_year, year, grp): year
+            futures = {ex.submit(_process_year, year, grp, args.force): year
                        for year, grp in year_groups.items()}
             for fut in as_completed(futures):
                 year, matched, msg = fut.result()

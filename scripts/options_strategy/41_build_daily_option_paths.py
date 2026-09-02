@@ -38,15 +38,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR, METADATA_DIR
 from lib.options import scan_year_for_keys
 from lib.gpu import StageTimer
-from lib.hw import add_jobs_arg
+from lib.hw import add_jobs_arg, add_force_arg
 
 OUT_DIR = DATA_DIR / "event_options"
 DEFAULT_MAX_HOLD_DAYS = 60
 
 
-def _process_year(year, grp):
+def _process_year(year, grp, force=False):
     year_out = OUT_DIR / f"daily_paths_{year}.parquet"
-    if year_out.exists():
+    if year_out.exists() and not force:
         return year, pd.read_parquet(year_out), f"{year}: already written, skipping ({year_out})"
 
     t0 = time.time()
@@ -76,6 +76,7 @@ def main():
                               "test on a small slice before committing to the full ~165k-event "
                               "run (which should happen on the 5090, not here).")
     add_jobs_arg(parser)
+    add_force_arg(parser)
     args = parser.parse_args()
 
     with StageTimer("41_build_daily_option_paths", extra={"max_hold_days": args.max_hold_days}):
@@ -122,12 +123,12 @@ def main():
         results = {}
         if args.jobs <= 1 or len(year_groups) <= 1:
             for year, grp in year_groups.items():
-                year, matched, msg = _process_year(year, grp)
+                year, matched, msg = _process_year(year, grp, args.force)
                 print(msg, flush=True)
                 results[year] = matched
         else:
             with ProcessPoolExecutor(max_workers=args.jobs) as ex:
-                futures = {ex.submit(_process_year, year, grp): year
+                futures = {ex.submit(_process_year, year, grp, args.force): year
                            for year, grp in year_groups.items()}
                 for fut in as_completed(futures):
                     year, matched, msg = fut.result()

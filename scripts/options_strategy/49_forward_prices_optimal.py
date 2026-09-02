@@ -6,9 +6,12 @@ Needed to backtest the optimal-contract strategy for real rather than just trust
 own expected-growth estimate.
 
 Target years are independent -- --jobs > 1 scans several years at once in separate worker
-processes (see script 35's docstring / lib.hw for the default and why it's capped).
+processes (see script 35's docstring / lib.hw for the default and why it's capped). Writes one
+checkpoint parquet per year (skipped on restart if already written, same resume convention as
+scripts 35/36/41/47) plus the final combined file.
 
-Output: data/event_options/optimal_forward_prices.parquet -- one row per event with entry +
+Output: data/event_options/optimal_forward_prices_<year>.parquet (one per year touched)
+        data/event_options/optimal_forward_prices.parquet -- one row per event with entry +
         forward mid prices for both the kelly pick and the naive pick.
 """
 import argparse
@@ -23,13 +26,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR, METADATA_DIR
 from lib.options import scan_year_for_keys
-from lib.hw import add_jobs_arg
+from lib.hw import add_jobs_arg, add_force_arg
 
 HORIZONS = [1, 5, 10, 20, 40, 60]
 OUT_DIR = DATA_DIR / "event_options"
 
 
-def _process_year(year, grp):
+def _process_year(year, grp, force=False):
+    year_out_path = OUT_DIR / f"optimal_forward_prices_{year}.parquet"
+    if year_out_path.exists() and not force:
+        return year, pd.read_parquet(year_out_path), \
+            f"{year}: already written, skipping ({year_out_path})"
+
     t0 = time.time()
     keys = grp.rename(columns={"target_date": "date"})[["secid", "date"]].drop_duplicates()
     raw = scan_year_for_keys(int(year), keys)
@@ -40,6 +48,7 @@ def _process_year(year, grp):
     raw = raw.rename(columns={"date": "target_date"})[
         ["secid", "target_date", "optionid", "mid"]]
     matched = grp.merge(raw, on=["secid", "target_date", "optionid"], how="left")
+    matched.to_parquet(year_out_path, index=False)
     hit_rate = matched["mid"].notna().mean()
     msg = (f"{year}: {len(grp):,} lookups -> {matched['mid'].notna().sum():,} priced "
            f"({hit_rate:.1%})  [{time.time()-t0:.1f}s]")
@@ -49,6 +58,7 @@ def _process_year(year, grp):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_jobs_arg(parser)
+    add_force_arg(parser)
     args = parser.parse_args()
 
     cal = pd.read_parquet(METADATA_DIR / "om_trading_calendar.parquet").sort_values("date").reset_index(drop=True)
@@ -100,12 +110,12 @@ def main():
     results = {}
     if args.jobs <= 1 or len(year_groups) <= 1:
         for year, grp in year_groups.items():
-            year, matched, msg = _process_year(year, grp)
+            year, matched, msg = _process_year(year, grp, args.force)
             print(msg, flush=True)
             results[year] = matched
     else:
         with ProcessPoolExecutor(max_workers=args.jobs) as ex:
-            futures = {ex.submit(_process_year, year, grp): year
+            futures = {ex.submit(_process_year, year, grp, args.force): year
                        for year, grp in year_groups.items()}
             for fut in as_completed(futures):
                 year, matched, msg = fut.result()

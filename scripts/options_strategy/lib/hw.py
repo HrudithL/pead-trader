@@ -100,6 +100,18 @@ def add_jobs_arg(parser: argparse.ArgumentParser, default: int = None, help_suff
     return parser
 
 
+def add_force_arg(parser: argparse.ArgumentParser, help_suffix: str = ""):
+    """Adds a --force flag for a per-year-checkpointed scan script: reprocess every year even if
+    its per-year checkpoint parquet already exists, instead of silently reusing a stale one.
+    run_pipeline.py's own --force only bypasses ITS top-level "final output already exists" skip;
+    without a matching flag on the child script, a forced stage would still silently reuse stale
+    per-year checkpoints underneath it, so this must be threaded down separately."""
+    parser.add_argument("--force", action="store_true",
+                         help=f"reprocess every year even if its per-year checkpoint file already "
+                              f"exists (instead of silently reusing it). {help_suffix}")
+    return parser
+
+
 def hardware_report() -> str:
     """One-line human-readable summary of what this machine offers -- printed by run_pipeline.py
     at startup so an unattended multi-day run's log records what hardware it actually ran on."""

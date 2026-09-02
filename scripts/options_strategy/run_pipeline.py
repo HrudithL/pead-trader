@@ -26,9 +26,12 @@ A stage only starts once every stage it depends on has reached a terminal state 
 skip that still leaves that dependency's declared output file in place). A stage is skipped
 outright if its script doesn't exist yet, if it was blocked by a skipped/failed dependency, if
 --mock-data was requested but that stage has no mock-data path AND its real input isn't already
-on disk, or (41 only) if --skip-daily-paths was passed. A stage already carrying its declared
-output file is treated as done without re-running it (crash/reboot/lost-tmux-session safe),
-unless --force.
+on disk (a mock-capable upstream stage's own output never counts as a "real input" here, so a
+non-mock stage downstream of one doesn't get launched for real against synthetic data), or (41
+only) if --skip-daily-paths was passed. A stage already carrying its declared output file is
+treated as done without re-running it (crash/reboot/lost-tmux-session safe), unless --force --
+which is also threaded down to every per-year-checkpointed stage (35/36/41/47/47b/49) so a forced
+run actually rescans instead of silently reusing their stale per-year parquet checkpoints.
 
 Progress is in `logs/pipeline_status.json` (also updated per-stage by supporting scripts' own
 `lib.gpu.StageTimer`, now cross-process-lock-safe since several stages can finish at once) and in
@@ -66,8 +69,8 @@ _LOG_LOCK = threading.Lock()
 
 
 def stage(name, script, deps=(), inputs=(), outputs=(), kind="cpu", supports_mock=False,
-          supports_smoke=None, supports_device=False, supports_jobs=False, skip_if_exists=True,
-          extra=()):
+          supports_smoke=None, supports_device=False, supports_jobs=False, supports_force=False,
+          skip_if_exists=True, extra=()):
     # every mock-capable stage in this pipeline also takes --smoke-test EXCEPT
     # 40_options_backtest.py, which only ever added --mock-data -- so default supports_smoke to
     # supports_mock and let a stage override it explicitly rather than repeating =True everywhere.
@@ -77,7 +80,7 @@ def stage(name, script, deps=(), inputs=(), outputs=(), kind="cpu", supports_moc
                 inputs=[Path(p) for p in inputs], outputs=[Path(p) for p in outputs], kind=kind,
                 supports_mock=supports_mock, supports_smoke=supports_smoke,
                 supports_device=supports_device, supports_jobs=supports_jobs,
-                skip_if_exists=skip_if_exists, extra=list(extra))
+                supports_force=supports_force, skip_if_exists=skip_if_exists, extra=list(extra))
 
 
 def build_stages():
@@ -89,14 +92,14 @@ def build_stages():
         stage("35_select_entry_contracts", "35_select_entry_contracts.py",
               inputs=[EVENT_DIR / "decile_events_secid.parquet"],
               outputs=[EVENT_DIR / "entry_contracts_all.parquet"],
-              kind="io", supports_jobs=True),
+              kind="io", supports_jobs=True, supports_force=True),
 
         stage("36_forward_option_prices", "36_forward_option_prices.py",
               deps=["35_select_entry_contracts"],
               inputs=[EVENT_DIR / "entry_contracts_all.parquet",
                       METADATA_DIR / "om_trading_calendar.parquet"],
               outputs=[EVENT_DIR / "option_event_panel.parquet"],
-              kind="io", supports_jobs=True),
+              kind="io", supports_jobs=True, supports_force=True),
 
         stage("40_options_backtest", "40_options_backtest.py",
               deps=["36_forward_option_prices"],
@@ -108,7 +111,7 @@ def build_stages():
               deps=["35_select_entry_contracts"],
               inputs=[EVENT_DIR / "entry_contracts_all.parquet"],
               outputs=[EVENT_DIR / "daily_price_paths.parquet"],
-              kind="io", supports_jobs=True),
+              kind="io", supports_jobs=True, supports_force=True),
 
         stage("42_gpu_exit_optimizer", "42_gpu_exit_optimizer.py",
               deps=["41_build_daily_option_paths"],
@@ -142,13 +145,13 @@ def build_stages():
         stage("47_scan_full_chain_entries", "47_scan_full_chain_entries.py",
               inputs=[EVENT_DIR / "decile_events_secid.parquet"],
               outputs=[EVENT_DIR / "full_chain_all.parquet"],
-              kind="io", supports_jobs=True),
+              kind="io", supports_jobs=True, supports_force=True),
 
         stage("47b_attach_underlying_price", "47b_attach_underlying_price.py",
               deps=["47_scan_full_chain_entries"],
               inputs=[EVENT_DIR / "full_chain_all.parquet"],
               outputs=[EVENT_DIR / "full_chain_with_underlying.parquet"],
-              kind="io", supports_jobs=True),
+              kind="io", supports_jobs=True, supports_force=True),
 
         stage("48_optimal_contract_selector", "48_optimal_contract_selector.py",
               deps=["47b_attach_underlying_price", "46_build_return_distributions"],
@@ -161,7 +164,7 @@ def build_stages():
               deps=["48_optimal_contract_selector"],
               inputs=[EVENT_DIR / "optimal_contracts.parquet"],
               outputs=[EVENT_DIR / "optimal_forward_prices.parquet"],
-              kind="io", supports_jobs=True),
+              kind="io", supports_jobs=True, supports_force=True),
 
         stage("50_options_backtest_optimal", "50_options_backtest_optimal.py",
               deps=["49_forward_prices_optimal"],
@@ -213,6 +216,8 @@ def build_command(s, args, resolved_device):
         cmd += ["--smoke-test"]
     if s["supports_jobs"]:
         cmd += ["--jobs", str(args.jobs)]
+    if s["supports_force"] and args.force:
+        cmd += ["--force"]
     if s["name"] == "41_build_daily_option_paths" and args.smoke_test:
         cmd += ["--max-hold-days", "10", "--limit-events", "500"]
     cmd += s["extra"]
@@ -285,6 +290,18 @@ def main():
     stages = build_stages()
     stages_by_name = {s["name"]: s for s in stages}
     active_names = set(stages_by_name)
+    # under --mock-data, any file that's a declared OUTPUT of a mock-capable stage must never be
+    # treated by a non-mock-capable downstream stage as "real input already on disk" -- a
+    # mock-capable stage running under --mock-data writes synthetic data to that exact real path
+    # (e.g. 48_optimal_contract_selector writes a mock optimal_contracts.parquet), and without this
+    # exclusion 49_forward_prices_optimal (no mock-data path of its own) would see that file exist
+    # and launch for real against synthetic rows lacking secid/day0_date, on a machine that also
+    # has no real OM/calendar data to fall back on.
+    mock_unsafe_paths = set()
+    if args.mock_data:
+        for s in stages:
+            if s["supports_mock"]:
+                mock_unsafe_paths.update(s["outputs"])
     if args.only:
         requested = [n.strip() for n in args.only.split(",") if n.strip()]
         unknown = [n for n in requested if n not in stages_by_name]
@@ -367,10 +384,11 @@ def main():
                     print(f"[{name}] skipped: a dependency did not complete successfully")
                     continue
                 if args.mock_data and not s["supports_mock"] and \
-                        not all(p.exists() for p in s["inputs"]):
+                        not all(p.exists() and p not in mock_unsafe_paths for p in s["inputs"]):
                     state[name] = "skipped_mock_unsupported"
                     print(f"[{name}] skipped: --mock-data was requested, this stage has no "
-                          f"mock-data path, and its real input isn't on disk yet")
+                          f"mock-data path, and its real input isn't on disk yet (or is itself a "
+                          f"mock-capable stage's output under --mock-data)")
                     continue
 
                 cmd = build_command(s, args, resolved_device)

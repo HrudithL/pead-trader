@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR
 from lib.options import scan_year_for_keys, pick_best_contracts_vectorized
-from lib.hw import add_jobs_arg
+from lib.hw import add_jobs_arg, add_force_arg
 
 MIN_DTE = 95
 TARGET_DTE = 120
@@ -48,12 +48,12 @@ OUT_DIR = DATA_DIR / "event_options"
 YEARS = [y for y in range(1996, 2014) if y != 2011]
 
 
-def _process_year(year, ev_y):
+def _process_year(year, ev_y, force=False):
     """Runs in a worker process: scan one year, write its parquet, return (year, df_or_None, msg)
     rather than printing directly, so the parent process can print in year order regardless of
     which worker finishes first."""
     year_out_path = OUT_DIR / f"entry_contracts_{year}.parquet"
-    if year_out_path.exists():
+    if year_out_path.exists() and not force:
         return year, pd.read_parquet(year_out_path), \
             f"{year}: already written, skipping ({year_out_path})"
 
@@ -106,6 +106,7 @@ def _process_year(year, ev_y):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_jobs_arg(parser)
+    add_force_arg(parser)
     args = parser.parse_args()
 
     events = pd.read_parquet(OUT_DIR / "decile_events_secid.parquet",
@@ -120,12 +121,12 @@ def main():
     results = {}
     if args.jobs <= 1 or len(year_groups) <= 1:
         for year, ev_y in year_groups.items():
-            year, df, msg = _process_year(year, ev_y)
+            year, df, msg = _process_year(year, ev_y, args.force)
             print(msg, flush=True)
             results[year] = df
     else:
         with ProcessPoolExecutor(max_workers=args.jobs) as ex:
-            futures = {ex.submit(_process_year, year, ev_y): year
+            futures = {ex.submit(_process_year, year, ev_y, args.force): year
                        for year, ev_y in year_groups.items()}
             for fut in as_completed(futures):
                 year, df, msg = fut.result()

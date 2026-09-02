@@ -9,8 +9,11 @@ secprd is much smaller than opprcd (one row per underlying per day, not one row 
 this is a fast standalone pass -- no need for options_lib.scan_year_for_keys's batched streaming;
 a straight read + filter per year is enough. Years are independent, so --jobs > 1 reads several
 years at once in separate worker processes (see script 35's docstring / lib.hw for the default).
+Writes one checkpoint parquet per year (skipped on restart if already written, same resume
+convention as scripts 35/36/41/47) plus the final combined file.
 
-Output: data/event_options/full_chain_with_underlying.parquet
+Output: data/event_options/underlying_price_<year>.parquet (one per year touched)
+        data/event_options/full_chain_with_underlying.parquet (combined)
 """
 import argparse
 import sys
@@ -24,13 +27,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR
 from lib.options import OM_DIR
-from lib.hw import add_jobs_arg
+from lib.hw import add_jobs_arg, add_force_arg
 
 OUT_DIR = DATA_DIR / "event_options"
 YEARS = [y for y in range(1996, 2014) if y != 2011]
 
 
-def _process_year(year, need_y):
+def _process_year(year, need_y, force=False):
+    year_out_path = OUT_DIR / f"underlying_price_{year}.parquet"
+    if year_out_path.exists() and not force:
+        return year, pd.read_parquet(year_out_path), \
+            f"{year}: already written, skipping ({year_out_path})"
+
     t0 = time.time()
     path = f"{OM_DIR}/secprd{year}.parquet"
     tbl = pq.read_table(path, columns=["secid", "date", "close"])
@@ -40,13 +48,16 @@ def _process_year(year, need_y):
     keys = need_y.rename(columns={"day0_date": "date"})[["secid", "date"]]
     matched = df.merge(keys, on=["secid", "date"], how="inner")
     matched = matched.rename(columns={"date": "day0_date", "close": "underlying_price"})
+    matched = matched[["secid", "day0_date", "underlying_price"]]
+    matched.to_parquet(year_out_path, index=False)
     msg = f"{year}: {len(need_y):,} needed -> {len(matched):,} priced  [{time.time()-t0:.1f}s]"
-    return year, matched[["secid", "day0_date", "underlying_price"]], msg
+    return year, matched, msg
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_jobs_arg(parser)
+    add_force_arg(parser)
     args = parser.parse_args()
 
     chain = pd.read_parquet(OUT_DIR / "full_chain_all.parquet")
@@ -62,12 +73,12 @@ def main():
     results = {}
     if args.jobs <= 1 or len(year_groups) <= 1:
         for year, need_y in year_groups.items():
-            year, matched, msg = _process_year(year, need_y)
+            year, matched, msg = _process_year(year, need_y, args.force)
             print(msg, flush=True)
             results[year] = matched
     else:
         with ProcessPoolExecutor(max_workers=args.jobs) as ex:
-            futures = {ex.submit(_process_year, year, need_y): year
+            futures = {ex.submit(_process_year, year, need_y, args.force): year
                        for year, need_y in year_groups.items()}
             for fut in as_completed(futures):
                 year, matched, msg = fut.result()
