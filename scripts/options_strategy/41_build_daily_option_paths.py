@@ -17,12 +17,17 @@ so a run can be safely killed and resumed mid-year without losing hours of progr
 external-drive scan -- necessary given options_lib.scan_year_for_keys already had to add retry
 logic for transient USB read errors seen while building this same panel (see options_lib.py).
 
+Target years are independent of each other -- --jobs > 1 scans several years at once in separate
+worker processes (see script 35's docstring / lib.hw for why the default is capped rather than
+defaulting to every CPU core: the OM drive is a single physical volume on this dev machine).
+
 Output: data/event_options/daily_paths_<year>.parquet (long format: event_id, day_offset, mid)
         data/event_options/daily_price_paths.parquet   (combined, long format)
 """
 import argparse
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -33,9 +38,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR, METADATA_DIR
 from lib.options import scan_year_for_keys
 from lib.gpu import StageTimer
+from lib.hw import add_jobs_arg
 
 OUT_DIR = DATA_DIR / "event_options"
 DEFAULT_MAX_HOLD_DAYS = 60
+
+
+def _process_year(year, grp):
+    year_out = OUT_DIR / f"daily_paths_{year}.parquet"
+    if year_out.exists():
+        return year, pd.read_parquet(year_out), f"{year}: already written, skipping ({year_out})"
+
+    t0 = time.time()
+    keys = grp.rename(columns={"target_date": "date"})[["secid", "date"]].drop_duplicates()
+    raw = scan_year_for_keys(int(year), keys)
+    if raw.empty:
+        return year, None, f"{year}: 0 rows found for {len(grp):,} lookups"
+
+    raw["mid"] = np.where((raw["best_bid"] > 0) & (raw["best_offer"] >= raw["best_bid"]),
+                           (raw["best_bid"] + raw["best_offer"]) / 2.0, np.nan)
+    raw = raw.rename(columns={"date": "target_date"})[
+        ["secid", "target_date", "optionid", "mid"]]
+    matched = grp.merge(raw, on=["secid", "target_date", "optionid"], how="left")
+    matched = matched[["event_id", "cp_type", "day_offset", "mid"]]
+    matched.to_parquet(year_out, index=False)
+    hit_rate = matched["mid"].notna().mean()
+    msg = (f"{year}: {len(grp):,} lookups -> {matched['mid'].notna().sum():,} priced "
+           f"({hit_rate:.1%})  [{time.time()-t0:.1f}s]")
+    return year, matched, msg
 
 
 def main():
@@ -45,6 +75,7 @@ def main():
                          help="process only the first N events -- for a quick real-data smoke "
                               "test on a small slice before committing to the full ~165k-event "
                               "run (which should happen on the 5090, not here).")
+    add_jobs_arg(parser)
     args = parser.parse_args()
 
     with StageTimer("41_build_daily_option_paths", extra={"max_hold_days": args.max_hold_days}):
@@ -85,33 +116,25 @@ def main():
         print(f"total (event, cp_type, day_offset) lookups needed: {len(need):,}, "
               f"spanning years {sorted(need['target_year'].unique())}")
 
-        years = sorted(need["target_year"].unique())
-        all_paths = []
-        for year in years:
-            year_out = OUT_DIR / f"daily_paths_{year}.parquet"
-            if year_out.exists():
-                print(f"{year}: already written, skipping ({year_out})", flush=True)
-                all_paths.append(pd.read_parquet(year_out))
-                continue
-            grp = need[need["target_year"] == year]
-            t0 = time.time()
-            keys = grp.rename(columns={"target_date": "date"})[["secid", "date"]].drop_duplicates()
-            raw = scan_year_for_keys(int(year), keys)
-            if raw.empty:
-                print(f"{year}: 0 rows found for {len(grp):,} lookups")
-                continue
-            raw["mid"] = np.where((raw["best_bid"] > 0) & (raw["best_offer"] >= raw["best_bid"]),
-                                   (raw["best_bid"] + raw["best_offer"]) / 2.0, np.nan)
-            raw = raw.rename(columns={"date": "target_date"})[
-                ["secid", "target_date", "optionid", "mid"]]
-            matched = grp.merge(raw, on=["secid", "target_date", "optionid"], how="left")
-            matched = matched[["event_id", "cp_type", "day_offset", "mid"]]
-            matched.to_parquet(year_out, index=False)
-            all_paths.append(matched)
-            hit_rate = matched["mid"].notna().mean()
-            print(f"{year}: {len(grp):,} lookups -> {matched['mid'].notna().sum():,} priced "
-                  f"({hit_rate:.1%})  [{time.time()-t0:.1f}s]", flush=True)
+        year_groups = {year: grp for year, grp in need.groupby("target_year")}
+        print(f"{len(year_groups)} target years to process, --jobs {args.jobs}", flush=True)
 
+        results = {}
+        if args.jobs <= 1 or len(year_groups) <= 1:
+            for year, grp in year_groups.items():
+                year, matched, msg = _process_year(year, grp)
+                print(msg, flush=True)
+                results[year] = matched
+        else:
+            with ProcessPoolExecutor(max_workers=args.jobs) as ex:
+                futures = {ex.submit(_process_year, year, grp): year
+                           for year, grp in year_groups.items()}
+                for fut in as_completed(futures):
+                    year, matched, msg = fut.result()
+                    print(msg, flush=True)
+                    results[year] = matched
+
+        all_paths = [results[y] for y in sorted(results) if results[y] is not None]
         combined = pd.concat(all_paths, ignore_index=True) if all_paths else pd.DataFrame()
         out_path = OUT_DIR / "daily_price_paths.parquet"
         combined.to_parquet(out_path, index=False)

@@ -22,6 +22,7 @@ Three things every such script needs, provided here:
    stage that already produced its output file is skipped on re-run (crash/reboot safe).
 """
 import argparse
+import contextlib
 import json
 import time
 from pathlib import Path
@@ -30,6 +31,15 @@ import numpy as np
 import pandas as pd
 
 from common.paths import LOGS_DIR
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 STATUS_PATH = LOGS_DIR / "pipeline_status.json"
 
@@ -237,6 +247,34 @@ def make_mock_full_chain(n_events=2_000, max_strikes=30, seed=0):
 # Checkpoint / status logging for unattended multi-day runs
 # ---------------------------------------------------------------------------
 
+@contextlib.contextmanager
+def _status_file_lock():
+    """Cross-process advisory lock around the pipeline_status.json read-modify-write, needed now
+    that run_pipeline.py can run several stages concurrently (each a separate OS process) -- two
+    stages finishing at the same instant would otherwise race on read-modify-write and silently
+    drop one stage's status update. Purely advisory / informational (resume logic elsewhere keys
+    off actual output files, never this JSON), so a platform with neither msvcrt nor fcntl just
+    skips locking rather than failing."""
+    STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = STATUS_PATH.with_suffix(".lock")
+    f = open(lock_path, "a+")
+    try:
+        if msvcrt is not None:
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+        elif fcntl is not None:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if msvcrt is not None:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+            elif fcntl is not None:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        finally:
+            f.close()
+
+
 def _load_status() -> dict:
     if STATUS_PATH.exists():
         return json.loads(STATUS_PATH.read_text())
@@ -270,23 +308,27 @@ class StageTimer:
 
     def __enter__(self):
         self.t0 = time.time()
-        status = _load_status()
-        status[self.name] = {"state": "running", "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                              **self.extra}
-        _save_status(status)
+        with _status_file_lock():
+            status = _load_status()
+            status[self.name] = {"state": "running", "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                  **self.extra}
+            _save_status(status)
         print(f"[{self.name}] started", flush=True)
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        status = _load_status()
         elapsed = time.time() - self.t0
+        with _status_file_lock():
+            status = _load_status()
+            if exc_type is None:
+                status[self.name] = {**status.get(self.name, {}), "state": "done",
+                                      "elapsed_sec": round(elapsed, 1)}
+            else:
+                status[self.name] = {**status.get(self.name, {}), "state": "failed",
+                                      "elapsed_sec": round(elapsed, 1), "error": str(exc)}
+            _save_status(status)
         if exc_type is None:
-            status[self.name] = {**status.get(self.name, {}), "state": "done",
-                                  "elapsed_sec": round(elapsed, 1)}
             print(f"[{self.name}] done in {elapsed:.1f}s", flush=True)
         else:
-            status[self.name] = {**status.get(self.name, {}), "state": "failed",
-                                  "elapsed_sec": round(elapsed, 1), "error": str(exc)}
             print(f"[{self.name}] FAILED after {elapsed:.1f}s: {exc}", flush=True)
-        _save_status(status)
         return False  # never swallow the exception

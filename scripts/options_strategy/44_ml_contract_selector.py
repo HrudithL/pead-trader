@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR
 from lib.gpu import add_mock_data_arg, add_smoke_test_arg, make_mock_option_event_panel, StageTimer
+from lib.hw import recommended_cpu_jobs
 
 DATA = DATA_DIR
 TARGET_HORIZON = 60
@@ -145,6 +146,14 @@ def main():
                               "script trains a PyTorch model, not a cupy array kernel)")
     parser.add_argument("--n-trials", type=int, default=20)
     parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--n-jobs", type=int, default=None,
+                         help="Optuna trials run concurrently (threads -- each trial releases "
+                              "the GIL during actual tensor ops, so this is a real speedup on a "
+                              "multi-core CPU). Only used when --device cpu: on GPU, concurrent "
+                              "trials would contend for the same VRAM, so this is forced to 1 "
+                              "there regardless of what's passed. Default: all CPU cores "
+                              f"({recommended_cpu_jobs()} on this machine) when --device cpu, "
+                              "else 1.")
     args = parser.parse_args()
 
     n_trials, epochs = args.n_trials, args.epochs
@@ -181,6 +190,15 @@ def main():
         if args.device == "cuda" and device == "cpu":
             print("WARNING: --device cuda requested but torch sees no GPU, falling back to cpu")
 
+        # concurrent trials only make sense on CPU -- on GPU they'd all fight over the same VRAM
+        # and serialize on the device anyway, so force 1 there regardless of --n-jobs.
+        n_jobs = args.n_jobs if args.n_jobs is not None else (recommended_cpu_jobs() if device == "cpu" else 1)
+        if device == "cuda" and args.n_jobs and args.n_jobs > 1:
+            print(f"--n-jobs {args.n_jobs} requested but device=cuda -- forcing n_jobs=1 to avoid "
+                  f"concurrent trials contending for the same GPU's VRAM")
+            n_jobs = 1
+        print(f"optuna: {n_trials} trials, n_jobs={n_jobs}, device={device}")
+
         def objective(trial):
             hidden_dim = trial.suggest_categorical("hidden_dim", [16, 32, 64, 128])
             n_layers = trial.suggest_int("n_layers", 1, 3)
@@ -191,7 +209,7 @@ def main():
 
         study = optuna.create_study(direction="minimize",
                                      pruner=optuna.pruners.MedianPruner())
-        study.optimize(objective, n_trials=n_trials)
+        study.optimize(objective, n_trials=n_trials, n_jobs=n_jobs)
 
         trials_df = study.trials_dataframe()
         trials_df.to_csv(DATA / "ml_contract_selector_study.csv", index=False)

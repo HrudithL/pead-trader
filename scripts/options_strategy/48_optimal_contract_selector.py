@@ -267,6 +267,7 @@ def main():
             print(f"  batch {start//batch_size + 1}: events {start:,}-{start+b:,} done", flush=True)
 
         out = pd.DataFrame(results)
+        (DATA / "event_options").mkdir(parents=True, exist_ok=True)
         out.to_parquet(DATA / "event_options" / "optimal_contracts.parquet", index=False)
 
         print(f"\n{len(out):,} events scored")
