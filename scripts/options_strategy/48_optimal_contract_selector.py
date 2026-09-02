@@ -268,7 +268,18 @@ def main():
 
         out = pd.DataFrame(results)
         (DATA / "event_options").mkdir(parents=True, exist_ok=True)
-        out.to_parquet(DATA / "event_options" / "optimal_contracts.parquet", index=False)
+        # --mock-data and/or --smoke-test both make this a NON-canonical output (synthetic rows
+        # lacking real secid/day0_date, or real rows selected from a truncated max_strikes=20
+        # chain instead of the normal 60) -- write it under a distinct name so it can never
+        # satisfy this pipeline's own or run_pipeline.py's resume/skip check for a real full run,
+        # and so 49_forward_prices_optimal.py (which has no mock-data path of its own) never
+        # mistakes it for the genuine picks file.
+        out_tag = "_smoke" if (args.mock_data or args.smoke_test) else ""
+        out_path = DATA / "event_options" / f"optimal_contracts{out_tag}.parquet"
+        out.to_parquet(out_path, index=False)
+        if out_tag:
+            print(f"--mock-data/--smoke-test: wrote {out_path}, NOT the canonical "
+                  f"optimal_contracts.parquet")
 
         print(f"\n{len(out):,} events scored")
         print(f"Kelly and naive-EV picks AGREE on {out['agree_with_naive'].mean():.1%} of events")
@@ -285,7 +296,7 @@ def main():
                   f"would have needed an average Kelly fraction that we did not even evaluate "
                   f"favorably for it (it wasn't the growth-maximizer) -- see kelly_growth vs "
                   f"naive_ev columns per-event in the output file for the full picture.")
-        print(f"\nwrote data/event_options/optimal_contracts.parquet")
+        print(f"\nwrote {out_path}")
 
 
 if __name__ == "__main__":

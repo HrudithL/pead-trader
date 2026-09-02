@@ -389,14 +389,21 @@ def main():
                     state[name] = "skipped_no_script"
                     print(f"[{name}] script not written yet ({s['script']}) -- skipping")
                     continue
+                if args.skip_daily_paths and name in (
+                        "41_build_daily_option_paths", "42_gpu_exit_optimizer"):
+                    # checked BEFORE the output-exists check: if 41's canonical output happens to
+                    # already be on disk from an earlier run, the check below would mark 41 "done"
+                    # (not skipped_manual) and unblock 42 -- which --skip-daily-paths exists
+                    # specifically to avoid running (its non-mock path is an unimplemented stub
+                    # that raises NotImplementedError, crashing an otherwise intentionally
+                    # daily-path-free run).
+                    state[name] = "skipped_manual"
+                    print(f"[{name}] --skip-daily-paths -- skipping")
+                    continue
                 if not args.force and s["skip_if_exists"] and s["outputs"] and \
                         all(p.exists() for p in s["outputs"]):
                     state[name] = "done"
                     print(f"[{name}] output already exists -- skipping")
-                    continue
-                if args.skip_daily_paths and name == "41_build_daily_option_paths":
-                    state[name] = "skipped_manual"
-                    print(f"[{name}] --skip-daily-paths -- skipping")
                     continue
                 if not deps_ok(s):
                     state[name] = "skipped_blocked"
