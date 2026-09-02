@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR, RAW_EQUITY_DIR, INITIAL_CAPITAL
 from lib.gpu import get_backend, to_host, add_device_arg, add_mock_data_arg, add_smoke_test_arg, \
-    StageTimer, make_mock_backtest_inputs, make_mock_ml_rank_proxy
+    StageTimer, make_mock_backtest_inputs, make_mock_ml_rank_proxy, mark_mock_output
 from lib.positions import weights_size_sector_neutral
 
 DATA = DATA_DIR
@@ -287,6 +287,7 @@ def main():
         results = pd.DataFrame(rows)
         results_path = DATA / "equity_gpu_sweep_results.csv"
         results.to_csv(results_path, index=False)
+        mark_mock_output(results_path, is_mock=args.mock_data)
         print(f"wrote {results_path} ({len(results)} combos)")
 
         valid = results[np.isfinite(results["search_sharpe"])]
@@ -297,6 +298,7 @@ def main():
         best_path = DATA / "equity_gpu_sweep_best.json"
         with open(best_path, "w") as f:
             json.dump(best, f, indent=2, default=str)
+        mark_mock_output(best_path, is_mock=args.mock_data)
         print(f"best combo (by search-window Sharpe): {best}")
         print(f"wrote {best_path}")
 

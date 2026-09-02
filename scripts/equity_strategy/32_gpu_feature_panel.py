@@ -53,7 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR, RAW_EQUITY_DIR
 from lib.gpu import (get_backend, add_device_arg, add_mock_data_arg, add_smoke_test_arg,
                       StageTimer, compute_trailing_features, compute_fwd_realized_return,
-                      make_mock_feature_panel)
+                      make_mock_feature_panel, mark_mock_output)
 
 DATA = DATA_DIR
 RAW = RAW_EQUITY_DIR
@@ -75,6 +75,7 @@ def main():
             pos = make_mock_feature_panel(n_events=n_events, n_permnos=n_permnos, seed=0)
             out_path = DATA / "equity_feature_panel.parquet"
             pos.to_parquet(out_path, index=False)
+            mark_mock_output(out_path, is_mock=True)
             print(f"wrote {out_path} ({len(pos):,} rows, {len(pos.columns)} columns)")
             return
 
@@ -144,6 +145,7 @@ def main():
 
         out_path = DATA / "equity_feature_panel.parquet"
         pos.to_parquet(out_path, index=False)
+        mark_mock_output(out_path, is_mock=False)
         print(f"wrote {out_path} ({len(pos):,} rows, {len(pos.columns)} columns)")
 
 

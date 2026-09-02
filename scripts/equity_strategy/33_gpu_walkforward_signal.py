@@ -59,7 +59,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR
 from lib.gpu import get_backend, to_host, add_device_arg, add_mock_data_arg, add_smoke_test_arg, \
-    StageTimer, make_mock_feature_panel
+    StageTimer, make_mock_feature_panel, mark_mock_output
 
 DATA = DATA_DIR
 FOLDS_ROOT = DATA / "equity_walkforward_folds"
@@ -262,6 +262,7 @@ def main():
         signal["ml_rank_pct"] = signal.groupby("ann_quarter")["ml_score_raw"].rank(pct=True)
         signal_path = DATA / "equity_ml_signal.parquet"
         signal.to_parquet(signal_path, index=False)
+        mark_mock_output(signal_path, is_mock=args.mock_data)
         print(f"wrote {signal_path} ({len(signal):,} scored events across {len(all_folds)} folds)")
 
         real_ics = [f["ic"] for f in fold_summaries if f["ic"] is not None and not np.isnan(f["ic"])]

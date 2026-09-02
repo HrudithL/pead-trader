@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR, RAW_EQUITY_DIR, INITIAL_CAPITAL
 from lib.gpu import add_mock_data_arg, add_smoke_test_arg, StageTimer, make_mock_backtest_inputs, \
-    make_mock_ml_rank_proxy
+    make_mock_ml_rank_proxy, mark_mock_output
 from lib.positions import weights_size_sector_neutral
 
 DATA = DATA_DIR
@@ -183,6 +183,7 @@ def main():
         pos_out["weight"] = weight
         pos_out = pos_out[pos_out["weight"] != 0].reset_index(drop=True)
         pos_out.to_parquet(DATA / "positions_strategy8_v2.parquet", index=False)
+        mark_mock_output(DATA / "positions_strategy8_v2.parquet", is_mock=args.mock_data)
 
         entry_costs = np.abs(notional) * (cost_bps / 10_000.0)
         exit_costs = entry_costs.copy()
@@ -212,6 +213,7 @@ def main():
                              "gross_exposure": gross_exposure, "n_open_positions": n_open,
                              "turnover_dollars": turnover_dollars, "daily_return": daily_ret})
         out.to_csv(DATA / "backtest_v2_strategy8.csv", index=False)
+        mark_mock_output(DATA / "backtest_v2_strategy8.csv", is_mock=args.mock_data)
         pd.DataFrame(quarter_log).to_csv(DATA / "backtest_v2_strategy8_quarterlog.csv", index=False)
 
         years = n_days / 252.0
@@ -241,6 +243,7 @@ def main():
         )
         with open(DATA / "backtest_v2_strategy8_summary.json", "w") as f:
             json.dump(summary, f, indent=2)
+        mark_mock_output(DATA / "backtest_v2_strategy8_summary.json", is_mock=args.mock_data)
         print(f"strategy8: ann.ret={ann_ret:.2%} ann.vol={ann_vol:.2%} Sharpe={sharpe:.3f} "
               f"maxDD={max_dd:.2%} final_nav=${nav[-1]:,.0f}")
 

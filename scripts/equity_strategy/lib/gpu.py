@@ -7,12 +7,26 @@ scripts/options_strategy/lib/gpu.py's structure exactly: the device backend, --d
 the synthetic daily-panel/position generators that let every stage below be built and
 smoke-tested without data/normalized_equity/ or data/positions_rankweighted_v2.parquet on hand.
 """
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
 from common.gpu import (  # noqa: F401 -- re-exported for `from lib.gpu import ...` call sites
     get_backend, to_host, add_device_arg, add_smoke_test_arg, StageTimer, stage_done, STATUS_PATH,
 )
+
+
+def mark_mock_output(path, is_mock: bool):
+    """Sidecar marker (<path>.mock) recording whether a declared stage output was produced by a
+    --mock-data run. run_pipeline.py's resume/skip check reads this so a REAL run never mistakes
+    a mock run's output (written to the exact same real path, e.g. equity_feature_panel.parquet)
+    for a genuine completed stage and silently skips re-running it against real data."""
+    marker = Path(str(path) + ".mock")
+    if is_mock:
+        marker.touch()
+    elif marker.exists():
+        marker.unlink()
 
 
 def add_mock_data_arg(parser):
