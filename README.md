@@ -156,7 +156,8 @@ scripts/
   options_strategy/         # contract selection/pricing + the GPU-tiered backtested strategy + its own report
     lib/options.py           # streamed/filtered opprcd scans, contract picker (moved from options_lib.py)
     lib/gpu.py                # options-specific mock-data generators, built on common/gpu.py's device backend
-    run_pipeline.py            # unattended driver for the Tier 1-4 GPU pipeline (scripts 40-50)
+    lib/hw.py                  # CPU/RAM/GPU detection, --jobs defaults shared by every stage + run_pipeline.py
+    run_pipeline.py            # hardware-aware concurrent scheduler for the whole pipeline (scripts 35-52)
 
   legacy/
     05_build_pdf.py         # original cloud-sandbox evidence report, superseded by equity_pead/32
@@ -291,6 +292,7 @@ compute-hungry backtested strategy, in `options_strategy/` alongside 35-36 -- se
 section below):**
 ```
 scripts/options_strategy/lib/gpu.py                        # device backend (numpy/cupy), mock-data generators, checkpoint logging
+scripts/options_strategy/lib/hw.py                         # CPU/RAM/GPU detection, --jobs defaults for the per-year scan scripts
 scripts/options_strategy/40_options_backtest.py            # Tier 1: real capital-sized, cost-aware options P&L backtest
 scripts/options_strategy/46_build_return_distributions.py  # Tier 1.5: empirical decile-conditioned return distribution
 scripts/options_strategy/47_scan_full_chain_entries.py     # Tier 1.5 data: every strike in the day0 chain, not just near-ATM
@@ -303,7 +305,7 @@ scripts/options_strategy/42_gpu_exit_optimizer.py          # Tier 2: GPU dynamic
 scripts/options_strategy/43_gpu_param_sweep.py             # Tier 3: GPU-batched sweep over strike/DTE/sizing/exit-rule combos
 scripts/options_strategy/44_ml_contract_selector.py        # Tier 3: Optuna + PyTorch model, IV/liquidity/sector features
 scripts/options_strategy/45_joint_portfolio_optimizer.py   # Tier 4: joint equity+options+beta allocation search
-scripts/options_strategy/run_pipeline.py                   # unattended driver: runs stages in order, skips completed, logs status
+scripts/options_strategy/run_pipeline.py                   # hardware-aware concurrent scheduler: all 16 stages, dependency-ordered, skips completed, logs status
 scripts/options_strategy/51_options_strategy_charts.py     # NAV/comparison/validation charts (figures 24-26)
 scripts/options_strategy/52_build_options_strategy_report.py  # reports/PEAD_Options_Strategy_Report.pdf
 ```
@@ -550,6 +552,15 @@ schema and the same decile-ordered drift actually measured in `data/option_sprea
 behavior can be fully validated (on Colab or here) without ever touching the licensed OptionMetrics
 data.
 
+**Every per-year OptionMetrics-scan script (35/36/41/47/47b/49) takes `--jobs N`**
+(`scripts/options_strategy/lib/hw.py`): each of those scripts' year loops is embarrassingly
+parallel (every year reads its own `opprcd{year}.parquet`/`secprd{year}.parquet`, independently of
+every other year), so `--jobs > 1` scans several years at once in separate worker processes,
+using more of the box's CPU cores/RAM per stage. The default is capped rather than set to every
+core, because on this dev machine those years all compete for one physical external drive's I/O --
+raise `--jobs` explicitly once a machine's actual storage (e.g. the 5090's local NVMe) is known to
+tolerate more concurrent readers.
+
 ### Data portability: the OptionMetrics drive itself never moves data, only itself
 
 The OptionMetrics IvyDB extract lives permanently on one external drive and is never copied
@@ -577,16 +588,25 @@ Physical access to the 5090 is limited to short windows, and the real Tier 3/4 r
 run for days between check-ins. Every stage script is therefore built resumable and checkpointed
 rather than "run once, all or nothing":
 
-- Scripts 35/36/41 write one output file **per year** and skip a year whose output file already
-  exists on restart (see the resume check at the top of each year's loop) -- a crash or reboot
-  loses at most the year in progress, not the whole run.
+- Scripts 35/36/41/47/47b/49 write one output file **per year** and skip a year whose output file
+  already exists on restart -- a crash or reboot loses at most the year(s) in progress, not the
+  whole run. Each of these scripts now also parallelizes its own year loop across `--jobs` worker
+  processes (`scripts/options_strategy/lib/hw.py` picks a default; override explicitly on a
+  machine whose OM drive can serve more concurrent readers than this project's single external
+  HDD).
 - `scripts/options_strategy/lib/gpu.py`'s `StageTimer` records start/done/failed + elapsed time for every stage to
-  `logs/pipeline_status.json` (`common.paths.LOGS_DIR`, repo-root-relative), so checking in after a
-  few days means reading one small JSON file, not scrolling raw stdout.
-- `scripts/options_strategy/run_pipeline.py` is the single command to kick off before walking
-  away: it runs every stage in order, skips a stage whose declared output already exists, and is
-  safe to run under `tmux`/`nohup` so a dropped SSH session (or none at all -- physical-access-only
-  is fine too) doesn't kill the run.
+  `logs/pipeline_status.json` (`common.paths.LOGS_DIR`, repo-root-relative; cross-process-locked so
+  concurrent stages don't race on it), so checking in after a few days means reading one small JSON
+  file, not scrolling raw stdout.
+- `scripts/options_strategy/run_pipeline.py` is THE single command to kick off before walking
+  away: it's not just a sequential runner, it's a hardware-aware SCHEDULER that reads the real
+  dependency graph across all 16 stages (35-52) and runs everything that can run concurrently at
+  once instead of one stage at a time -- CPU-only stages alongside the one GPU-bound stage that's
+  allowed to run at a time, OM-scan stages capped by `--io-parallel` (disk-bound, so this defaults
+  to 1 rather than assuming the drive tolerates concurrent readers), all auto-tuned to the box's
+  actual CPU core count/RAM/VRAM (`--dry-run` previews the schedule without running anything). It
+  skips a stage whose declared output already exists, and is safe to run under `tmux`/`nohup` so a
+  dropped SSH session (or none at all -- physical-access-only is fine too) doesn't kill the run.
 
 **5090 box setup, once physical/SSH access is available (roughly 15 minutes of actual hands-on
 time):**
@@ -595,8 +615,14 @@ git clone <this repo's remote> && cd PEAD_Trading
 pip install -r requirements.txt -r requirements-gpu.txt
 export OPTIONMETRICS_DIR=/path/where/the/drive/mounted/parquet   # after plugging in the drive
 tmux new -s pead                                                 # survive a dropped connection
-python scripts/options_strategy/run_pipeline.py                  # walk away; check back in days
+python scripts/options_strategy/run_pipeline.py --device cuda    # walk away; check back in days
 ```
+Add `--io-parallel N` if the 5090's storage (local NVMe, not this project's external HDD) can
+genuinely serve N OM-scan stages at once, and `--jobs N` / `--cpu-parallel N` to raise the
+per-stage and cross-stage worker counts beyond their conservative auto-detected defaults once
+you've confirmed the box handles it. `python scripts/options_strategy/run_pipeline.py --dry-run`
+previews the full schedule (what would run, skip, or block, and in what concurrency) from any
+machine, no GPU or data required.
 
 ## Equity-strategy GPU roadmap
 

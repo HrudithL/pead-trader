@@ -27,6 +27,7 @@ import pandas as pd
 
 from common.gpu import (  # noqa: F401 -- re-exported for `from lib.gpu import ...` call sites
     get_backend, to_host, add_device_arg, add_smoke_test_arg, StageTimer, stage_done, STATUS_PATH,
+    _status_file_lock, _load_status, _save_status,
 )
 
 
