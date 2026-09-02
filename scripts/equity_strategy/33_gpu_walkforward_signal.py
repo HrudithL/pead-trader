@@ -215,8 +215,13 @@ def main():
             if fold_path.exists() and not args.force:
                 print(f"[fold {fold_year}] already done, skipping")
                 fold_df = pd.read_parquet(fold_path)
-                fold_summaries.append(dict(fold_year=fold_year, n_train=None, n_test=len(fold_df),
-                                            ic=None, loss=None, skipped_resume=True))
+                # older checkpoints (written before this fix) won't carry _n_train/_ic/_loss --
+                # fall back to None for those rather than erroring.
+                n_train_r = int(fold_df["_n_train"].iloc[0]) if "_n_train" in fold_df.columns and len(fold_df) else None
+                ic_r = float(fold_df["_ic"].iloc[0]) if "_ic" in fold_df.columns and len(fold_df) else None
+                loss_r = float(fold_df["_loss"].iloc[0]) if "_loss" in fold_df.columns and len(fold_df) else None
+                fold_summaries.append(dict(fold_year=fold_year, n_train=n_train_r, n_test=len(fold_df),
+                                            ic=ic_r, loss=loss_r, skipped_resume=True))
                 continue
 
             # embargo, not just a year cutoff: a training event whose holding-period label
@@ -245,8 +250,14 @@ def main():
             ic = spearman_ic(ml_score_raw, test_df["fwd_realized_ret"].to_numpy())
 
             fold_df = pd.DataFrame({
-                "event_id": test_df["event_id"].to_numpy(), "ann_quarter": test_df["ann_quarter"].to_numpy(),
+                "event_id": test_df["event_id"].to_numpy(), "event_uid": test_df["event_uid"].to_numpy(),
+                "ann_quarter": test_df["ann_quarter"].to_numpy(),
                 "fold_year": fold_year, "ml_score_raw": ml_score_raw,
+                # constant-per-fold diagnostics, carried so a RESUMED run (fold_path already
+                # exists) can still report this fold's n_train/ic/loss in
+                # equity_walkforward_summary.json instead of losing them to None -- dropped again
+                # before these per-fold checkpoints are concatenated into equity_ml_signal.parquet.
+                "_n_train": len(train_df), "_ic": ic, "_loss": loss,
             })
             fold_df.to_parquet(fold_path, index=False)
             print(f"[fold {fold_year}] n_train={len(train_df):,} n_test={len(test_df):,} "
@@ -258,11 +269,14 @@ def main():
         if not all_folds:
             raise RuntimeError("no walk-forward folds produced any predictions -- check "
                                 "--warmup-years / --min-train-events against the data available")
-        signal = pd.concat([pd.read_parquet(p) for p in all_folds], ignore_index=True)
+        _diag_cols = ["_n_train", "_ic", "_loss"]
+        _fold_frames = [pd.read_parquet(p) for p in all_folds]
+        _fold_frames = [f.drop(columns=[c for c in _diag_cols if c in f.columns]) for f in _fold_frames]
+        signal = pd.concat(_fold_frames, ignore_index=True)
         signal["ml_rank_pct"] = signal.groupby("ann_quarter")["ml_score_raw"].rank(pct=True)
         signal_path = DATA / "equity_ml_signal.parquet"
         signal.to_parquet(signal_path, index=False)
-        mark_mock_output(signal_path, is_mock=args.mock_data)
+        mark_mock_output(signal_path, is_mock=args.mock_data, is_smoke=args.smoke_test)
         print(f"wrote {signal_path} ({len(signal):,} scored events across {len(all_folds)} folds)")
 
         real_ics = [f["ic"] for f in fold_summaries if f["ic"] is not None and not np.isnan(f["ic"])]

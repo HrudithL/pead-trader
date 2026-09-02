@@ -52,8 +52,11 @@ def load_inputs(args):
 
     print("loading equity_feature_panel.parquet + equity_ml_signal.parquet...")
     pos = pd.read_parquet(DATA / "equity_feature_panel.parquet")
-    ml = pd.read_parquet(DATA / "equity_ml_signal.parquet", columns=["event_id", "ml_rank_pct"])
-    pos = pos.merge(ml, on="event_id", how="inner")
+    ml = pd.read_parquet(DATA / "equity_ml_signal.parquet", columns=["event_uid", "ml_rank_pct"])
+    # merge on event_uid, not event_id -- see 34_gpu_param_sweep.py's load_inputs for why.
+    n_before = len(pos)
+    pos = pos.merge(ml, on="event_uid", how="inner")
+    assert len(pos) <= n_before, "ml_rank_pct merge fanned out -- event_uid unexpectedly non-unique"
     pos = pos.dropna(subset=["entry_row_idx", "exit_row_idx"]).reset_index(drop=True)
     pos["entry_row_idx"] = pos["entry_row_idx"].astype(int)
     pos["exit_row_idx"] = pos["exit_row_idx"].astype(int)
@@ -183,7 +186,8 @@ def main():
         pos_out["weight"] = weight
         pos_out = pos_out[pos_out["weight"] != 0].reset_index(drop=True)
         pos_out.to_parquet(DATA / "positions_strategy8_v2.parquet", index=False)
-        mark_mock_output(DATA / "positions_strategy8_v2.parquet", is_mock=args.mock_data)
+        mark_mock_output(DATA / "positions_strategy8_v2.parquet", is_mock=args.mock_data,
+                          is_smoke=args.smoke_test)
 
         entry_costs = np.abs(notional) * (cost_bps / 10_000.0)
         exit_costs = entry_costs.copy()
@@ -213,7 +217,8 @@ def main():
                              "gross_exposure": gross_exposure, "n_open_positions": n_open,
                              "turnover_dollars": turnover_dollars, "daily_return": daily_ret})
         out.to_csv(DATA / "backtest_v2_strategy8.csv", index=False)
-        mark_mock_output(DATA / "backtest_v2_strategy8.csv", is_mock=args.mock_data)
+        mark_mock_output(DATA / "backtest_v2_strategy8.csv", is_mock=args.mock_data,
+                          is_smoke=args.smoke_test)
         pd.DataFrame(quarter_log).to_csv(DATA / "backtest_v2_strategy8_quarterlog.csv", index=False)
 
         years = n_days / 252.0
@@ -243,7 +248,8 @@ def main():
         )
         with open(DATA / "backtest_v2_strategy8_summary.json", "w") as f:
             json.dump(summary, f, indent=2)
-        mark_mock_output(DATA / "backtest_v2_strategy8_summary.json", is_mock=args.mock_data)
+        mark_mock_output(DATA / "backtest_v2_strategy8_summary.json", is_mock=args.mock_data,
+                          is_smoke=args.smoke_test)
         print(f"strategy8: ann.ret={ann_ret:.2%} ann.vol={ann_vol:.2%} Sharpe={sharpe:.3f} "
               f"maxDD={max_dd:.2%} final_nav=${nav[-1]:,.0f}")
 

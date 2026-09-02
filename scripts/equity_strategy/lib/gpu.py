@@ -7,6 +7,7 @@ scripts/options_strategy/lib/gpu.py's structure exactly: the device backend, --d
 the synthetic daily-panel/position generators that let every stage below be built and
 smoke-tested without data/normalized_equity/ or data/positions_rankweighted_v2.parquet on hand.
 """
+import json
 from pathlib import Path
 
 import numpy as np
@@ -17,14 +18,17 @@ from common.gpu import (  # noqa: F401 -- re-exported for `from lib.gpu import .
 )
 
 
-def mark_mock_output(path, is_mock: bool):
+def mark_mock_output(path, is_mock: bool, is_smoke: bool = False):
     """Sidecar marker (<path>.mock) recording whether a declared stage output was produced by a
-    --mock-data run. run_pipeline.py's resume/skip check reads this so a REAL run never mistakes
-    a mock run's output (written to the exact same real path, e.g. equity_feature_panel.parquet)
-    for a genuine completed stage and silently skips re-running it against real data."""
+    --mock-data and/or --smoke-test run. --smoke-test shrinks 33's MLP/warmup settings and 34's
+    search grid even against REAL data, so a real --smoke-test run's output is just as unsafe to
+    silently reuse for a full real run as a --mock-data run's is. run_pipeline.py's resume/skip
+    check reads this marker so a genuine full run (mock_data=False, smoke_test=False) never
+    mistakes a reduced-fidelity run's output (written to the exact same real path, e.g.
+    equity_feature_panel.parquet) for a completed full stage."""
     marker = Path(str(path) + ".mock")
-    if is_mock:
-        marker.touch()
+    if is_mock or is_smoke:
+        marker.write_text(json.dumps({"mock": is_mock, "smoke": is_smoke}))
     elif marker.exists():
         marker.unlink()
 
@@ -125,7 +129,8 @@ def make_mock_equity_positions(eq_ret, eq_permno, eq_date, calendar, n_days_per_
     event_id = pd.Series(permno).astype(str) + "_" + day0_date.strftime("%Y%m%d")
 
     return pd.DataFrame({
-        "event_id": event_id, "permno": permno, "day0_date": day0_date, "exit_date": exit_date,
+        "event_id": event_id, "event_uid": np.arange(n_events),
+        "permno": permno, "day0_date": day0_date, "exit_date": exit_date,
         "entry_row_idx": entry_row_idx, "exit_row_idx": exit_row_idx, "decile": decile,
         "sue_rank_pct": sue_rank_pct, "holding_days": holding_days, "holding_cell": holding_cell,
         "size_quintile": size_quintile, "bm_tercile": bm_tercile, "ff12_sector": ff12_sector,

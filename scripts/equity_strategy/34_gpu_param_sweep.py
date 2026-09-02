@@ -64,8 +64,14 @@ def load_inputs(args):
 
     print("loading equity_feature_panel.parquet + equity_ml_signal.parquet...")
     pos = pd.read_parquet(DATA / "equity_feature_panel.parquet")
-    ml = pd.read_parquet(DATA / "equity_ml_signal.parquet", columns=["event_id", "ml_rank_pct"])
-    pos = pos.merge(ml, on="event_id", how="inner")   # inner: only walk-forward-scored events trade
+    ml = pd.read_parquet(DATA / "equity_ml_signal.parquet", columns=["event_uid", "ml_rank_pct"])
+    # merge on event_uid (a fresh unique-per-row id 32_gpu_feature_panel.py mints), NOT event_id --
+    # event_id (permno + day0_date) is not guaranteed unique upstream (same-day IBES fiscal-quarter
+    # events), so a merge keyed on it risks a Cartesian product that duplicates/cross-associates
+    # predictions between distinct events.
+    n_before = len(pos)
+    pos = pos.merge(ml, on="event_uid", how="inner")   # inner: only walk-forward-scored events trade
+    assert len(pos) <= n_before, "ml_rank_pct merge fanned out -- event_uid unexpectedly non-unique"
     pos = pos.dropna(subset=["entry_row_idx", "exit_row_idx"]).reset_index(drop=True)
     pos["entry_row_idx"] = pos["entry_row_idx"].astype(int)
     pos["exit_row_idx"] = pos["exit_row_idx"].astype(int)
@@ -287,7 +293,7 @@ def main():
         results = pd.DataFrame(rows)
         results_path = DATA / "equity_gpu_sweep_results.csv"
         results.to_csv(results_path, index=False)
-        mark_mock_output(results_path, is_mock=args.mock_data)
+        mark_mock_output(results_path, is_mock=args.mock_data, is_smoke=args.smoke_test)
         print(f"wrote {results_path} ({len(results)} combos)")
 
         valid = results[np.isfinite(results["search_sharpe"])]
@@ -298,7 +304,7 @@ def main():
         best_path = DATA / "equity_gpu_sweep_best.json"
         with open(best_path, "w") as f:
             json.dump(best, f, indent=2, default=str)
-        mark_mock_output(best_path, is_mock=args.mock_data)
+        mark_mock_output(best_path, is_mock=args.mock_data, is_smoke=args.smoke_test)
         print(f"best combo (by search-window Sharpe): {best}")
         print(f"wrote {best_path}")
 

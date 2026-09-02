@@ -46,6 +46,7 @@ import argparse
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -75,7 +76,7 @@ def main():
             pos = make_mock_feature_panel(n_events=n_events, n_permnos=n_permnos, seed=0)
             out_path = DATA / "equity_feature_panel.parquet"
             pos.to_parquet(out_path, index=False)
-            mark_mock_output(out_path, is_mock=True)
+            mark_mock_output(out_path, is_mock=True, is_smoke=args.smoke_test)
             print(f"wrote {out_path} ({len(pos):,} rows, {len(pos.columns)} columns)")
             return
 
@@ -85,6 +86,16 @@ def main():
         pos["entry_row_idx"] = pos["entry_row_idx"].astype(int)
         pos["exit_row_idx"] = pos["exit_row_idx"].astype(int)
         pos["day0_date"] = pd.to_datetime(pos["day0_date"])
+        # event_id (16_positions_v2.py: permno + "_" + day0_date) is NOT guaranteed unique -- a
+        # handful of rows share it across multiple same-day IBES fiscal-quarter events (see
+        # equity_pead/01_build_deciles.py's own comment on this). 33/34/35 all merge frames back
+        # together keyed on the event identifier; a non-unique key there is a real Cartesian-
+        # product risk (duplicating/cross-associating predictions between distinct events), not
+        # just the narrower bm_tercile-merge fan-out already guarded below. event_uid is a fresh
+        # per-ROW integer assigned here, after `pos` is already one row per genuine tradeable
+        # position -- guaranteed unique regardless of what event_id collides on upstream -- and is
+        # carried through 33/34/35 as the actual merge key instead of event_id.
+        pos["event_uid"] = np.arange(len(pos))
 
         print("merging bm_tercile from decile_events_ff_adjusted_extended.parquet...")
         ev_extra = pd.read_parquet(
@@ -145,7 +156,7 @@ def main():
 
         out_path = DATA / "equity_feature_panel.parquet"
         pos.to_parquet(out_path, index=False)
-        mark_mock_output(out_path, is_mock=False)
+        mark_mock_output(out_path, is_mock=False, is_smoke=args.smoke_test)
         print(f"wrote {out_path} ({len(pos):,} rows, {len(pos.columns)} columns)")
 
 

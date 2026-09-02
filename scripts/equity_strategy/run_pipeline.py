@@ -173,19 +173,27 @@ def build_stages(args):
     return stages
 
 
-def stage_done(s, mock_data):
+def stage_done(s, mock_data, smoke_test):
     if len(s["outputs"]) == 0 or not all(p.exists() for p in s["outputs"]):
         return False
-    if not mock_data:
-        # 32-35's --mock-data path writes synthetic data to these EXACT real output paths (so
-        # --mock-data --smoke-test can validate the real code path with no data/GPU on hand) --
-        # each such write also drops a "<path>.mock" sidecar (lib.gpu.mark_mock_output). A REAL
-        # run must never treat that sidecar's presence as "already done": without this check, a
-        # mock/smoke run followed by a real run (without --force) would silently skip every GPU
-        # stage and report success while data/equity_feature_panel.parquet etc. still held mock
-        # rows -- 35's own comparison-table update guard is the only thing currently preventing a
-        # mock result from reaching backtest_v2_comparison.csv, and it only covers 35's own output.
-        if any(Path(str(p) + ".mock").exists() for p in s["outputs"]):
+    # 32-35's --mock-data and/or --smoke-test paths write reduced-fidelity data to these EXACT
+    # real output paths (synthetic rows under --mock-data; real rows from 33's shrunk MLP/warmup
+    # or 34's tiny search grid under --smoke-test, even against real data) -- each such write also
+    # drops a "<path>.mock" sidecar recording {mock, smoke} (lib.gpu.mark_mock_output). A stage is
+    # only skippable here if its marker (or the absence of one, meaning a genuine full run
+    # produced it before this mechanism existed) EXACTLY matches this run's own (mock_data,
+    # smoke_test) -- otherwise a reduced run followed by a plain real run (without --force) would
+    # silently skip every GPU stage and report success while still holding mock rows or a
+    # smoke-selected combo as if it were the full result.
+    for p in s["outputs"]:
+        marker = Path(str(p) + ".mock")
+        if not marker.exists():
+            continue
+        try:
+            prov = json.loads(marker.read_text())
+        except (json.JSONDecodeError, OSError):
+            return False  # unreadable/legacy marker -- treat conservatively as unsafe to reuse
+        if prov.get("mock", False) != mock_data or prov.get("smoke", False) != smoke_test:
             return False
     return True
 
@@ -288,7 +296,8 @@ def main():
         for s in stages:
             if s["name"] in done or s["name"] not in remaining:
                 continue
-            if not args.force and stage_done(s, args.mock_data) and set(s["deps"]).issubset(done):
+            if not args.force and stage_done(s, args.mock_data, args.smoke_test) and \
+                    set(s["deps"]).issubset(done):
                 print(f"[{s['name']}] output already exists -- skipping")
                 remaining.discard(s["name"])
                 done.add(s["name"])
