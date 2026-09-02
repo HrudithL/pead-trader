@@ -25,11 +25,21 @@ ONLY that fold's training-window mean/std (never the test fold's, and never the 
 the walk-forward point). Target: fwd_realized_ret (each event's own realized market-adjusted
 return over its holding window) -- a genuine regression on real historical outcomes, not a proxy.
 
+Training rows are also purged by LABEL availability, not just announcement year: a prior-year
+event whose holding-period label (fwd_realized_ret, realized only once its position actually
+exits) wouldn't be known yet as of the test fold's start is excluded from that fold's training
+set -- splitting on announcement year alone would otherwise leak January/February test-year
+returns into every fold's training data, since 20-60-day holding windows routinely cross the
+year boundary.
+
 Each fold's predictions are checkpointed to
-data/equity_walkforward_folds/fold_<year>.parquet immediately after that fold trains, and a fold
-whose checkpoint already exists is skipped on re-run (same crash/reboot-safe convention as
-scripts 35/36/41's per-year output files) -- so an interrupted multi-year walk-forward run resumes
-instead of restarting.
+data/equity_walkforward_folds/<config_hash>/fold_<year>.parquet immediately after that fold
+trains, and a fold whose checkpoint already exists is skipped on re-run (same crash/reboot-safe
+convention as scripts 35/36/41's per-year output files) -- so an interrupted multi-year
+walk-forward run resumes instead of restarting. The checkpoint directory is keyed by a hash of
+this run's config (mock_data, n_hidden, n_epochs, lr, l2, warmup_years, min_train_events) so a
+mock/smoke run's folds are never silently reused by a later real run with different
+hyperparameters; --force retrains every fold regardless.
 
 Output: data/equity_ml_signal.parquet (event_id, fold_year, ml_score_raw, ml_rank_pct -- the
 cross-sectional percentile rank of ml_score_raw within its own ann_quarter, so it's on the same
@@ -37,6 +47,7 @@ cross-sectional percentile rank of ml_score_raw within its own ann_quarter, so i
 data/equity_walkforward_summary.json (per-fold information coefficient + train/test counts).
 """
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -51,7 +62,7 @@ from lib.gpu import get_backend, to_host, add_device_arg, add_mock_data_arg, add
     StageTimer, make_mock_feature_panel
 
 DATA = DATA_DIR
-FOLDS_DIR = DATA / "equity_walkforward_folds"
+FOLDS_ROOT = DATA / "equity_walkforward_folds"
 FEATURE_COLS_NUM = ["sue_rank_pct", "size_quintile", "bm_tercile", "liquidity_quintile",
                      "ear", "momentum_12_1", "vol_60d"]
 
@@ -152,6 +163,9 @@ def main():
     parser.add_argument("--l2", type=float, default=1e-4)
     parser.add_argument("--min-train-events", type=int, default=200,
                          help="skip a fold if fewer than this many training events are available")
+    parser.add_argument("--force", action="store_true",
+                         help="retrain every fold even if a checkpoint already exists for this "
+                              "exact run configuration")
     args = parser.parse_args()
     xp, device = get_backend(args.device)
 
@@ -159,6 +173,15 @@ def main():
     n_epochs = 20 if args.smoke_test else args.n_epochs
     warmup_years = 2 if args.smoke_test else args.warmup_years
     min_train = 20 if args.smoke_test else args.min_train_events
+
+    # per-fold checkpoints are keyed by this run's actual config, not just fold_year -- otherwise
+    # a mock/smoke run's fold_<year>.parquet would be silently reused by a later real run (or one
+    # with different --n-hidden/--n-epochs/etc.), corrupting equity_ml_signal.parquet with
+    # predictions from a different model than the one this run reports.
+    config_key = dict(mock_data=args.mock_data, n_hidden=n_hidden, n_epochs=n_epochs,
+                       lr=args.lr, l2=args.l2, warmup_years=warmup_years, min_train=min_train)
+    config_hash = hashlib.sha1(json.dumps(config_key, sort_keys=True).encode()).hexdigest()[:10]
+    FOLDS_DIR = FOLDS_ROOT / config_hash
 
     with StageTimer("33_gpu_walkforward_signal", extra={"device": device, "mock_data": args.mock_data}):
         if args.mock_data:
@@ -171,6 +194,7 @@ def main():
             df = pd.read_parquet(DATA / "equity_feature_panel.parquet")
 
         df["day0_date"] = pd.to_datetime(df["day0_date"])
+        df["exit_date"] = pd.to_datetime(df["exit_date"])
         before = len(df)
         df = df.dropna(subset=FEATURE_COLS_NUM + ["fwd_realized_ret"]).reset_index(drop=True)
         print(f"dropped {before - len(df):,} / {before:,} events missing a feature or label "
@@ -188,14 +212,19 @@ def main():
         fold_summaries = []
         for fold_year in fold_years:
             fold_path = FOLDS_DIR / f"fold_{fold_year}.parquet"
-            if fold_path.exists():
+            if fold_path.exists() and not args.force:
                 print(f"[fold {fold_year}] already done, skipping")
                 fold_df = pd.read_parquet(fold_path)
                 fold_summaries.append(dict(fold_year=fold_year, n_train=None, n_test=len(fold_df),
                                             ic=None, loss=None, skipped_resume=True))
                 continue
 
-            train_df = df[df["year"] < fold_year]
+            # embargo, not just a year cutoff: a training event whose holding-period label
+            # (fwd_realized_ret) wasn't yet realized as of this fold's test-year start would leak
+            # test-period information into training, since 20-60-day holding windows routinely
+            # cross the year boundary.
+            fold_start = pd.Timestamp(year=fold_year, month=1, day=1)
+            train_df = df[(df["year"] < fold_year) & (df["exit_date"] < fold_start)]
             test_df = df[df["year"] == fold_year]
             if len(train_df) < min_train or len(test_df) == 0:
                 print(f"[fold {fold_year}] skipped: n_train={len(train_df)}, n_test={len(test_df)} "
@@ -237,7 +266,7 @@ def main():
 
         real_ics = [f["ic"] for f in fold_summaries if f["ic"] is not None and not np.isnan(f["ic"])]
         summary = dict(device=device, mock_data=args.mock_data, n_hidden=n_hidden, n_epochs=n_epochs,
-                        warmup_years=warmup_years, n_folds=len(fold_summaries),
+                        warmup_years=warmup_years, config_hash=config_hash, n_folds=len(fold_summaries),
                         mean_test_ic=float(np.mean(real_ics)) if real_ics else None,
                         folds=fold_summaries)
         with open(DATA / "equity_walkforward_summary.json", "w") as f:

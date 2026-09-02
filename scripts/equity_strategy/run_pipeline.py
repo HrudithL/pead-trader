@@ -74,6 +74,12 @@ def build_stages(args):
     if args.smoke_test:
         gpu_common += ["--smoke-test"]
         tail_common += ["--smoke-test"]
+    # 33_gpu_walkforward_signal.py checkpoints per fold under a config-hashed directory of its
+    # own (see that script) -- this top-level --force only bypasses run_pipeline.py's OWN
+    # "output already exists" skip unless it's also threaded down to that inner check.
+    walkforward_extra = list(gpu_common)
+    if args.force:
+        walkforward_extra += ["--force"]
 
     stages = []
     if not args.mock_data:
@@ -137,8 +143,9 @@ def build_stages(args):
                 stage("30_build_strategy_showcase_report", "30_build_strategy_showcase_report.py", [],
                       deps=["17_backtest_v2", "20_strategy4_tilted", "23_finalize_strategy5",
                             "24_finalize_strategy6", "25_strategy6_beta_overlay",
-                            "26_strategy7_unconstrained_netexposure"]),
-                stage("31_build_development_report", "31_build_development_report.py", []),
+                            "26_strategy7_unconstrained_netexposure", "29_v2_strategy_charts"]),
+                stage("31_build_development_report", "31_build_development_report.py", [],
+                      deps=["29_v2_strategy_charts"]),
             ]
 
     gpu_deps = [] if args.mock_data else ["16_positions_v2"]
@@ -146,14 +153,22 @@ def build_stages(args):
         stage("32_gpu_feature_panel", "32_gpu_feature_panel.py", "equity_feature_panel.parquet",
               deps=gpu_deps, extra_args=gpu_common, gpu=True),
         stage("33_gpu_walkforward_signal", "33_gpu_walkforward_signal.py", "equity_ml_signal.parquet",
-              deps=["32_gpu_feature_panel"], extra_args=gpu_common, gpu=True),
+              deps=["32_gpu_feature_panel"], extra_args=walkforward_extra, gpu=True),
         stage("34_gpu_param_sweep", "34_gpu_param_sweep.py",
               ["equity_gpu_sweep_results.csv", "equity_gpu_sweep_best.json"],
               deps=["32_gpu_feature_panel", "33_gpu_walkforward_signal"], extra_args=gpu_common, gpu=True),
+        # 35 reads and rewrites backtest_v2_comparison.csv (strategies 1-6's summary files) in its
+        # non-mock path, so on a real run it must also wait for 24_finalize_strategy6 (which
+        # itself transitively waits on 17/20/23) -- otherwise a concurrent run could have 35 read
+        # stale/still-being-written summaries, or have 24 overwrite 35's comparison file afterward
+        # and silently drop Strategy 8 from it. Not needed under --mock-data: that path returns
+        # before ever touching backtest_v2_comparison.csv, and 11-31 aren't even in `stages` then.
         stage("35_finalize_strategy8", "35_finalize_strategy8.py",
               ["positions_strategy8_v2.parquet", "backtest_v2_strategy8.csv",
                "backtest_v2_strategy8_summary.json"],
-              deps=["34_gpu_param_sweep"], extra_args=tail_common),
+              deps=(["34_gpu_param_sweep"] if args.mock_data
+                    else ["34_gpu_param_sweep", "24_finalize_strategy6"]),
+              extra_args=tail_common),
     ]
     return stages
 
@@ -246,12 +261,26 @@ def main():
     gpu_running = False
     gpu_lock = Lock()
 
-    for s in stages:
-        if not args.force and stage_done(s):
-            print(f"[{s['name']}] output already exists -- skipping")
-            remaining.discard(s["name"])
-            done.add(s["name"])
-            status[s["name"]] = {"state": "skipped_already_done"}
+    # A stage's own declared outputs already existing is NOT enough to skip it: some stages share
+    # an output file with an earlier stage that overwrites/corrects it (14_daily_decay and
+    # 15_decay_days_v2 both declare cell_decay_days.csv -- 14 writes a preliminary version, 15
+    # writes the corrected one). On a fresh checkout, that file being tracked in git while 14's
+    # OTHER output (event_cells.parquet) is absent would otherwise mark 15 "already done" before
+    # 14 -- which is about to overwrite the shared file with 14's preliminary version -- ever
+    # runs. So a stage is only skippable here if EVERY dependency is also skippable this same way
+    # (computed to a fixpoint, since a stage can depend on another stage that depends on another).
+    progress = True
+    while progress:
+        progress = False
+        for s in stages:
+            if s["name"] in done or s["name"] not in remaining:
+                continue
+            if not args.force and stage_done(s) and set(s["deps"]).issubset(done):
+                print(f"[{s['name']}] output already exists -- skipping")
+                remaining.discard(s["name"])
+                done.add(s["name"])
+                status[s["name"]] = {"state": "skipped_already_done"}
+                progress = True
     _write_status(status)
 
     t_start = time.time()

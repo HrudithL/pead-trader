@@ -12,9 +12,11 @@ a batched GPU kernel with zero changes -- see `compute_trailing_features` below.
 
 Features added on top of what positions_rankweighted_v2.parquet already carries:
   - ear               announcement-day return (day0's own realized return, mkt-adjusted) --
-                       reused directly from decile_events_ff_adjusted_extended.parquet's
-                       ret_fwd_1d_mktadj field, the exact leak-free definition
-                       27_ear_signal_diagnostic.py's docstring documents fixing.
+                       computed as eq_ret[entry_row_idx], the SAME leak-free definition
+                       27_ear_signal_diagnostic.py's docstring documents (day0's own return, fully
+                       realized before day0+1 trading begins -- NOT ret_fwd_1d_mktadj, which is
+                       the day0->day0+1 return and overlaps the position's own first day of held
+                       P&L, the exact bug that diagnostic documents fixing).
   - bm_tercile         book-to-market tercile, merged in from the same extended event file
                        (already computed upstream, just never carried into the position files).
   - momentum_12_1      classic 12-month-minus-1-month momentum: cumulative return over the 252
@@ -83,13 +85,25 @@ def main():
         pos["exit_row_idx"] = pos["exit_row_idx"].astype(int)
         pos["day0_date"] = pd.to_datetime(pos["day0_date"])
 
-        print("merging bm_tercile + EAR from decile_events_ff_adjusted_extended.parquet...")
+        print("merging bm_tercile from decile_events_ff_adjusted_extended.parquet...")
         ev_extra = pd.read_parquet(
             DATA / "decile_events_ff_adjusted_extended.parquet",
-            columns=["permno", "day0_date", "bm_tercile", "ret_fwd_1d_mktadj"])
+            columns=["permno", "day0_date", "bm_tercile"])
         ev_extra["day0_date"] = pd.to_datetime(ev_extra["day0_date"])
-        ev_extra = ev_extra.rename(columns={"ret_fwd_1d_mktadj": "ear"})
+        # (permno, day0_date) is not a unique key upstream -- a handful of rows share it across
+        # multiple same-day IBES fiscal-quarter events (see equity_pead/01_build_deciles.py's own
+        # comment on this), and that non-uniqueness survives into this file since the dedup applied
+        # there only covers the `feat` classification table, not decile_events*. A merge on that key
+        # would silently fan out `pos` (and, since pos is 1 row per tradeable event already, cause
+        # duplicate/cross-associated rows downstream in 34/35's event_id merges). Collapse to one
+        # bm_tercile per (permno, day0_date) before merging -- this feature only needs a value per
+        # key, not per underlying event -- and verify the merge stays 1:1.
+        ev_extra = ev_extra.drop_duplicates(subset=["permno", "day0_date"], keep="first")
+        n_before = len(pos)
         pos = pos.merge(ev_extra, on=["permno", "day0_date"], how="left")
+        assert len(pos) == n_before, (
+            f"bm_tercile merge changed row count ({n_before} -> {len(pos)}) -- "
+            "decile_events_ff_adjusted_extended.parquet has an unexpectedly non-unique key")
 
         print("loading daily market-adjusted return panel...")
         frames = []
@@ -104,6 +118,11 @@ def main():
             subset=["permno", "date"]).reset_index(drop=True)
         eq_ret = eq["ret_mktadj"].to_numpy()
         eq_permno = eq["permno"].to_numpy()
+
+        # leak-free EAR: the announcement day's OWN return (day0 itself, at entry_row_idx), fully
+        # realized before day0+1 trading begins -- same definition 27_ear_signal_diagnostic.py's
+        # corrected Part 2 uses (`day0_own_ret = eq_ret[pos["entry_row_idx"].to_numpy()]`).
+        pos["ear"] = eq_ret[pos["entry_row_idx"].to_numpy()]
 
         print(f"computing trailing momentum/volatility features on {device} for {len(pos):,} events...")
         eq_ret_xp = xp.asarray(eq_ret)

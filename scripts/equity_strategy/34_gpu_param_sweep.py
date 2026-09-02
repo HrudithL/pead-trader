@@ -156,14 +156,34 @@ def simulate_batch(xp, weight, cal, buf_grid, lev_grid, liq_cap_dollars_np, cost
             gross_requested = xp.abs(target).sum(axis=1)                          # (n_combos,)
             max_gross = lev_arr * trailing_nav                                    # (n_combos,)
 
+            # priority-capped allocation, matching 35_finalize_strategy8.py's convention exactly:
+            # positions are kept in |target| priority order up to max_gross, and the ONE boundary
+            # position that would cross the cap is PARTIALLY filled with whatever capacity remains
+            # (not dropped outright) -- otherwise the sweep ranks combos by a different, more
+            # conservative portfolio than the one 35 actually finalizes at the selected combo.
+            n_idx = target.shape[1]
             order = xp.argsort(-xp.abs(target), axis=1)
             sorted_abs = xp.take_along_axis(xp.abs(target), order, axis=1)
+            sorted_signed = xp.take_along_axis(target, order, axis=1)
             cum = xp.cumsum(sorted_abs, axis=1)
             keep_sorted = cum <= max_gross[:, None]
+            n_kept = keep_sorted.sum(axis=1)                                  # (n_combos,)
+            n_kept_clamped = xp.clip(n_kept - 1, 0, n_idx - 1)
+            cum_before = xp.take_along_axis(cum, n_kept_clamped[:, None], axis=1)[:, 0]
+            cum_before = xp.where(n_kept > 0, cum_before, 0.0)
+            remaining = xp.maximum(max_gross - cum_before, 0.0)              # (n_combos,)
+            has_boundary = n_kept < n_idx
+            boundary_idx = xp.clip(n_kept, 0, n_idx - 1)
+            col_idx = xp.arange(n_idx)[None, :]
+            is_boundary_col = ((col_idx == boundary_idx[:, None]) & has_boundary[:, None]
+                                & (remaining[:, None] > 0))
+            partial_fill = xp.sign(sorted_signed) * xp.minimum(sorted_abs, remaining[:, None])
+            q_notional_sorted = xp.where(keep_sorted, sorted_signed,
+                                          xp.where(is_boundary_col, partial_fill, 0.0))
             inv_order = xp.argsort(order, axis=1)
-            keep_mask = xp.take_along_axis(keep_sorted, inv_order, axis=1)
+            q_notional_capped = xp.take_along_axis(q_notional_sorted, inv_order, axis=1)
             need_cap = (gross_requested > max_gross)[:, None]
-            q_notional = xp.where(need_cap, xp.where(keep_mask, target, 0.0), target)
+            q_notional = xp.where(need_cap, q_notional_capped, target)
 
             idx_np = to_host(xp, idx).astype(int)
             notional[:, idx_np] = q_notional
