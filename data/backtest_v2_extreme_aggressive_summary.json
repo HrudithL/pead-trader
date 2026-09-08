@@ -1,0 +1,23 @@
+{
+  "name": "extreme_aggressive",
+  "base_unit_fraction": 0.009000000000000001,
+  "liquidity_cap_frac": 0.05,
+  "max_gross_leverage": 6.0,
+  "n_positions": 34343,
+  "total_return": 4.8861263350082895,
+  "annualized_return": 0.09528389560265871,
+  "annualized_vol": 0.12241865800582463,
+  "sharpe": 0.8048898061190969,
+  "max_drawdown": -0.36200826270463426,
+  "avg_gross_exposure": 90903683.4043176,
+  "avg_leverage_vs_initial_capital": 9.09036834043176,
+  "avg_n_open_positions": 457.78932355338225,
+  "max_n_open_positions": 825,
+  "total_transaction_costs": 12287333.995262038,
+  "annual_turnover_x_capital": 78.5682522583269,
+  "pct_liquidity_capped": 0.5175144862126198,
+  "final_nav": 58861263.3500829,
+  "n_quarters_leverage_capped": 0,
+  "total_positions_dropped_by_priority_cap": 0,
+  "correlation_to_market": 0.07885381532548875
+}

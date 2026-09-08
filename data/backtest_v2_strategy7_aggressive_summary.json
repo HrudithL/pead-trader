@@ -1,0 +1,23 @@
+{
+  "name": "strategy7_aggressive",
+  "base_unit_fraction": 0.006,
+  "liquidity_cap_frac": 0.05,
+  "max_gross_leverage": 6.0,
+  "n_positions": 119130,
+  "total_return": 7.745131250659768,
+  "annualized_return": 0.11777592275203719,
+  "annualized_vol": 0.11846846488284447,
+  "sharpe": 0.9993121229155896,
+  "max_drawdown": -0.32971575854559537,
+  "avg_gross_exposure": 131759920.92599487,
+  "avg_leverage_vs_initial_capital": 13.175992092599488,
+  "avg_n_open_positions": 1406.0562347188263,
+  "max_n_open_positions": 2586,
+  "total_transaction_costs": 20288248.36467658,
+  "annual_turnover_x_capital": 119.51496764088466,
+  "pct_liquidity_capped": 0.18144912493152265,
+  "final_nav": 87451312.50659768,
+  "n_quarters_leverage_capped": 0,
+  "total_positions_dropped_by_priority_cap": 0,
+  "correlation_to_market": 0.6646895536111563
+}

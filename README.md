@@ -69,6 +69,47 @@ running it for real, and adding its row to this table, is the next step on a mac
    higher return (10-15%, matching equity-market-like targets) is achievable, built from actual
    findings rather than more parameter tuning. See below.
 
+## Aggressive variants: trading Sharpe for more absolute return
+
+Every strategy above was tuned toward the best *risk-adjusted* outcome, not the highest return
+achievable. `scripts/equity_strategy/36_aggressive_variants.py` and
+`scripts/equity_strategy/37_aggressive_beta_overlay.py` ask a different, explicit question for each
+of the 8 designs: keeping the exact same signal, trim, tilt, and size/sector neutrality, how much
+more return is available by pushing only the two dials that control how big and how levered the
+book is (`base_unit_fraction`, the gross-leverage cap), real-backtested on the same 1996-2013 data
+-- not estimated? `base_unit_fraction` was swept from 1.5x to 12x each strategy's own original
+value with the leverage cap held at a realistic 6x institutional ceiling (the untouched 5%-of-ADV
+liquidity cap remains the real capacity constraint throughout), and the candidate maximizing
+annualized return was picked subject to Sharpe >= 0.6 *and* max drawdown >= -40% (a >40% drawdown
+being treated as a fund-ending event, not a tunable risk preference).
+
+| Strategy | Ann. Return | Ann. Vol | Sharpe | Max DD |
+|---|---|---|---|---|
+| Extreme decile L/S -- Aggressive | 9.53% | 12.24% | 0.80 | -36.2% |
+| Rank-weighted -- Aggressive | 10.84% | 12.40% | 0.89 | -38.8% |
+| Balanced -- Aggressive | 8.45% | 12.26% | 0.72 | -37.5% |
+| Strategy 4 -- Aggressive | 10.70% | 12.25% | 0.89 | -40.0% |
+| Strategy 5 -- Aggressive | 12.15% | 12.20% | 1.00 | -36.5% |
+| Strategy 6 -- Aggressive | 12.15% | 12.20% | 1.00 | -36.5% |
+| Strategy 6 + beta overlay -- Aggressive | 15.01% | 13.70% | 1.09 | -37.0% |
+| Strategy 7 -- Aggressive | 11.78% | 11.85% | 1.00 | -33.0% |
+
+**The realistic constraint turned out to be drawdown tolerance, not Sharpe.** For every design
+except the beta overlay, the -40% drawdown floor binds before Sharpe actually falls to 0.6 --
+meaning every aggressive variant's Sharpe (0.72-1.09) is better than the floor the search was
+willing to accept, while annualized return roughly doubles or more versus its own baseline in every
+case. Two findings worth calling out on their own: **Strategy 5 Aggressive and Strategy 6
+Aggressive converge to the identical configuration** (they share the exact same weight
+construction; Strategy 6's only edge over Strategy 5 was a higher starting leverage baseline, which
+evaporates once both search up to the same realistic ceiling); and **the aggressive beta-overlay
+variant gets its entire improvement from a bigger alpha book, not a bigger overlay** -- a sweep of
+the overlay multiplier itself found that raising it past the original 0.5x immediately breaches the
+-40% drawdown floor, so the aggressive variant keeps the same 0.5x overlay and simply layers it on
+Strategy 6 Aggressive's own NAV series instead of baseline Strategy 6's (Sharpe actually
+*improves*, 0.97->1.09). Full methodology, the sizing-sweep chart, and caveats (liquidity-cap bite
+roughly quadruples at this sizing) are in `PEAD_Strategy_Showcase.pdf`'s "Aggressive variants"
+section; `scripts/equity_strategy/38_aggressive_charts.py` builds the supporting figures.
+
 ## Why the strategy's return trails the S&P 500, and what actually closes the gap
 
 Every strategy above uses market-adjusted returns and (mostly) dollar-neutral long/short
@@ -248,6 +289,16 @@ Each v2 backtest script writes `data/backtest_v2_<name>.csv` (daily NAV/exposure
 30_build_strategy_showcase_report.py    # reports/PEAD_Strategy_Showcase.pdf -- performance
 31_build_development_report.py          # reports/PEAD_Strategy_Development.pdf -- the "why"
 ```
+**Aggressive variants (same 8 designs, sized for more return -- see "Aggressive variants" above),
+locally runnable, in `equity_strategy/`:**
+```
+36_aggressive_variants.py               # sizing/leverage sweep + finalize, 7 of the 8 designs
+37_aggressive_beta_overlay.py           # aggressive Strategy 6+beta overlay (needs 36 run first)
+38_aggressive_charts.py                 # baseline-vs-aggressive NAV/comparison/sizing-sweep charts
+```
+Their output feeds back into `30_build_strategy_showcase_report.py` (its own "Aggressive variants"
+section), `31_build_development_report.py` (Stage 6), and `scripts/build_strategies_overview_report.py`
+-- rerun those three after `36`-`38` to refresh all three PDFs together.
 `scripts/equity_pead/32_build_evidence_report.py` builds `reports/PEAD_Report.pdf` -- does PEAD
 exist (v1 evidence). `scripts/legacy/05_build_pdf.py` (the original, cloud-sandbox-only version of
 the evidence report, including the now-superseded 3-strategy v1 backtest section) is left in place
@@ -335,7 +386,8 @@ Five PDFs in `reports/`, meant to be read in this order:
    study, quarter-clustered significance test, size/book-to-market robustness check, and
    sector/size/era subsampling.
 2. **`PEAD_Strategy_Showcase.pdf`** -- given that it exists, how well did each of the 8 ways of
-   trading it actually perform? Full metrics, NAV curves, drawdowns, and a recommendation.
+   trading it actually perform? Full metrics, NAV curves, drawdowns, a recommendation, and (in its
+   own "Aggressive variants" section) a real-backtested, higher-return/lower-Sharpe variant of each.
 3. **`PEAD_Strategy_Development.pdf`** -- why was each strategy built the way it was? The
    diagnostic reasoning behind each iteration, in plain language, including two deliberate dead
    ends (the EAR signal test and the SUE reversal test).
