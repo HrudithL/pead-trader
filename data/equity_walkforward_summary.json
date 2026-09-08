@@ -1,0 +1,132 @@
+{
+  "device": "cpu",
+  "mock_data": false,
+  "n_hidden": 32,
+  "n_epochs": 300,
+  "warmup_years": 3,
+  "config_hash": "717a4d402d",
+  "n_folds": 15,
+  "mean_test_ic": 0.009520467933528731,
+  "folds": [
+    {
+      "fold_year": "1999",
+      "n_train": 21790,
+      "n_test": 9170,
+      "ic": -0.03772785737225397,
+      "loss": 0.04441283889926835,
+      "skipped_resume": true
+    },
+    {
+      "fold_year": "2000",
+      "n_train": 30900,
+      "n_test": 8563,
+      "ic": -0.052419741411016345,
+      "loss": 0.06367934763858706,
+      "skipped_resume": true
+    },
+    {
+      "fold_year": "2001",
+      "n_train": 39632,
+      "n_test": 8742,
+      "ic": 0.011148772474621873,
+      "loss": 0.0974001029381809,
+      "skipped_resume": true
+    },
+    {
+      "fold_year": "2002",
+      "n_train": 48283,
+      "n_test": 8516,
+      "ic": 0.013227449128596686,
+      "loss": 0.0971989980153903,
+      "skipped_resume": false
+    },
+    {
+      "fold_year": "2003",
+      "n_train": 56786,
+      "n_test": 8515,
+      "ic": 0.05414224904769874,
+      "loss": 0.09502535656132817,
+      "skipped_resume": false
+    },
+    {
+      "fold_year": "2004",
+      "n_train": 65291,
+      "n_test": 9217,
+      "ic": 0.011965821790430218,
+      "loss": 0.09279369044393128,
+      "skipped_resume": false
+    },
+    {
+      "fold_year": "2005",
+      "n_train": 74417,
+      "n_test": 9940,
+      "ic": 0.07473203879915127,
+      "loss": 0.08563926545874122,
+      "skipped_resume": false
+    },
+    {
+      "fold_year": "2006",
+      "n_train": 84240,
+      "n_test": 10478,
+      "ic": -0.03352595485071244,
+      "loss": 0.07913678047172484,
+      "skipped_resume": false
+    },
+    {
+      "fold_year": "2007",
+      "n_train": 94535,
+      "n_test": 10987,
+      "ic": 0.022497410496906164,
+      "loss": 0.07337347264951127,
+      "skipped_resume": false
+    },
+    {
+      "fold_year": "2008",
+      "n_train": 105440,
+      "n_test": 11125,
+      "ic": 0.0015904346907553613,
+      "loss": 0.06957979215136002,
+      "skipped_resume": false
+    },
+    {
+      "fold_year": "2009",
+      "n_train": 116469,
+      "n_test": 10685,
+      "ic": 0.01608680179097525,
+      "loss": 0.06900769546810942,
+      "skipped_resume": false
+    },
+    {
+      "fold_year": "2010",
+      "n_train": 127390,
+      "n_test": 10695,
+      "ic": 0.04211993366646969,
+      "loss": 0.07594725206052247,
+      "skipped_resume": false
+    },
+    {
+      "fold_year": "2011",
+      "n_train": 137996,
+      "n_test": 10687,
+      "ic": -0.017496208677218215,
+      "loss": 0.07303871828387759,
+      "skipped_resume": false
+    },
+    {
+      "fold_year": "2012",
+      "n_train": 148668,
+      "n_test": 10677,
+      "ic": -0.01596077220818291,
+      "loss": 0.06996609165438444,
+      "skipped_resume": false
+    },
+    {
+      "fold_year": "2013",
+      "n_train": 159320,
+      "n_test": 10556,
+      "ic": 0.0524266416367096,
+      "loss": 0.06746314509058943,
+      "skipped_resume": false
+    }
+  ]
+}

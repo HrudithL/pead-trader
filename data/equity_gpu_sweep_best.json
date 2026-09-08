@@ -1,0 +1,13 @@
+{
+  "trim": 0.1,
+  "tilt_power": 1.5,
+  "ml_blend_weight": 0.0,
+  "base_unit_fraction": 0.002,
+  "max_gross_leverage": 1.5,
+  "search_ann_ret": 0.0417052544648584,
+  "search_sharpe": 1.1376139308183253,
+  "holdout_ann_ret": 0.01935574259438355,
+  "holdout_sharpe": 0.4239011197048135,
+  "final_nav": 19582356.522697315,
+  "n_positions": 120016.0
+}

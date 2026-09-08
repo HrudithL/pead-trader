@@ -608,21 +608,15 @@ rather than "run once, all or nothing":
   skips a stage whose declared output already exists, and is safe to run under `tmux`/`nohup` so a
   dropped SSH session (or none at all -- physical-access-only is fine too) doesn't kill the run.
 
-**5090 box setup, once physical/SSH access is available (roughly 15 minutes of actual hands-on
-time):**
-```bash
-git clone <this repo's remote> && cd PEAD_Trading
-pip install -r requirements.txt -r requirements-gpu.txt
-export OPTIONMETRICS_DIR=/path/where/the/drive/mounted/parquet   # after plugging in the drive
-tmux new -s pead                                                 # survive a dropped connection
-python scripts/options_strategy/run_pipeline.py --device cuda    # walk away; check back in days
-```
-Add `--io-parallel N` if the 5090's storage (local NVMe, not this project's external HDD) can
-genuinely serve N OM-scan stages at once, and `--jobs N` / `--cpu-parallel N` to raise the
-per-stage and cross-stage worker counts beyond their conservative auto-detected defaults once
-you've confirmed the box handles it. `python scripts/options_strategy/run_pipeline.py --dry-run`
-previews the full schedule (what would run, skip, or block, and in what concurrency) from any
-machine, no GPU or data required.
+**5090 box setup:** see [`GPU_SETUP.md`](GPU_SETUP.md) for the complete path from a bare Linux
+checkout to a running backtest -- getting the code (`git`), getting the data (the physical drive
+now also carries a staged copy of the raw WRDS pull alongside the OptionMetrics extract, via
+`scripts/setup_gpu_box.sh`), the Python environment, and the single command
+(`scripts/run_all_strategies.py`) that builds every equity strategy AND every options tier,
+sequentially, each one given the whole machine -- plus how to read its checkpoint/failure logs if
+the box crashes mid-run. `options_strategy/run_pipeline.py` (below) and `equity_strategy/
+run_pipeline.py` remain available as the per-domain, concurrent-stage schedulers if you want only
+one domain or prefer that concurrency model instead.
 
 ## Equity-strategy GPU roadmap
 
