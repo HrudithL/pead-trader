@@ -380,7 +380,7 @@ those two already-built PDF files are stale until someone reruns them with full 
 
 ## Reports
 
-Five PDFs in `reports/`, meant to be read in this order:
+Six PDFs in `reports/`, meant to be read in this order:
 
 1. **`PEAD_Report.pdf`** -- does the PEAD effect actually exist in this data? Decile-sorted event
    study, quarter-clustered significance test, size/book-to-market robustness check, and
@@ -405,6 +405,13 @@ Five PDFs in `reports/`, meant to be read in this order:
    empirical, walk-forward return distribution (Tier 1.5: 15.31% ann. return, Sharpe 3.56) --
    documents the three real bugs found and fixed getting there, and the GPU compute roadmap
    (Tiers 2-4) built for a dedicated 5090 machine to push further.
+6. **`PEAD_Strategies_Explained.pdf`** (built by `scripts/build_research_paper.py`) -- a
+   plain-language research paper, aimed at a reader with finance background but no interest in the
+   code, that walks through *how* the strategies above actually decide to trade: the exact
+   rank/trim/tilt/neutralize/size decision rule the equity book applies every quarter, the
+   near-ATM and Kelly-optimal contract-selection rules the options book applies to every earnings
+   event, worked numeric examples of each, and what the resulting trades and returns look like --
+   in one document instead of scattered across the other five.
 
 ## Options-strategy GPU roadmap
 
