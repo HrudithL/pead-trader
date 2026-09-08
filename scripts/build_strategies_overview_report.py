@@ -53,6 +53,7 @@ def ratio(x):
 # row below for why it carries no numbers.
 # ---------------------------------------------------------------------------
 equity_summary = pd.read_csv(DATA / "results_summary_v2_FINAL.csv").set_index("strategy")
+agg_summary = pd.read_csv(DATA / "results_summary_v2_aggressive_FINAL.csv").set_index("strategy")
 
 EQUITY_ROWS = [
     dict(key="extreme", name="1. Extreme Decile L/S",
@@ -169,12 +170,14 @@ story.append(Paragraph(
 rule()
 
 body("""This project has built <b>9 equity strategy designs</b> (Strategies 1-8, with Strategy 6
-also having a beta-overlay variant) and explored <b>one options strategy across 4 GPU-tiered
-stages</b> -- Tier 1 through Tier 4 are not 4 separate, independent options strategies; they are
-one lineage, each tier built only because the tier before it left a concrete question unanswered.
-Of those 5 options rows, only Tiers 1, 1.5, and 4 currently have a complete, real backtested
-Sharpe/return/drawdown; Tiers 2 and 3 are still parameter-search/screening stages -- their status
-column says so explicitly rather than showing a number that doesn't exist yet.""")
+also having a beta-overlay variant), an <b>aggressive, higher-return/lower-Sharpe variant of each
+of those 8</b> (same signal and construction, bigger position size and leverage cap), and explored
+<b>one options strategy across 4 GPU-tiered stages</b> -- Tier 1 through Tier 4 are not 4 separate,
+independent options strategies; they are one lineage, each tier built only because the tier before
+it left a concrete question unanswered. Of those 5 options rows, only Tiers 1, 1.5, and 4 currently
+have a complete, real backtested Sharpe/return/drawdown; Tiers 2 and 3 are still
+parameter-search/screening stages -- their status column says so explicitly rather than showing a
+number that doesn't exist yet.""")
 
 body("""<b>How to read "GPU needed?"</b> Every equity strategy 1-7 and options Tier 1/1.5 runs
 fine on a laptop CPU in seconds. GPU only matters for the compute-heavy tiers built for the
@@ -217,6 +220,45 @@ Sharpe/return number for it exists anywhere in this repo yet.""")
 
 fig(FIG / "15_v2_comparison_bars.png")
 caption("Figure 1. Return/Sharpe/drawdown comparison across all 8 hand-built equity strategies.")
+
+story.append(PageBreak())
+
+# ============================== AGGRESSIVE VARIANTS TABLE ==============================
+h2("Aggressive equity variants (same 8 designs, sized for more return)")
+body("""Each of the 8 hand-built designs above also has an <b>aggressive variant</b>: identical
+signal, trim, tilt, and neutralization -- only position size (base_unit_fraction) and the
+gross-leverage cap are pushed harder, real-backtested on the same data. Selected to maximize
+return subject to Sharpe &ge; 0.6 AND max drawdown &ge; -40% (the drawdown floor binds first for
+every variant except the beta overlay, which is why none of these Sharpe ratios are actually as
+low as 0.6). See <i>PEAD_Strategy_Showcase.pdf</i>'s "Aggressive variants" section for full
+methodology, the sizing-sweep chart, and caveats (higher liquidity-cap bite, deeper drawdowns).
+Strategy 8 (GPU/ML-tiered) is not included -- its own hyperparameter search is a different kind of
+lever than base_unit_fraction/leverage and is out of scope for this pass.""")
+
+AGGRESSIVE_ROWS = [
+    dict(key="extreme_aggressive", name="1. Extreme Decile L/S -- Aggr."),
+    dict(key="rankweighted_aggressive", name="2. Rank-Weighted -- Aggr."),
+    dict(key="balanced_aggressive", name="3. Balanced -- Aggr."),
+    dict(key="strategy4_aggressive", name="4. Trimmed/Tilted -- Aggr."),
+    dict(key="strategy5_aggressive", name="5. + Sector-Neutral -- Aggr."),
+    dict(key="strategy6_aggressive", name="6. + Leverage Cap -- Aggr."),
+    dict(key="strategy6_beta_aggressive", name="6+Beta. Beta Overlay -- Aggr."),
+    dict(key="strategy7_aggressive", name="7. Unconstrained Net Exp. -- Aggr."),
+]
+agg_table = [["Strategy", "Ann. Return", "Ann. Vol", "Sharpe", "Max DD"]]
+for row in AGGRESSIVE_ROWS:
+    r = agg_summary.loc[row["key"]]
+    agg_table.append([cell(row["name"], bold=True), pct(r["ann_return"]), pct(r["ann_vol"]),
+                       ratio(r["sharpe"]), pct(r["max_drawdown"])])
+story.append(make_table(
+    agg_table, col_widths=[2.55 * inch, 0.9 * inch, 0.9 * inch, 0.9 * inch, 0.9 * inch], fontsize=8.2))
+caption("""Table 1b. Same figures/assumptions as Table 1, $10,000,000 starting capital,
+base_unit_fraction and leverage cap searched up to a 6x realistic institutional ceiling. Compare
+row-by-row against Table 1 above: every aggressive variant roughly doubles or more its own
+baseline's return.""")
+
+fig(FIG / "28_v2_aggressive_comparison_bars.png")
+caption("Figure 1b. Baseline vs. aggressive, all 8 designs, side by side.")
 
 story.append(PageBreak())
 

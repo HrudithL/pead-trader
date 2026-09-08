@@ -207,7 +207,44 @@ it is a recommended design.""")
 
 story.append(PageBreak())
 
-# ============================== STAGE 6: negative results ==============================
+# ============================== STAGE 6: aggressive variants ==============================
+h2("Stage 6: how far can each design be pushed for more return? -> Aggressive variants")
+body("""Every strategy above was tuned toward the best risk-adjusted outcome, not the highest
+return achievable. A separate question, asked directly rather than inferred: if an investor is
+willing to give up some Sharpe ratio for meaningfully more absolute annual return, what does that
+look like <i>without changing what the strategy actually believes</i> -- same signal, same trim,
+same tilt, same size/sector neutrality? Only the two dials that control how big and how levered the
+book is run -- base_unit_fraction and the gross-leverage cap -- were swept, for each of the 8
+designs, up to a realistic 6x institutional leverage ceiling, with the real 5%-of-ADV liquidity cap
+left untouched throughout as the genuine capacity constraint it is.""")
+
+body("""<b>The diagnostic finding here mirrors Stage 2's rank-weighted lesson from a different
+angle.</b> Just as rank-weighted's extra positions ran into liquidity/leverage caps before adding
+real return, sizing any of these 8 designs up runs into the SAME caps faster than naive scaling
+would suggest: Strategy 6's own sizing sweep (see <i>PEAD_Strategy_Showcase.pdf</i> Figure 6) shows
+annualized return actually <i>peaking</i> around 4x its baseline sizing and declining beyond that
+point, as an ever-larger share of positions get liquidity-capped. The binding constraint chosen
+here was a <b>max drawdown floor of -40%</b> (a deeper drawdown being a fund-ending event, not a
+tunable risk preference) alongside a Sharpe floor of 0.6 -- and for every design except the beta
+overlay, the drawdown floor binds <i>before</i> Sharpe actually reaches 0.6, landing every
+aggressive variant's Sharpe in a 0.72-1.09 band while roughly doubling its own baseline's return.""")
+
+body("""<b>A finding worth calling out on its own: Strategy 5 Aggressive and Strategy 6 Aggressive
+converge to the identical configuration.</b> The two share the exact same weight construction --
+Strategy 6's only difference from Strategy 5 was a higher starting leverage cap and sizing (Stage 4
+above). Once both are allowed to search up to the same 6x ceiling, Strategy 6's original advantage
+disappears entirely: they land on the same base_unit_fraction and the same result. This is a clean
+confirmation, from data rather than assumption, that leverage cap and position size are really one
+underlying dial, not two independent ones -- exactly the kind of result this project's diagnostic
+approach (test the actual mechanism, don't assume it) was built to surface.""")
+
+body("""Full methodology, the complete sizing-sweep chart, per-strategy numbers, and the caveats
+that matter more at this sizing (liquidity-cap bite roughly quadruples; drawdowns deepen to -33% to
+-40%) are in <i>PEAD_Strategy_Showcase.pdf</i>'s "Aggressive variants" section.""")
+
+story.append(PageBreak())
+
+# ============================== NEGATIVE RESULTS ==============================
 h2("Two deliberate dead ends")
 body("""Not every research thread in this project improved the strategy, and both of the following
 are documented rather than quietly dropped, because ruling something out is itself useful
@@ -263,6 +300,8 @@ timeline_rows = [
      "The other way to add exposure -- found to leak far more beta than intended (cautionary)"),
     ("Dead end", "EAR signal blend", "Caught its own look-ahead bug; flat Sharpe once fixed -- not adopted"),
     ("Dead end", "SUE lag-4 reversal test", "Data shows persistence (+0.05), not reversal -- not adopted"),
+    ("6. Aggressive variants", "base_unit_fraction/leverage cap pushed to a 6x ceiling, all 8 designs",
+     "Return roughly doubles per design; a -40% drawdown floor binds before Sharpe reaches 0.6"),
 ]
 timeline = [["Stage", "What changed", "Why"]] + [[cell(s), cell(w), cell(y)] for s, w, y in timeline_rows]
 story.append(make_table(timeline, col_widths=[1.15*inch, 2.35*inch, 2.85*inch], fontsize=8.2))
@@ -270,19 +309,22 @@ story.append(make_table(timeline, col_widths=[1.15*inch, 2.35*inch, 2.85*inch], 
 story.append(Spacer(1, 0.25*inch))
 h2("Where this leaves the project")
 body("""Strategy 6 (pure alpha) and Strategy 6 + 0.5x beta overlay are the two designs recommended
-for live consideration, for the reasons laid out in Stage 5. Full performance numbers for every
-strategy are in <i>PEAD_Strategy_Showcase.pdf</i>; the underlying evidence that the earnings-drift
-effect being traded is real, and not an artifact of risk exposure or a narrow subsample, is in
-<i>PEAD_Report.pdf</i>.""")
+for live consideration, for the reasons laid out in Stage 5; Strategy 6 Aggressive and Strategy
+6+beta Aggressive are the corresponding picks for a mandate that can tolerate a -35% to -40%
+drawdown for roughly double the return (Stage 6). Full performance numbers for every strategy and
+its aggressive variant are in <i>PEAD_Strategy_Showcase.pdf</i>; the underlying evidence that the
+earnings-drift effect being traded is real, and not an artifact of risk exposure or a narrow
+subsample, is in <i>PEAD_Report.pdf</i>.""")
 
 story.append(Spacer(1, 0.3*inch))
 rule()
 caption("""Sources: README.md's documented strategy evolution, data/sweep_strategy4_leverage.csv,
-data/sue_reversal_summary.json, data/sue_reversal_by_decile.csv, and the sector-concentration and
-EAR diagnostics printed by scripts/equity_strategy/21_leverage_and_improvements.py,
+data/sue_reversal_summary.json, data/sue_reversal_by_decile.csv, data/sweep_aggressive_*.csv, and the
+sector-concentration and EAR diagnostics printed by scripts/equity_strategy/21_leverage_and_improvements.py,
 scripts/equity_strategy/22_sector_neutral_and_cadence.py, and scripts/equity_strategy/27_ear_signal_diagnostic.py.
 Scripts: scripts/equity_strategy/20_strategy4_tilted.py through scripts/equity_strategy/28_sue_reversal_test.py,
-scripts/equity_strategy/29_v2_strategy_charts.py, scripts/equity_strategy/31_build_development_report.py.""")
+scripts/equity_strategy/29_v2_strategy_charts.py, scripts/equity_strategy/31_build_development_report.py,
+scripts/equity_strategy/36_aggressive_variants.py, scripts/equity_strategy/37_aggressive_beta_overlay.py.""")
 
 rb.save(OUT, title="From Signal to Strategy: The Development Story")
 print("wrote", OUT)

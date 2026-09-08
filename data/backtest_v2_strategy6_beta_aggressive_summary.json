@@ -1,0 +1,10 @@
+{
+  "name": "strategy6_beta_aggressive_overlay",
+  "overlay_cost_bps": 2.0,
+  "beta_target": 0.5,
+  "annualized_return": 0.15005573987008036,
+  "annualized_vol": 0.1369751519907677,
+  "sharpe": 1.0894575088925291,
+  "max_drawdown": -0.3698196649604117,
+  "final_nav": 152255385.9134822
+}

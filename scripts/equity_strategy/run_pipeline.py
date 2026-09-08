@@ -132,6 +132,16 @@ def build_stages(args):
                   deps=["16_positions_v2"]),
             stage("28_sue_reversal_test", "28_sue_reversal_test.py",
                   ["sue_reversal_summary.json", "sue_reversal_by_decile.csv"]),
+            # Aggressive variants (same 8 designs, sized for more return -- see README's own
+            # "Aggressive variants" section): 36 only needs 16's position files (it recomputes each
+            # strategy's weights itself at pushed sizing/leverage, same as 20/23/24/26 each do), 37
+            # needs 36's own Strategy 6 Aggressive NAV series specifically.
+            stage("36_aggressive_variants", "36_aggressive_variants.py",
+                  ["results_summary_v2_aggressive_FINAL.csv", "backtest_v2_strategy6_aggressive_summary.json"],
+                  deps=["16_positions_v2"]),
+            stage("37_aggressive_beta_overlay", "37_aggressive_beta_overlay.py",
+                  ["backtest_v2_strategy6_beta_aggressive_summary.json"],
+                  deps=["36_aggressive_variants"]),
         ]
         if args.include_reports:
             stages += [
@@ -140,12 +150,18 @@ def build_stages(args):
                             "24_finalize_strategy6", "25_strategy6_beta_overlay",
                             "26_strategy7_unconstrained_netexposure",
                             "21_leverage_and_improvements", "28_sue_reversal_test"]),
+                stage("38_aggressive_charts", "38_aggressive_charts.py", [],
+                      deps=["17_backtest_v2", "20_strategy4_tilted", "23_finalize_strategy5",
+                            "24_finalize_strategy6", "25_strategy6_beta_overlay",
+                            "26_strategy7_unconstrained_netexposure",
+                            "36_aggressive_variants", "37_aggressive_beta_overlay"]),
                 stage("30_build_strategy_showcase_report", "30_build_strategy_showcase_report.py", [],
                       deps=["17_backtest_v2", "20_strategy4_tilted", "23_finalize_strategy5",
                             "24_finalize_strategy6", "25_strategy6_beta_overlay",
-                            "26_strategy7_unconstrained_netexposure", "29_v2_strategy_charts"]),
+                            "26_strategy7_unconstrained_netexposure", "29_v2_strategy_charts",
+                            "36_aggressive_variants", "37_aggressive_beta_overlay", "38_aggressive_charts"]),
                 stage("31_build_development_report", "31_build_development_report.py", [],
-                      deps=["29_v2_strategy_charts"]),
+                      deps=["29_v2_strategy_charts", "36_aggressive_variants", "37_aggressive_beta_overlay"]),
             ]
 
     gpu_deps = [] if args.mock_data else ["16_positions_v2"]

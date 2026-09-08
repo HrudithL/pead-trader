@@ -181,6 +181,16 @@ def build_catalog(include_reports: bool):
         stage("eq_28_sue_reversal_test", "equity_strategy/28_sue_reversal_test.py",
               outputs=[D / "sue_reversal_summary.json", D / "sue_reversal_by_decile.csv"]),
 
+        # ---------------- equity_strategy: aggressive variants (same 8 designs, sized for more
+        # return -- see README's "Aggressive variants" section) --------------------------------
+        stage("eq_36_aggressive_variants", "equity_strategy/36_aggressive_variants.py",
+              deps=["eq_16_positions_v2"],
+              outputs=[D / "results_summary_v2_aggressive_FINAL.csv",
+                        D / "backtest_v2_strategy6_aggressive_summary.json"]),
+        stage("eq_37_aggressive_beta_overlay", "equity_strategy/37_aggressive_beta_overlay.py",
+              deps=["eq_36_aggressive_variants"],
+              outputs=[D / "backtest_v2_strategy6_beta_aggressive_summary.json"]),
+
         # ---------------- equity_strategy: Strategy 8 (GPU-tiered) ------------------------------
         stage("eq_32_gpu_feature_panel", "equity_strategy/32_gpu_feature_panel.py",
               deps=["eq_16_positions_v2", "eq_pead_10_extended_ff_decay"],
@@ -280,10 +290,18 @@ def build_catalog(include_reports: bool):
                         "eq_24_finalize_strategy6", "eq_25_strategy6_beta_overlay",
                         "eq_26_strategy7_unconstrained", "eq_21_leverage_and_improvements",
                         "eq_28_sue_reversal_test"], outputs=[]),
+            stage("eq_38_aggressive_charts", "equity_strategy/38_aggressive_charts.py",
+                  deps=["eq_17_backtest_v2", "eq_20_strategy4_tilted", "eq_23_finalize_strategy5",
+                        "eq_24_finalize_strategy6", "eq_25_strategy6_beta_overlay",
+                        "eq_26_strategy7_unconstrained", "eq_36_aggressive_variants",
+                        "eq_37_aggressive_beta_overlay"], outputs=[]),
             stage("eq_30_showcase_report", "equity_strategy/30_build_strategy_showcase_report.py",
-                  deps=["eq_29_v2_strategy_charts"], outputs=[REPORTS_DIR / "PEAD_Strategy_Showcase.pdf"]),
+                  deps=["eq_29_v2_strategy_charts", "eq_38_aggressive_charts"],
+                  outputs=[REPORTS_DIR / "PEAD_Strategy_Showcase.pdf"]),
             stage("eq_31_development_report", "equity_strategy/31_build_development_report.py",
-                  deps=["eq_29_v2_strategy_charts"], outputs=[REPORTS_DIR / "PEAD_Strategy_Development.pdf"]),
+                  deps=["eq_29_v2_strategy_charts", "eq_36_aggressive_variants",
+                        "eq_37_aggressive_beta_overlay"],
+                  outputs=[REPORTS_DIR / "PEAD_Strategy_Development.pdf"]),
             stage("opt_pead_37_decile_summary", "options_pead/37_decile_summary_options.py",
                   domain="options", deps=["opt_36_forward_option_prices"], outputs=[]),
             stage("opt_pead_38_charts", "options_pead/38_charts_options.py",

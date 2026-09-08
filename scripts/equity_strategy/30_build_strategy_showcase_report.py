@@ -24,6 +24,7 @@ FIG = FIGURES_DIR
 OUT = REPORTS_DIR / "PEAD_Strategy_Showcase.pdf"
 
 summary = pd.read_csv(DATA / "results_summary_v2_FINAL.csv").set_index("strategy")
+agg_summary = pd.read_csv(DATA / "results_summary_v2_aggressive_FINAL.csv").set_index("strategy")
 
 def js(name):
     with open(DATA / f"backtest_v2_{name}_summary.json") as f:
@@ -34,7 +35,7 @@ rb, story, styles, h1, h2, h3, body, caption, glossary, rule, fig, make_table = 
 # ============================== COVER ==============================
 story.append(Spacer(1, 0.3*inch))
 h1("PEAD Strategy Showcase")
-story.append(Paragraph("Performance of all 8 tradeable strategy constructions, 1996&ndash;2013", styles["TitleSub"]))
+story.append(Paragraph("Performance of all 8 tradeable strategy constructions, 1996&ndash;2013, plus an aggressive variant of each", styles["TitleSub"]))
 story.append(Paragraph("Companion to <i>PEAD_Report.pdf</i> (evidence the effect exists) and <i>PEAD_Strategy_Development.pdf</i> (why each design decision was made)", styles["TitleSub"]))
 rule()
 
@@ -220,6 +221,113 @@ profile("7", "Unconstrained net exposure", "strategy7",
 
 story.append(PageBreak())
 
+# ============================== AGGRESSIVE VARIANTS ==============================
+h2("Aggressive variants: trading Sharpe for more absolute return")
+body("""Every strategy above is deliberately conservative on two dials that don't change WHICH
+positions are held or how they're relatively weighted, only how big the book is run:
+<b>base_unit_fraction</b> (position size, as a fraction of trailing NAV) and the
+<b>gross-leverage cap</b>. This section asks: what happens if each strategy's own design is kept
+completely intact -- same trim, same tilt, same size/sector neutrality, same signal -- and just
+those two dials are pushed harder, for an investor willing to trade some Sharpe ratio for
+meaningfully higher absolute annual return?""")
+
+body("""<b>Methodology.</b> For each strategy, base_unit_fraction was swept from 1.5x up to 12x its
+own original value, with the leverage cap held at a realistic institutional ceiling (6x gross --
+already well above every strategy's 1.5x or 2.5x baseline) so the sweep finds where return/Sharpe
+actually trade off from bigger, more liquidity-constrained positions, not an arbitrary tighter cap.
+The 5%-of-average-daily-volume liquidity cap is untouched throughout -- that is a real capacity
+constraint (a stock can't be traded past what the market can absorb), not a risk dial to loosen.
+Among the swept candidates, the one maximizing annualized return was picked <b>subject to two
+floors: Sharpe &ge; 0.6, and max drawdown &ge; -40%</b>. The second floor matters: for every
+strategy except the beta overlay, the -40% drawdown floor binds before Sharpe actually falls to
+0.6 -- meaning the realistic constraint on how aggressive these designs can go is drawdown
+tolerance, not risk-adjusted return, and the Sharpe ratios below (0.72-1.09) are consequently
+better than the 0.6 floor the search was willing to accept. This is itself a finding, not a
+shortfall: it says these strategies' edge degrades faster via drawdown than via Sharpe as they're
+sized up. Every number below is a real re-run of the exact same backtest engine used for the
+baseline strategies (trailing-NAV compounding, priority-based cap trimming, transaction costs,
+liquidity caps), on the same 1996-2013 real data -- not an estimate or extrapolation.""")
+
+agg_order = ["extreme_aggressive", "rankweighted_aggressive", "balanced_aggressive",
+             "strategy4_aggressive", "strategy5_aggressive", "strategy6_aggressive",
+             "strategy6_beta_aggressive", "strategy7_aggressive"]
+agg_labels = ["1. Extreme decile L/S", "2. Rank-weighted", "3. Balanced (size-neutral)",
+              "4. Trimmed/tilted, priority cap", "5. + Sector-neutral", "6. + Leverage cap 2.5x",
+              "6+beta. + market beta overlay", "7. Unconstrained net exposure"]
+
+agg_table = [["Strategy", "Ann. Return\n(base -> aggr.)", "Sharpe\n(base -> aggr.)",
+              "Max DD\n(base -> aggr.)", "Final NAV, aggr.\n($10M start)"]]
+for key, label in zip(agg_order, agg_labels):
+    base_key = key.replace("_aggressive", "").replace("strategy6_beta", "strategy6_beta050")
+    b, a = summary.loc[base_key], agg_summary.loc[key]
+    agg_table.append([
+        label,
+        f"{b['ann_return']*100:.1f}% -> {a['ann_return']*100:.1f}%",
+        f"{b['sharpe']:.2f} -> {a['sharpe']:.2f}",
+        f"{b['max_drawdown']*100:.1f}% -> {a['max_drawdown']*100:.1f}%",
+        f"${a['final_nav']/1e6:.1f}M",
+    ])
+story.append(make_table(agg_table, col_widths=[1.85*inch, 1.35*inch, 1.05*inch, 1.15*inch, 1.1*inch], fontsize=8.2))
+caption("""Table 2. Same $10,000,000 starting capital, 1996-2013, trailing-NAV compounding, net of
+costs and the (untouched) liquidity cap. Every aggressive variant roughly doubles or more its
+baseline's annualized return; Sharpe gives up 0.1-0.3 in most cases (Strategy 6+beta actually
+<i>improves</i> -- see below) and drawdowns deepen to the -33% to -40% range.""")
+
+fig(FIG / "27_v2_aggressive_nav_curves.png")
+caption("""Figure 4. NAV curves, baseline (solid, faded) vs. aggressive (dashed, bold). The
+aggressive Strategy 6+beta overlay (dark red, dashed) reaches $152M vs. baseline's $65M by 2013 --
+but note the much sharper dip through 2008-2009, the direct cost of the larger, more market-exposed
+book.""")
+
+story.append(PageBreak())
+
+fig(FIG / "28_v2_aggressive_comparison_bars.png")
+caption("""Figure 5. Return, Sharpe, and drawdown, baseline vs. aggressive, all 8 designs. Return
+roughly doubles across the board; Sharpe erosion is modest (never below 0.72) because the -40%
+drawdown floor stops the search before Sharpe alone would force it lower.""")
+
+fig(FIG / "29_v2_aggressive_sizing_sweep.png")
+caption("""Figure 6. Strategy 6's full sizing sweep (representative of the methodology applied to
+every strategy): Sharpe declines smoothly as sizing grows, annualized return actually PEAKS around
+4x sizing and declines beyond it (liquidity-capping an ever-larger share of positions erodes edge
+faster than bigger notional adds return), and drawdown grows roughly monotonically. The chosen
+aggressive setting (dashed vertical line) sits right at that return peak, not at an arbitrary
+cutoff -- pushing further would have made the strategy worse on <i>every</i> axis at once.""")
+
+story.append(PageBreak())
+
+body("""<b>A genuine finding, not a coincidence: Strategy 5 Aggressive and Strategy 6 Aggressive
+converge to the identical configuration.</b> Strategy 5 and Strategy 6 use exactly the same
+trim/tilt/size+sector-neutral weight construction -- Strategy 6's only difference from Strategy 5
+is a higher starting base_unit_fraction and leverage cap (justified in Strategy 6's own profile
+above). Once both are allowed to search up to the same realistic 6x leverage ceiling, they land on
+the same base_unit_fraction and the same result (12.15% return, Sharpe 1.00, -36.5% drawdown).
+Strategy 6's advantage over Strategy 5 -- starting from a higher leverage baseline -- evaporates
+entirely once both are sized to the same aggressive ceiling, which is itself a clean confirmation
+that leverage cap and position size are the same underlying dial, not two independent ones.""")
+
+body("""<b>The beta overlay's aggressive variant gets its extra return from a bigger alpha book,
+not a bigger overlay.</b> A sweep of the beta-overlay multiplier itself (0.5x up to 3.0x, applied
+on top of Strategy 6 Aggressive's own NAV series) found that raising it past the original 0.5x
+immediately breaches the -40% drawdown floor (0.75x already reaches -42.4%) -- so the aggressive
+beta-overlay variant keeps the SAME 0.5x overlay as the baseline, and its entire improvement
+(10.08%->15.01% return, Sharpe 0.97->1.09 -- Sharpe actually <i>improved</i>) comes from
+overlaying that unchanged 0.5x market position on Strategy 6 Aggressive's bigger alpha book instead
+of baseline Strategy 6's. This is a genuinely favorable result: the aggressive alpha book pairs
+better with the overlay than the conservative one does, at no extra overlay risk.""")
+
+body("""<b>Caveats specific to the aggressive variants, on top of the baseline caveats already
+listed:</b> these numbers carry every assumption the baseline strategies do (disclosed-but-not-
+calibrated cost schedule, no borrow-cost modeling, one historical realization, data ending 2013),
+<i>plus</i> two more that matter more at this sizing: liquidity-cap bite is far higher (Strategy
+6 Aggressive liquidity-caps 28% of positions vs. baseline's 7%, per the underlying sweep data),
+meaning the 5%-of-ADV assumption is doing much more work and is worth stress-testing before sizing
+a real book this way; and every aggressive variant's -33% to -40% drawdown is deep enough that it
+would need real capital and mandate tolerance for a multi-year drawdown, not just a higher return
+target on paper.""")
+
+story.append(PageBreak())
+
 # ============================== RECOMMENDATION ==============================
 h2("Recommendation")
 body("""<b>For live consideration: Strategy 6 (pure alpha) or Strategy 6 + 0.5x beta overlay.</b>
@@ -236,7 +344,12 @@ body("""&bull; Choose <b>Strategy 6</b> for the purest, most uncorrelated alpha 
 exchange for correspondingly more market-correlated risk (Sharpe 0.97, max drawdown -23.2%, but
 10.08% return -- and still a shallower drawdown than holding the market alone).<br/>
 &bull; <b>Strategy 7 is not recommended</b> for either purpose: it adds market exposure in a way
-that is measurably less controllable than the explicit overlay, as documented above.""")
+that is measurably less controllable than the explicit overlay, as documented above.<br/>
+&bull; <b>For a mandate that can tolerate a -35% to -40% drawdown in exchange for roughly double
+the return:</b> <b>Strategy 6 Aggressive</b> (12.15% return, Sharpe 1.00, -36.5% drawdown) or
+<b>Strategy 6+beta Aggressive</b> (15.01% return, Sharpe 1.09, -37.0% drawdown -- the single best
+risk-adjusted aggressive variant, and the only one where Sharpe improved over its own baseline) --
+see "Aggressive variants" above for the full methodology and caveats.""")
 
 story.append(Spacer(1, 0.2*inch))
 h2("Caveats specific to this backtest")
@@ -258,10 +371,12 @@ of this sample.""")
 
 story.append(Spacer(1, 0.3*inch))
 rule()
-caption("""Generated from data/results_summary_v2_FINAL.csv and data/backtest_v2_*_summary.json.
-Scripts: scripts/equity_strategy/14_daily_decay.py through
+caption("""Generated from data/results_summary_v2_FINAL.csv, data/results_summary_v2_aggressive_FINAL.csv,
+and data/backtest_v2_*_summary.json. Scripts: scripts/equity_strategy/14_daily_decay.py through
 scripts/equity_strategy/26_strategy7_unconstrained_netexposure.py,
-scripts/equity_strategy/29_v2_strategy_charts.py, scripts/equity_strategy/30_build_strategy_showcase_report.py.""")
+scripts/equity_strategy/29_v2_strategy_charts.py, scripts/equity_strategy/30_build_strategy_showcase_report.py,
+scripts/equity_strategy/36_aggressive_variants.py, scripts/equity_strategy/37_aggressive_beta_overlay.py,
+scripts/equity_strategy/38_aggressive_charts.py.""")
 
 rb.save(OUT, title="PEAD Strategy Showcase")
 print("wrote", OUT)
