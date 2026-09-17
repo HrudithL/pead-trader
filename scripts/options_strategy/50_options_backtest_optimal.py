@@ -59,7 +59,8 @@ CONTRACT_MULTIPLIER = 100
 HORIZONS = [1, 5, 10, 20, 40, 60]
 
 
-def run_backtest(panel: pd.DataFrame, hold_horizon: int, cal_dates: np.ndarray) -> dict:
+def run_backtest(panel: pd.DataFrame, hold_horizon: int, cal_dates: np.ndarray,
+                 max_premium_frac: float, output_prefix: str) -> dict:
     n_days = len(cal_dates)
     active = panel["kelly_growth"] > 0
     entry_mid = panel["kelly_premium"].to_numpy()
@@ -95,6 +96,7 @@ def run_backtest(panel: pd.DataFrame, hold_horizon: int, cal_dates: np.ndarray) 
     quarter_code_of_day = np.array([qcode_map[q] for q in quarter_of_day])
 
     entry_qcode = quarter_code_of_day[entry_cal_idx[idx_all]]
+    exit_cal_idx = entry_cal_idx[idx_all] + hold_horizon
     flat_qcode = quarter_code_of_day[flat_cal_idx]
     order = np.argsort(flat_qcode, kind="stable")
     flat_qcode_sorted = flat_qcode[order]
@@ -106,11 +108,17 @@ def run_backtest(panel: pd.DataFrame, hold_horizon: int, cal_dates: np.ndarray) 
     entry_cost = np.zeros(len(panel))
     trailing_nav = INITIAL_CAPITAL
     quarter_log = []
+    max_outstanding_premium_frac = 0.0
 
     for qi in range(n_quarters):
         q_local = np.where(entry_qcode == qi)[0]
         q_global = idx_all[q_local]
         scale_note = "ok"
+        quarter_start_idx = np.where(quarter_code_of_day == qi)[0][0]
+        still_open = (entry_qcode < qi) & (exit_cal_idx >= quarter_start_idx)
+        outstanding_premium = float(np.sum(
+            num_contracts[idx_all[still_open]] * CONTRACT_MULTIPLIER * entry_mid[idx_all[still_open]]
+        ))
         if len(q_global):
             # Each position's OWN kelly_frac is the single-bet-Kelly-optimal size IF IT WERE THE
             # ONLY BET IN THE BOOK. With ~1,000+ concurrent positive-edge candidates most
@@ -124,11 +132,19 @@ def run_backtest(panel: pd.DataFrame, hold_horizon: int, cal_dates: np.ndarray) 
             # strategies already use (weight-normalize within a group instead of sizing each
             # position off an independent single-bet rule).
             q_kelly = kelly_frac[q_global]
-            book_budget = MAX_PREMIUM_FRAC * trailing_nav
+            book_budget = max(0.0, max_premium_frac * trailing_nav - outstanding_premium)
             proportional_target = (q_kelly / q_kelly.sum()) * book_budget if q_kelly.sum() > 0 else np.zeros_like(q_kelly)
             contracts = np.floor(proportional_target / (CONTRACT_MULTIPLIER * entry_mid[q_global]))
             num_contracts[q_global] = contracts
             entry_cost[q_global] = contracts * CONTRACT_MULTIPLIER * entry_mid[q_global] * ASSUMED_ROUNDTRIP_COST_PCT
+
+        outstanding_after = outstanding_premium + float(np.sum(
+            num_contracts[q_global] * CONTRACT_MULTIPLIER * entry_mid[q_global]
+        )) if len(q_global) else outstanding_premium
+        max_outstanding_premium_frac = max(
+            max_outstanding_premium_frac,
+            outstanding_after / trailing_nav if trailing_nav > 0 else 0.0,
+        )
 
         s, e = boundaries[qi], boundaries[qi + 1]
         trade_pnl_q = float(np.sum(num_contracts[rep_pos_idx_sorted[s:e]] * CONTRACT_MULTIPLIER *
@@ -138,7 +154,10 @@ def run_backtest(panel: pd.DataFrame, hold_horizon: int, cal_dates: np.ndarray) 
         quarter_log.append(dict(quarter=str(unique_quarters[qi]), trailing_nav_used=trailing_nav,
                                  n_new_positions=int((num_contracts[q_global] > 0).sum())
                                  if len(q_global) else 0, cap_status=scale_note,
-                                 quarter_realized_pnl=quarter_pnl))
+                     outstanding_premium_before=outstanding_premium,
+                                 premium_budget=max_premium_frac * trailing_nav,
+                                 outstanding_premium_after=outstanding_after,
+                     quarter_realized_pnl=quarter_pnl))
         trailing_nav += quarter_pnl
 
     daily_pnl = np.zeros(n_days)
@@ -158,14 +177,19 @@ def run_backtest(panel: pd.DataFrame, hold_horizon: int, cal_dates: np.ndarray) 
     n_sized = int((num_contracts > 0).sum())
 
     out = pd.DataFrame({"date": cal_dates_d, "daily_pnl": daily_pnl, "nav": nav, "daily_return": daily_ret})
-    out.to_csv(DATA / f"backtest_options_optimal_h{hold_horizon}d.csv", index=False)
+    out.to_csv(DATA / f"{output_prefix}_h{hold_horizon}d.csv", index=False)
+    pd.DataFrame(quarter_log).to_csv(
+        DATA / f"{output_prefix}_h{hold_horizon}d_quarterlog.csv", index=False
+    )
 
     summary = dict(hold_horizon_days=hold_horizon, n_positions_eligible=n_pos, n_positions_sized=n_sized,
                     total_return=float(total_ret), annualized_return=float(ann_ret),
                     annualized_vol=float(ann_vol), sharpe=float(sharpe), max_drawdown=float(max_dd),
                     final_nav=float(nav[-1]), half_kelly_multiplier=HALF_KELLY,
-                    assumed_roundtrip_cost_pct=ASSUMED_ROUNDTRIP_COST_PCT)
-    with open(DATA / f"backtest_options_optimal_h{hold_horizon}d_summary.json", "w") as f:
+                    assumed_roundtrip_cost_pct=ASSUMED_ROUNDTRIP_COST_PCT,
+                    max_premium_frac=max_premium_frac,
+                    max_outstanding_premium_frac=float(max_outstanding_premium_frac))
+    with open(DATA / f"{output_prefix}_h{hold_horizon}d_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
     print(f"  h={hold_horizon:>2}d: n_eligible={n_pos:,} n_sized={n_sized:,} ann.ret={ann_ret:.2%} "
           f"ann.vol={ann_vol:.2%} Sharpe={sharpe:.2f} maxDD={max_dd:.2%} final_nav=${nav[-1]:,.0f}")
@@ -174,7 +198,13 @@ def run_backtest(panel: pd.DataFrame, hold_horizon: int, cal_dates: np.ndarray) 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--max-premium-frac", type=float, default=MAX_PREMIUM_FRAC,
+                        help="maximum outstanding premium as a fraction of trailing NAV")
+    parser.add_argument("--output-prefix", default="backtest_options_optimal",
+                        help="prefix for generated CSV, quarterlog, and summary files")
     args = parser.parse_args()
+    if not 0 < args.max_premium_frac <= 1:
+        parser.error("--max-premium-frac must be in (0, 1]")
 
     with StageTimer("50_options_backtest_optimal"):
         panel = pd.read_parquet(DATA / "event_options" / "optimal_forward_prices.parquet")
@@ -183,9 +213,10 @@ def main():
         print(f"panel: {len(panel):,} events, {int((panel['kelly_growth']>0).sum()):,} with "
               f"kelly_growth > 0")
 
-        results = [run_backtest(panel, h, cal_dates) for h in HORIZONS]
-        pd.DataFrame(results).to_csv(DATA / "backtest_options_optimal_comparison.csv", index=False)
-        print("\nwrote data/backtest_options_optimal_comparison.csv")
+        results = [run_backtest(panel, h, cal_dates, args.max_premium_frac, args.output_prefix)
+               for h in HORIZONS]
+        pd.DataFrame(results).to_csv(DATA / f"{args.output_prefix}_comparison.csv", index=False)
+        print(f"\nwrote data/{args.output_prefix}_comparison.csv")
 
 
 if __name__ == "__main__":
