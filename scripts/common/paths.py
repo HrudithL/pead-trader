@@ -16,6 +16,7 @@ DATA_DIR = Path(os.environ.get("PEAD_DATA_DIR", REPO_ROOT / "data"))
 REPORTS_DIR = Path(os.environ.get("PEAD_REPORTS_DIR", REPO_ROOT / "reports"))
 FIGURES_DIR = Path(os.environ.get("PEAD_FIGURES_DIR", REPORTS_DIR / "figures"))
 
+RAW_WRDS_DIR = Path(os.environ.get("PEAD_RAW_WRDS_DIR", DATA_DIR / "raw_wrds"))
 RAW_EQUITY_DIR = Path(os.environ.get("PEAD_RAW_EQUITY_DIR", DATA_DIR / "normalized_equity"))
 EVENTS_DIR = Path(os.environ.get("PEAD_EVENTS_DIR", DATA_DIR / "events"))
 EARNINGS_DIR = Path(os.environ.get("PEAD_EARNINGS_DIR", DATA_DIR / "earnings"))

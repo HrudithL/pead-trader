@@ -21,8 +21,11 @@ reading the detail below):
 ```bash
 git clone <this repo's remote> PEAD_Trading && cd PEAD_Trading
 lsblk                                                  # find where the drive mounted
-./scripts/setup_gpu_box.sh /media/<you>/OptionMetrics
-echo 'export OPTIONMETRICS_DIR="/media/<you>/OptionMetrics/parquet"' >> ~/.bashrc && source ~/.bashrc
+./scripts/setup_gpu_box.sh /media/<you>/OptionMetrics  # prints export lines, touches nothing in data/
+# copy/paste its printed PEAD_*_DIR and OPTIONMETRICS_DIR export lines into ~/.bashrc, then:
+source ~/.bashrc
+python scripts/verify_raw_data.py --check              # confirms the drive's copy matches canonical
+git config core.hooksPath scripts/git-hooks             # blocks ever committing a symlink
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-gpu.txt
 nvidia-smi && python3 -c "import cupy as cp, torch; print(cp.cuda.runtime.getDeviceCount(), torch.cuda.is_available())"
@@ -34,8 +37,8 @@ python scripts/run_all_strategies.py --device cuda
 
 Everything here was written after actually validating the pieces that could be validated without
 the 5090 itself: the raw WRDS data was copied and verified (file-count-matched) onto the drive,
-the symlink step below was run for real against that copy in a real Linux environment (WSL2) and
-confirmed readable, and the GPU-tiered scripts this whole setup exists to run were already
+the environment-variable step below was run for real against that copy in a real Linux
+environment (WSL2) and confirmed readable, and the GPU-tiered scripts this whole setup exists to run were already
 confirmed working end-to-end on a real CUDA GPU (a Colab T4 -- see `PEAD_Strategies_Overview.pdf`
 and the conversation history for that run). **What has NOT been directly tested: this exact
 orchestrator script on the actual 5090 hardware, and three options-pipeline stages against the
@@ -74,7 +77,45 @@ this setup keeps the data on the drive, not in git, by design.
 `pead_wrds_data/` is a straight copy of this repo's own `data/{raw_wrds,normalized_equity,
 earnings,events,metadata,results}/` folders, staged here once from the machine that holds the
 original WRDS pull. If you ever refresh the underlying WRDS pull, redo that copy -- there's no
-sync mechanism, this is a one-time (or refresh-when-you-refresh-the-data) staging step.
+sync mechanism, this is a one-time (or refresh-when-you-refresh-the-data) staging step. Since
+there's no way to verify from this end whether a given staged copy is still current, always ask
+whoever refreshed it last, and treat results built from a GPU-box run as unverified until you
+know the copy you ran against actually matches the source machine's `data/` at the time of the run.
+
+## Never symlink data into this repo
+
+An earlier version of this setup created symlinks at `data/{raw_wrds,normalized_equity,earnings,
+events,metadata,results}` pointing at the drive. One of those symlinks was accidentally
+`git add`ed and committed. On a machine with `core.symlinks=false` (the default for Git for
+Windows without admin/developer mode), checking out a commit that tracks a symlink at a path
+where a **real directory already exists** silently **deletes that real directory** to place the
+symlink's plain-text placeholder there -- no prompt, no error. That destroyed this project's local
+raw WRDS pull once already.
+
+The fix is structural, not just "be careful": every one of the six raw-data locations is a plain
+environment-variable override in `scripts/common/paths.py` (`PEAD_RAW_WRDS_DIR`,
+`PEAD_RAW_EQUITY_DIR`, `PEAD_EARNINGS_DIR`, `PEAD_EVENTS_DIR`, `PEAD_METADATA_DIR`,
+`PEAD_RESULTS_DIR`), so **`data/` never needs to contain anything for these six folders on the GPU
+box at all**. `scripts/setup_gpu_box.sh` only prints the export lines below now -- it does not
+create, symlink, or touch anything under `data/`. Do not reintroduce a symlink there. As a second
+line of defense, `.gitignore`'s entries for these paths have no trailing slash (so they also match
+a symlink or stray file of the same name, not just a real directory), and
+`scripts/git-hooks/pre-commit` refuses to commit any symlink anywhere in the repo -- see "Enable
+the pre-commit safety hook" below. Run that setup step on every machine, including this one.
+
+## Enable the pre-commit safety hook
+
+One command, once per clone (git hooks are local to a checkout, not carried by `git clone` itself,
+so this has to be run again on every machine including this one):
+
+```bash
+git config core.hooksPath scripts/git-hooks
+```
+
+**Success condition:** `git config --get core.hooksPath` prints `scripts/git-hooks`. From then on,
+`git commit` refuses any commit that stages a symlink, anywhere in the repo, with an explanation
+of why -- see `scripts/git-hooks/pre-commit`'s own comment for the full incident this defends
+against.
 
 ## Step 1: get the code
 
@@ -84,7 +125,7 @@ cd PEAD_Trading
 ```
 **Success condition:** `ls` shows `scripts/`, `data/`, `README.md`, `GPU_SETUP.md`.
 
-## Step 2: attach the drive and link the data in
+## Step 2: attach the drive and point the code at it (env vars, no symlinks)
 
 Plug in the drive. Find where it mounted:
 
@@ -99,22 +140,43 @@ manually. Then, from the repo root:
 ./scripts/setup_gpu_box.sh /media/<you>/OptionMetrics
 ```
 
-This symlinks `data/{raw_wrds,normalized_equity,earnings,events,metadata,results}` to their copies
-on the drive (the same idea as the NTFS junctions the main Windows checkout uses, just the Linux
-equivalent), and prints the `OPTIONMETRICS_DIR` line to export. It refuses to overwrite a real
-(non-symlink) `data/` subfolder that's already there -- pass `--force` if you actually want to
-replace one. Add the printed export to `~/.bashrc` so it survives new shells:
+This validates the drive has both the OptionMetrics extract and the staged WRDS pull, then prints
+seven `export` lines (`PEAD_RAW_WRDS_DIR`, `PEAD_RAW_EQUITY_DIR`, `PEAD_EARNINGS_DIR`,
+`PEAD_EVENTS_DIR`, `PEAD_METADATA_DIR`, `PEAD_RESULTS_DIR`, `OPTIONMETRICS_DIR`) pointing directly
+at the drive's copies. It does **not** create, symlink, or touch anything under this repo's
+`data/` directory -- see "Never symlink data into this repo" above for why that matters. Copy its
+printed lines into `~/.bashrc` so they survive new shells:
 
 ```bash
-echo 'export OPTIONMETRICS_DIR="/media/<you>/OptionMetrics/parquet"' >> ~/.bashrc
+./scripts/setup_gpu_box.sh /media/<you>/OptionMetrics >> ~/.bashrc   # appends the export lines
 source ~/.bashrc
 ```
-**Success condition:** `./scripts/setup_gpu_box.sh` printed `linked data/<name> -> ...` for all
-six of `raw_wrds`, `normalized_equity`, `earnings`, `events`, `metadata`, `results` (not `SKIP` --
-if it skipped, either the drive path or the target folder name is wrong, or a real
-`data/<name>` already exists there and needs `--force` or manual removal first). Then confirm a
-file is actually readable through the link: `ls -la data/normalized_equity/equity_1995.parquet`
-should show a real file, not a broken-link error.
+(Review what actually got appended -- the script also prints its validation messages to stdout,
+so skim `~/.bashrc`'s new lines and drop anything that isn't an `export ...` line before sourcing.)
+
+**Success condition:** the script printed "all six raw-data subfolders found on the drive" (not a
+`WARNING` for any of them). Then confirm a file is actually readable through the env var:
+`ls -la "$PEAD_RAW_EQUITY_DIR/equity_1995.parquet"` should show a real file.
+
+## Step 2b: verify the staged copy actually matches canonical
+
+This is the check the earlier symlink incident was missing -- the staged copy on the drive can
+look complete (every folder present, files readable) while still being a different vintage of the
+data than whatever the currently-published results were built from, with nothing in the pipeline
+itself able to tell the difference. `data/raw_data_manifest.json` (committed to git, written once
+from the canonical machine via `python scripts/verify_raw_data.py --write`) is the source of
+truth. Check the drive's copy against it before trusting any real run:
+
+```bash
+python scripts/verify_raw_data.py --check
+```
+
+**Success condition:** it prints `OK <folder>: N files match` for all six folders and exits 0. If
+it instead prints `MISMATCH` for any folder, **stop** -- do not run the pipeline for real against
+this data, and do not commit any of its output. Report back which folder(s) mismatched and how
+(`missing`/`extra`/`changed` files) rather than proceeding; that's exactly the signal that the
+drive needs re-staging from the canonical machine (`python scripts/verify_raw_data.py --write`
+there first, to refresh the manifest, if the canonical data itself has legitimately changed).
 
 ## Step 3: Python environment
 

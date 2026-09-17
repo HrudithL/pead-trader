@@ -69,9 +69,18 @@ A ninth design, **Strategy 8**, has since been built (see "Equity-strategy GPU r
 it blends a walk-forward-trained ML score with the SUE-rank tilt and picks its own
 (trim/tilt/leverage/sizing) constants via a real GPU-batched search instead of the hand-picked
 values strategies 4-7 use, the same escalation in compute the options side went through in its own
-roadmap. Its pipeline is fully built and `--mock-data`-verified end to end, but **not yet run for
-real**: this dev machine has neither the raw WRDS pull nor a GPU attached (see "Data" below) --
-running it for real, and adding its row to this table, is the next step on a machine that has both.
+roadmap. Its pipeline is fully built and `--mock-data`-verified end to end, and has also been run
+for real once (`data/backtest_v2_strategy8_summary.json`, `data/equity_gpu_sweep_*`,
+`data/equity_walkforward_summary.json`) -- **but that run's status is currently unverified, not
+confirmed correct.** It was built against a raw-WRDS-pull copy staged onto an external drive for a
+GPU box, and that staged copy was later found to have drifted from the copy this README's own
+Strategies 1-7 table is built from (confirmed by `data/cell_decay_days.csv` changing on ~40% of
+cells with no code change in between, and `20_strategy4_tilted.py`'s own internal grid search
+picking a different trim/tilt optimum on a since-reverted rerun against that same drifted copy --
+see `scripts/git-hooks/pre-commit` and GPU_SETUP.md's "Never symlink data into this repo" for the
+incident, and the process gap that let it happen unnoticed). Strategy 8's numbers are left in place
+as a historical record rather than deleted, but not added to the results table above, and should be
+treated as unverified until re-run against a checksummed, confirmed-canonical raw-data copy.
 
 ## Strategy evolution, in order
 
@@ -830,6 +839,19 @@ instead hold real copies of those folders (as one used to build the GPU pipeline
 the whole pipeline is runnable from inside that one directory tree without depending on the main
 checkout's junction targets -- check `data/events/` etc. for junction vs. real-copy status in any
 given checkout before assuming either.
+
+**Never symlink these paths.** A prior incident tracked a symlink at one of these paths in git; on
+a checkout with `core.symlinks=false` that silently deleted a real local copy of the raw WRDS pull
+that was already sitting there. Every one of these locations is already a plain environment
+variable in `scripts/common/paths.py` (`PEAD_RAW_WRDS_DIR`, `PEAD_RAW_EQUITY_DIR`,
+`PEAD_EARNINGS_DIR`, `PEAD_EVENTS_DIR`, `PEAD_METADATA_DIR`, `PEAD_RESULTS_DIR`), so a GPU box
+should point those at wherever its drive-mounted copy lives instead of symlinking anything into
+`data/` -- see `GPU_SETUP.md`'s "Never symlink data into this repo" and "Enable the pre-commit
+safety hook" sections, and run `git config core.hooksPath scripts/git-hooks` on every checkout.
+`scripts/verify_raw_data.py --write`/`--check` maintains a small, git-tracked manifest
+(`data/raw_data_manifest.json`) of exactly what the canonical raw data looks like (relative paths +
+sha256), so a GPU box's staged copy can be verified against it before trusting any real run --
+see GPU_SETUP.md's "Step 2b: verify the staged copy actually matches canonical".
 
 ## Requirements
 

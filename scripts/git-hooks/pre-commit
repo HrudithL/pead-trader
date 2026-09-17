@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Refuses the commit if it stages a symlink anywhere in the repo.
+#
+# Why this exists: a symlink tracked at data/{raw_wrds,normalized_equity,earnings,events,
+# metadata,results} was once committed by mistake (from a broad `git add`/`git commit -a` on a
+# machine where those paths were symlinked into an external drive). On a machine with
+# core.symlinks=false (Git for Windows without admin/developer mode), checking out that commit
+# silently DELETED the real local data directory already at that path to write the symlink's
+# text placeholder there instead -- no prompt, no error, no way to tell from the checkout output
+# alone that anything destructive just happened. This repo has no legitimate use for a tracked
+# symlink anywhere (see GPU_SETUP.md's "Never symlink data into this repo": every data location a
+# GPU box needs is a plain PEAD_*_DIR/OPTIONMETRICS_DIR environment-variable override instead), so
+# this hook blocks ALL of them, not just the six known-dangerous paths -- a new symlink anywhere
+# in a future commit is never intentional.
+#
+# Install once per clone (this file lives in git but hooks don't run from here unless pointed at):
+#   git config core.hooksPath scripts/git-hooks
+set -euo pipefail
+
+symlinks=$(git diff --cached --name-only --diff-filter=ACMR -z | \
+  xargs -0 -I{} git ls-files -s --cached -- {} 2>/dev/null | awk '$1 == "120000" {print $4}')
+
+if [[ -n "$symlinks" ]]; then
+  echo "pre-commit: refusing to commit a symlink -- this repo tracks no symlinks, by design:" >&2
+  echo "$symlinks" | sed 's/^/  /' >&2
+  echo >&2
+  echo "If this is raw data meant for a GPU box, point scripts/common/paths.py's PEAD_*_DIR env" >&2
+  echo "vars at it instead (see GPU_SETUP.md's 'Never symlink data into this repo'). If you" >&2
+  echo "really mean to commit a symlink, this hook is deliberately not overridable via config --" >&2
+  echo "use 'git commit --no-verify' only if you are certain, and only for something other than" >&2
+  echo "data/ paths." >&2
+  exit 1
+fi

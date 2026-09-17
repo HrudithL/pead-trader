@@ -1,11 +1,16 @@
-# Raw WRDS pull and normalized equity/earnings/events data -- large, and not ours to redistribute
-data/raw_wrds/
-data/raw_equity/
-data/normalized_equity/
-data/earnings/
-data/events/
-data/results/
-data/metadata/
+# Raw WRDS pull and normalized equity/earnings/events data -- large, and not ours to redistribute.
+# No trailing slash: a trailing slash only matches a real directory, not a symlink or regular
+# file of the same name -- these entries must also catch a symlink placed here by mistake (see
+# scripts/git-hooks/pre-commit and the "Never symlink data into this repo" note in GPU_SETUP.md
+# for the incident that made this matter: a tracked symlink at one of these paths, checked out on
+# a machine with core.symlinks=false, silently deletes whatever real directory is already there).
+data/raw_wrds
+data/raw_equity
+data/normalized_equity
+data/earnings
+data/events
+data/results
+data/metadata
 
 # Large regeneratable derived data (event panels, position lists) -- rebuilt by the scripts,
 # tens of MB each, not useful to diff or version in git

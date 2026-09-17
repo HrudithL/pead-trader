@@ -38,14 +38,13 @@ import pandas as pd
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.paths import DATA_DIR
+from common.paths import DATA_DIR, RAW_WRDS_DIR
 from common.stats import fama_macbeth
 
 DATA = DATA_DIR
-RAW = DATA_DIR
 
 ev = pd.read_parquet(DATA / "decile_events.parquet")
-funda = pd.read_parquet(RAW / "raw_wrds/comp/funda.parquet")
+funda = pd.read_parquet(RAW_WRDS_DIR / "comp/funda.parquet")
 
 HORIZONS = [1, 5, 10, 20, 40, 60]
 RET_COLS = {h: f"ret_fwd_{h}d_mktadj" for h in HORIZONS}
