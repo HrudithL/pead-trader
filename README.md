@@ -33,6 +33,38 @@ overlay (if a return closer to a 10-15% target, with correspondingly more market
 is preferred over a pure, uncorrelated alpha stream).** Strategy 7 is documented for completeness
 and as a cautionary result -- see [Strategy 7's caveat](#why-strategy-7-is-not-simply-a-cheaper-way-to-add-beta) below.
 
+### How to read annualized volatility
+
+Annualized volatility measures the typical size of daily returns, scaled to a one-year equivalent:
+`daily-return standard deviation x sqrt(252)`. It is not the same as maximum drawdown and does not
+predict the exact worst loss; it measures ordinary variability. For the corrected 60-day options
+strategy, 2.18% annualized volatility means its daily NAV changes were relatively small on average,
+while the -10.3% maximum drawdown records the worst peak-to-trough decline actually observed. The
+historical aggressive-overlap variant had 4.03% annualized volatility and -21.4% maximum drawdown,
+quantifying the extra risk taken to produce its higher 15.31% annualized return. Volatility matters
+here because option premium exposure compounds across overlapping positions: higher volatility means
+larger NAV swings and a greater chance that a sequence of losses consumes capital before the signal
+can recover.
+
+### Options premium-cap sensitivity
+
+The optimal-contract options strategy now accepts `--max-premium-frac`, which caps the total
+premium of all still-open positions as a fraction of trailing NAV. The cap is enforced across
+overlapping quarters, not separately for each new entry cohort. The 60-day sensitivity was run on
+the same selected contracts and historical prices:
+
+| Outstanding premium cap | Ann. return | Ann. volatility | Sharpe | Max drawdown | Final NAV |
+|---:|---:|---:|---:|---:|---:|
+| 20% baseline | 8.58% | 2.18% | 3.78 | -10.3% | $39.49M |
+| 30% controlled-aggressive | 12.26% | 3.33% | 3.49 | -17.4% | $68.82M |
+| 40% aggressive | 15.79% | 4.50% | 3.28 | -23.9% | $115.41M |
+
+The 30% policy is the current research candidate when the goal is to retain more return without
+repeating the old uncapped-overlap mistake. The 40% policy is available as an explicitly aggressive
+variant, but its drawdown is close to the historical aggressive-overlap result. These are backtests,
+not guarantees: real option spreads, market impact, liquidity, and the selector's estimation risk
+could make realized risk higher.
+
 A ninth design, **Strategy 8**, has since been built (see "Equity-strategy GPU roadmap" below) --
 it blends a walk-forward-trained ML score with the SUE-rank tilt and picks its own
 (trim/tilt/leverage/sizing) constants via a real GPU-batched search instead of the hand-picked
@@ -402,9 +434,11 @@ Five PDFs in `reports/`, meant to be read in this order:
    options strategy work? Turns the descriptive result above into a real, capital-sized, cost-aware
    backtest (Tier 1: 9.51% ann. return, Sharpe 1.04 at 60d), then replaces the near-ATM contract
    heuristic with a Kelly-criterion selector scoring every strike in the real day0 chain against an
-   empirical, walk-forward return distribution (Tier 1.5: 15.31% ann. return, Sharpe 3.56) --
-   documents the three real bugs found and fixed getting there, and the GPU compute roadmap
-   (Tiers 2-4) built for a dedicated 5090 machine to push further.
+  empirical, walk-forward return distribution. The corrected Tier 1.5 result is 8.58% annualized
+  return, Sharpe 3.78, and -10.3% max drawdown at 60d. The earlier 15.31% annualized result is
+  preserved separately as the historical aggressive-overlap variant, not as the properly capped
+  headline result. The report also documents the GPU compute roadmap (Tiers 2-4) built for a
+  dedicated 5090 machine to push further.
 
 ## Options-strategy GPU roadmap
 
@@ -481,17 +515,23 @@ chance of a huge payoff has unbounded E[R] while losing money almost every time)
 
   | | Tier 1 (near-ATM) | Tier 1.5 (Kelly-optimal, walk-forward) |
   |---|---|---|
-  | 60d ann. return | 9.51% | 15.31% |
-  | 60d Sharpe | 1.04 | 3.56 |
-  | 60d max drawdown | -25.9% | -21.4% |
+  | 60d ann. return | 9.51% | 8.58% |
+  | 60d annualized volatility | 9.16% | 2.18% |
+  | 60d Sharpe | 1.04 | 3.78 |
+  | 60d max drawdown | -25.9% | -10.3% |
 
-  **Two look-ahead bugs were found and fixed to get to this number** (full account in
+  **Two look-ahead bugs were found and fixed to get to the corrected result** (full account in
   `46_build_return_distributions.py`'s docstring): a full-sample distribution originally let a
   1998 trade get priced with data through 2013 (the same category of mistake script 27's docstring
   already documents catching for the EAR signal), and per-position Kelly sizing that ignored how
   many other candidates were competing for the same capital cap first collapsed the whole 17-year
-  backtest to ~46 funded positions. Both are fixed. The Sharpe barely moved after the walk-forward
-  fix (~4.0 -> 3.56), which was itself worth checking rather than trusting: the day-level P&L was
+  backtest to ~46 funded positions. Both are fixed. The corrected result is lower than the
+  historical aggressive-overlap result because the outstanding-premium cap now includes positions
+  carried from prior quarters. The earlier result is retained in
+  `data/backtest_options_aggressive_overlap_h60d_summary.json` with its full statistics and is
+  useful only as an intentionally aggressive comparison. The corrected Sharpe remained high after
+  the walk-forward and cap fixes, which was itself worth checking rather than trusting: the day-level
+  P&L was
   inspected directly, and the worst days in the whole 17-year series land on 2008-10-24 and
   2008-11-20 (the financial crisis) and September 2002 (another real stress window) -- real,
   economically sensible tail risk showing up where it should, not a flat/smoothed artifact. The

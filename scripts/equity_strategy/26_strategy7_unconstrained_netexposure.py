@@ -260,5 +260,12 @@ summary = dict(
 )
 with open(DATA / "backtest_v2_strategy7_summary.json", "w") as f:
     json.dump(summary, f, indent=2)
+
+comparison_path = DATA / "backtest_v2_comparison.csv"
+if comparison_path.exists():
+    comparison = pd.read_csv(comparison_path)
+    comparison = comparison[comparison["name"] != summary["name"]]
+    comparison = pd.concat([comparison, pd.DataFrame([summary])], ignore_index=True, sort=False)
+    comparison.to_csv(comparison_path, index=False)
 print(f"strategy7: ann.ret={ann_ret:.2%} ann.vol={ann_vol:.2%} Sharpe={sharpe:.3f} "
       f"maxDD={max_dd:.2%} final_nav=${nav[-1]:,.0f} corr_to_mkt={corr_to_mkt:.3f}")
