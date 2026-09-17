@@ -1,13 +1,15 @@
 {
   "hold_horizon_days": 60,
   "n_positions_eligible": 81605,
-  "n_positions_sized": 78522,
-  "total_return": 9.766193717499998,
-  "annualized_return": 0.15309426599522524,
-  "annualized_vol": 0.04026983752673498,
-  "sharpe": 3.558440043328052,
-  "max_drawdown": -0.21361150446038443,
-  "final_nav": 107661937.17499998,
+  "n_positions_sized": 70167,
+  "total_return": 2.9486311284999998,
+  "annualized_return": 0.08580726630678837,
+  "annualized_vol": 0.021844933098782195,
+  "sharpe": 3.780068142477485,
+  "max_drawdown": -0.10283883168630535,
+  "final_nav": 39486311.285,
   "half_kelly_multiplier": 0.5,
-  "assumed_roundtrip_cost_pct": 0.03
+  "assumed_roundtrip_cost_pct": 0.03,
+  "max_premium_frac": 0.2,
+  "max_outstanding_premium_frac": 0.18967185451760446
 }

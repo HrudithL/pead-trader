@@ -1,0 +1,20 @@
+{
+  "name": "options_aggressive_overlap_60d",
+  "strategy_variant": "aggressive_overlap",
+  "asset_class": "options",
+  "hold_horizon_days": 60,
+  "n_positions_eligible": 81605,
+  "n_positions_sized": 78522,
+  "total_return": 9.766193717499998,
+  "annualized_return": 0.15309426599522524,
+  "annualized_vol": 0.04026983752673498,
+  "sharpe": 3.558440043328052,
+  "max_drawdown": -0.21361150446038443,
+  "final_nav": 107661937.17499998,
+  "half_kelly_multiplier": 0.5,
+  "assumed_roundtrip_cost_pct": 0.03,
+  "premium_cap_method": "per_entry_quarter; overlapping open positions not deducted",
+  "status": "historical_aggressive_variant_not_properly_capped",
+  "source": "git:HEAD:data/backtest_options_optimal_h60d_summary.json",
+  "notes": "Preserved for comparison. The 20% premium budget was applied to each new quarter independently, so outstanding premium could exceed 20% while 60-day positions overlapped."
+}
