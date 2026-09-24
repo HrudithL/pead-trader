@@ -27,6 +27,8 @@ calculation](#note-a-bug-i-found-and-fixed-in-the-sharperisk-metrics) below).
 | Strategy 6 | Strategy 5 + leverage cap raised 1.5x -> 2.5x | 6.49% | 4.94% | 1.30 | -16.6% |
 | Strategy 6 + 0.5x beta overlay | Strategy 6 + a separate market-index position sized to 0.5x trailing NAV | **10.08%** | 10.51% | 0.97 | -23.2% |
 | Strategy 7 | Strategy 5/6's signal, but the long and short legs are no longer forced dollar-equal each quarter | 7.30% | 6.56% | 1.11 | -15.5% |
+| Strategy 9 (9b) | Strategy 6, each position sized by 1 / its own pre-event idiosyncratic vol within its neutralization group | 6.71% | 4.49% | **1.47** | -15.6% |
+| Strategy 9 (9b), vol-matched | Same, sized up to Strategy 6's 4.94% volatility | 7.31% | 4.94% | 1.45 | -17.0% |
 
 **Currently recommended for live consideration: Strategy 6 (pure alpha) or Strategy 6 + 0.5x beta
 overlay (if a return closer to a 10-15% target, with correspondingly more market-correlated risk,
@@ -115,6 +117,58 @@ pandas 3, which `requirements.txt` now pins. Compare result files numerically, n
 7. **Strategy 6 + 0.5x beta overlay** and **Strategy 7** -- research pass on whether a genuinely
    higher return (10-15%, matching equity-market-like targets) is achievable, built from actual
    findings rather than more parameter tuning. See below.
+
+## Volatility subsampling (Strategy 9) -- and why it helps equities but not options
+
+Question: does a stock's own pre-announcement volatility change how much PEAD drift its SUE decile
+earns, and can the strategies use that? Every vol measure below is computed only from trading days
+before day0, and every split uses the previous quarter's breakpoints, so it is tradeable in real time.
+
+**The diagnostic (`40_vol_decile_diagnostic.py`) says yes, in the opposite direction from the
+textbook.** The D10-D1 holding-window spread is +4.3% (t=7.9) in the lowest idiosyncratic-vol
+tercile, +3.3% in the middle, and +2.1% (t=2.4) in the highest; the Fama-MacBeth SUE x vol
+interaction is t=-2.4 (idiosyncratic) / -2.7 (total vol). Vol has no effect on returns by itself
+(t~-0.1): it changes how much the SUE signal is worth, not the average return. The
+limits-to-arbitrage literature (e.g. Mendenhall 2004) predicts stronger drift in high-vol stocks;
+this data shows weaker.
+
+**Equities: sizing by vol helps, filtering doesn't** (`41_strategy9_vol_subsampled.py`, every
+variant through one engine that reproduces Strategy 6 to the dollar):
+
+| Variant | Ann. Return | Ann. Vol | Sharpe | Sharpe 96-01 / 02-07 / 08-13 | Max DD |
+|---|---|---|---|---|---|
+| Strategy 6 (baseline) | 6.49% | 4.94% | 1.30 | 2.07 / 1.52 / 0.47 | -16.6% |
+| 9a walk-forward vol-cell filter | 6.27% | 5.05% | 1.23 | 1.90 / 1.44 / 0.48 | -16.7% |
+| **9b inverse idiosyncratic vol** | **6.71%** | **4.49%** | **1.47** | **2.40 / 1.63 / 0.59** | **-15.6%** |
+| 9b, vol-matched to Strategy 6 | 7.31% | 4.94% | 1.45 | 2.39 / 1.66 / 0.52 | -17.0% |
+| 9c = 9a + 9b | 6.54% | 4.55% | 1.41 | 2.26 / 1.57 / 0.60 | -15.7% |
+
+9b has no fitted parameters and improves Sharpe in every era. Using total instead of idiosyncratic
+vol gives the same result (1.46), and a half-strength 1/sqrt(vol) scale gives about half the gain
+(1.39), the dose-response a real effect should show. The walk-forward filter only fires on 2 of
+432 cell-quarters and doesn't help. The effect is a smooth gradient, not one broken cell. A "drop
+the high-vol tercile" rule scores Sharpe 1.73, but it was chosen by looking at this full-sample
+diagnostic, so it is look-ahead. It is kept only as a labeled reference, and its vol-matched
+2008-2013 Sharpe is 0.19.
+
+**Options: conditioning the Kelly selector on vol makes it worse** (`53_options_vol_comparison.py`,
+60-day horizon):
+
+| Variant | 20% cap: ret / Sharpe / DD | 30% cap: ret / Sharpe / DD |
+|---|---|---|
+| **Baseline Kelly selector (decile-only distribution)** | **8.58% / 3.78 / -10.3%** | **12.26% / 3.49 / -17.4%** |
+| Distribution per (decile, vol tercile), rescaled by each stock's own vol | 2.14% / 1.83 / -9.7% | 2.96% / 1.56 / -16.4% |
+| Distribution per (decile, vol tercile), plain returns | 4.61% / 2.89 / -9.9% | 6.41% / 2.60 / -16.8% |
+| Skip the richest prior-quarter tercile of implied/realized vol | 7.92% / 3.35 / -12.1% | 11.28% / 3.10 / -18.7% |
+
+The baseline wins in every era at both caps. The reason is where its edge actually comes from.
+The pooled per-decile distribution is too wide for low-vol stocks, so the baseline buys cheap
+out-of-the-money calls on them (median strike 12% above spot). Those calls returned about +99% on
+average over 60 days: after earnings, low-vol stocks move much more than their trailing vol and
+their option prices imply. A vol-aware distribution agrees with the market's pricing there and
+gives that edge up. The implied/realized filter also removes profitable trades. Neither is
+adopted. The positive lead this points to, that low-vol names' post-earnings upside tail is
+underpriced, is a separate hypothesis that would need its own test.
 
 ## Aggressive variants: trading Sharpe for more absolute return
 
@@ -306,6 +360,9 @@ trailing-NAV compounding backtest, and every strategy from "the initial 3" onwar
 26_strategy7_unconstrained_netexposure.py  # Strategy 7: no long=short dollar constraint
 27_ear_signal_diagnostic.py             # EAR (announcement-window return) signal research, leak-free
 28_sue_reversal_test.py                 # SUE lag-4 autocorrelation / reversal test
+39_vol_features.py                      # Strategy 9: pre-event total + idiosyncratic vol, prior-quarter ranks
+40_vol_decile_diagnostic.py             # Strategy 9 gate: decile x vol drift, FM interaction test
+41_strategy9_vol_subsampled.py          # Strategy 9 variants vs. a same-run Strategy 6 (lib/backtest_v2.py)
 ```
 
 **Two negative results (27, 28) are included deliberately.** Not every research thread in this
@@ -398,6 +455,8 @@ scripts/options_strategy/47b_attach_underlying_price.py    # Tier 1.5 data: unde
 scripts/options_strategy/48_optimal_contract_selector.py   # Tier 1.5: GPU Kelly-optimal strike selection across the full chain
 scripts/options_strategy/49_forward_prices_optimal.py      # Tier 1.5 data: forward mid prices for the selected contracts
 scripts/options_strategy/50_options_backtest_optimal.py    # Tier 1.5: backtests the Kelly-optimal picks, vs. Tier 1's near-ATM
+scripts/options_strategy/47c_event_vol_features.py         # vol variants: per-event ATM IV, realized vol, IV/RV
+scripts/options_strategy/53_options_vol_comparison.py      # vol variants (46/48 --vol-conditioned, 49/50 --tag, 50 --iv-rv-filter) vs. baseline
 scripts/options_strategy/41_build_daily_option_paths.py    # Tier 2 data: full daily price path per position (not just 6 checkpoints)
 scripts/options_strategy/42_gpu_exit_optimizer.py          # Tier 2: GPU dynamic stop-loss/profit-target exit-rule search
 scripts/options_strategy/43_gpu_param_sweep.py             # Tier 3: GPU-batched sweep over strike/DTE/sizing/exit-rule combos

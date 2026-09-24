@@ -52,6 +52,15 @@ still trivial next to the multi-hour OM scans elsewhere in this pipeline, and a 
 version of the lookup itself is a reasonable future optimization if it ever becomes the bottleneck
 relative to the actual score_batch tensor work.
 
+## --vol-conditioned
+
+Prices each event off 46 --vol-conditioned's distribution for its (decile, vol tercile) cell instead,
+turning that cell's vol-unit states back into returns with the event's OWN pre-event daily vol
+(ret = market_drift + z_state * tvol_60d, from 47c). A high-vol stock's chain is therefore scored
+against a correspondingly wide distribution (and its weaker drift), a low-vol stock's against a
+narrow one -- instead of every stock in a decile sharing one pooled spread. Writes
+optimal_contracts_vol.parquet (see --tag), leaving the default picks untouched.
+
 Output: data/event_options/optimal_contracts.parquet -- one row per event: the Kelly-optimal pick
         (contract, side, optimal Kelly fraction, growth rate) AND, for direct comparison, the
         naive-expected-value pick a calcMaxER-style selector would have made instead.
@@ -134,8 +143,10 @@ def pad_batch(chain_batch: pd.DataFrame, max_k: int):
     decile = np.zeros(b, dtype=int)
     ann_quarter = np.empty(b, dtype=object)
     optionid = np.full((b, max_k), -1, dtype=np.int64)
+    tvol = np.full(b, np.nan)
 
     has_optionid = "optionid" in chain_batch.columns
+    has_tvol = "tvol_60d" in chain_batch.columns
     for local_i, (eid, grp) in enumerate(chain_batch.groupby("event_id", sort=True)):
         n = min(len(grp), max_k)
         g = grp.iloc[:n]
@@ -148,7 +159,9 @@ def pad_batch(chain_batch: pd.DataFrame, max_k: int):
         ann_quarter[local_i] = g["ann_quarter"].iloc[0]
         if has_optionid:
             optionid[local_i, :n] = g["optionid"].to_numpy()
-    return side, strike, premium, mask, spot, decile, ann_quarter, optionid
+        if has_tvol:
+            tvol[local_i] = g["tvol_60d"].iloc[0]
+    return side, strike, premium, mask, spot, decile, ann_quarter, optionid, tvol
 
 
 def score_batch(xp, side, strike, premium, mask, spot, ret_state, prob):
@@ -186,7 +199,22 @@ def main():
                          help="pad/truncate each event's chain to this many contracts")
     parser.add_argument("--batch-size", type=int, default=2000,
                          help="events processed per GPU batch (bounds tensor memory)")
+    parser.add_argument("--vol-conditioned", action="store_true",
+                         help="price each event off 46 --vol-conditioned's (decile, vol tercile) "
+                              "distribution, rescaled by the event's own pre-event vol (needs "
+                              "47c's event_vol_features.parquet); output tagged _vol by default")
+    parser.add_argument("--vol-dist", default="vol",
+                         help="with --vol-conditioned: which 46 output to price against, "
+                              "decile_return_distributions_<vol-dist>.parquet ('vol' = vol units, "
+                              "'volterc' = 46 --vol-units return). Also the default --tag.")
+    parser.add_argument("--tag", default=None,
+                         help="suffix for the output file (optimal_contracts_<tag>.parquet); "
+                              "default: none, or 'vol' with --vol-conditioned")
     args = parser.parse_args()
+    if args.tag is None:
+        args.tag = args.vol_dist if args.vol_conditioned else ""
+    if args.vol_conditioned and args.mock_data:
+        parser.error("--vol-conditioned has no --mock-data path")
 
     max_strikes, batch_size = args.max_strikes, args.batch_size
     if args.smoke_test:
@@ -200,10 +228,34 @@ def main():
         print(f"backend: {xp.__name__} (device={resolved_device})")
 
         chain, dist = load_chain_and_distribution(args)
+        if args.vol_conditioned:
+            # same walk-forward as_of_quarter join as the default distribution, one extra key
+            # (vol tercile), and each event's own tvol_60d to turn vol-unit states into returns
+            dist = pd.read_parquet(DATA / "metadata" / f"decile_return_distributions_{args.vol_dist}.parquet")
+            vol_units = dist["units"].iloc[0] == "vol" if "units" in dist.columns else True
+            feats = pd.read_parquet(DATA / "event_options" / "event_vol_features.parquet",
+                                    columns=["secid", "day0_date", "tvol_60d"])
+            feats["day0_date"] = pd.to_datetime(feats["day0_date"])
+            chain["secid"] = chain["secid"].astype("int64")
+            chain = chain.merge(feats, on=["secid", "day0_date"], how="left")
+            n_no_vol = chain.loc[chain["tvol_60d"].isna(), "event_id"].nunique()
+            if n_no_vol:
+                print(f"dropping {n_no_vol:,} events with no pre-event tvol_60d (can't be vol-scaled)")
+            chain = chain[chain["tvol_60d"].notna()].copy()
+            bps = dist.drop_duplicates("as_of_quarter").set_index("as_of_quarter")[["tvol_lo", "tvol_hi"]]
+            lo = chain["ann_quarter"].map(bps["tvol_lo"])
+            hi = chain["ann_quarter"].map(bps["tvol_hi"])
+            chain["vol_tercile"] = np.where(chain["tvol_60d"] <= lo, 0,
+                                             np.where(chain["tvol_60d"] <= hi, 1, 2))
         dist_h = dist[dist["horizon"] == args.horizon].sort_values(["as_of_quarter", "decile", "state"])
         n_states = dist_h["state"].nunique()
-        dist_by_key = {(aq, d): g.sort_values("state") for (aq, d), g in
-                       dist_h.groupby(["as_of_quarter", "decile"])}
+        if args.vol_conditioned:
+            dist_by_key = {(aq, d, t): g.sort_values("state") for (aq, d, t), g in
+                           dist_h.groupby(["as_of_quarter", "decile", "vol_tercile"])}
+            vt_by_event = chain.drop_duplicates("event_id").set_index("event_id")["vol_tercile"]
+        else:
+            dist_by_key = {(aq, d): g.sort_values("state") for (aq, d), g in
+                           dist_h.groupby(["as_of_quarter", "decile"])}
 
         # drop events whose own ann_quarter has no matching as_of_quarter distribution (the
         # walk-forward warmup window script 46 skips, or a horizon this run wasn't given) -- these
@@ -228,11 +280,21 @@ def main():
             chain_batch["event_id"] = chain_batch["event_id"].map(
                 {eid: i for i, eid in enumerate(sorted(chain_batch["event_id"].unique()))})
 
-            side, strike, premium, mask, spot, decile, ann_quarter, optionid = pad_batch(chain_batch, max_strikes)
-            ret_state = np.stack([dist_by_key[(aq, d)]["ret_state"].to_numpy()
-                                   for aq, d in zip(ann_quarter, decile)])
-            prob = np.stack([dist_by_key[(aq, d)]["prob"].to_numpy()
-                              for aq, d in zip(ann_quarter, decile)])
+            side, strike, premium, mask, spot, decile, ann_quarter, optionid, tvol = pad_batch(chain_batch, max_strikes)
+            if args.vol_conditioned:
+                vt = [int(vt_by_event[eid]) for eid in batch_events]
+                cells = [dist_by_key[(aq, d, t)] for aq, d, t in zip(ann_quarter, decile, vt)]
+                z = np.stack([c["z_state"].to_numpy() for c in cells])
+                drift = np.array([c["market_drift"].iloc[0] for c in cells])
+                # a return below -100% isn't a price; floor keeps the put payoff <= strike
+                scale = tvol[:, None] if vol_units else 1.0
+                ret_state = np.maximum(drift[:, None] + z * scale, -0.99)
+                prob = np.stack([c["prob"].to_numpy() for c in cells])
+            else:
+                ret_state = np.stack([dist_by_key[(aq, d)]["ret_state"].to_numpy()
+                                       for aq, d in zip(ann_quarter, decile)])
+                prob = np.stack([dist_by_key[(aq, d)]["prob"].to_numpy()
+                                  for aq, d in zip(ann_quarter, decile)])
 
             side_x, strike_x, premium_x = xp.asarray(side), xp.asarray(strike), xp.asarray(premium)
             mask_x, spot_x = xp.asarray(mask), xp.asarray(spot)
@@ -274,10 +336,10 @@ def main():
         # satisfy this pipeline's own or run_pipeline.py's resume/skip check for a real full run,
         # and so 49_forward_prices_optimal.py (which has no mock-data path of its own) never
         # mistakes it for the genuine picks file.
-        out_tag = "_smoke" if (args.mock_data or args.smoke_test) else ""
+        out_tag = "_smoke" if (args.mock_data or args.smoke_test) else (f"_{args.tag}" if args.tag else "")
         out_path = DATA / "event_options" / f"optimal_contracts{out_tag}.parquet"
         out.to_parquet(out_path, index=False)
-        if out_tag:
+        if args.mock_data or args.smoke_test:
             print(f"--mock-data/--smoke-test: wrote {out_path}, NOT the canonical "
                   f"optimal_contracts.parquet")
 

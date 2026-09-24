@@ -35,6 +35,17 @@ rule, discovered the right side of the PEAD trade on its own (36% put share at D
 The real next step is an expanding-window rebuild of script 46 before this Sharpe number means
 anything as an achievable, real-time-tradeable result.
 
+## Volatility variants (--tag, --iv-rv-filter)
+
+--tag vol backtests the picks from 48 --vol-conditioned (optimal_forward_prices_vol.parquet) instead.
+--iv-rv-filter skips events whose day0 options are expensive relative to the stock's own realized
+vol: an event is ineligible when its iv_rv (47c: ATM implied vol / trailing 60-day realized vol) is
+above the 67th percentile of iv_rv among events announced in the PREVIOUS quarter (prior-quarter
+breakpoints, so no event is filtered using information from its own or later quarters). The idea is
+the variance risk premium: a PEAD option buyer needs the directional drift to outrun the extra
+premium, and that's hardest where implied vol is richest relative to what the stock actually does.
+Both default off, so the default run is unchanged. Pair them with --output-prefix.
+
 Output: data/backtest_options_optimal_h<H>d.csv / _summary.json
         data/backtest_options_optimal_comparison.csv
 """
@@ -59,10 +70,33 @@ CONTRACT_MULTIPLIER = 100
 HORIZONS = [1, 5, 10, 20, 40, 60]
 
 
+def add_iv_rv_eligibility(panel: pd.DataFrame) -> pd.DataFrame:
+    """iv_rv_eligible = iv_rv <= the previous announcement quarter's 67th percentile of iv_rv."""
+    feats = pd.read_parquet(DATA / "event_options" / "event_vol_features.parquet",
+                            columns=["secid", "day0_date", "iv_rv", "ann_quarter"])
+    feats["day0_date"] = pd.to_datetime(feats["day0_date"])
+    quarters = sorted(feats["ann_quarter"].dropna().unique())
+    cut = {q: feats.loc[feats["ann_quarter"] == q_prev, "iv_rv"].quantile(2 / 3)
+           for q_prev, q in zip(quarters[:-1], quarters[1:])}
+    feats["iv_rv_cut"] = feats["ann_quarter"].map(cut)
+    feats["iv_rv_eligible"] = (feats["iv_rv"] <= feats["iv_rv_cut"]).fillna(False)
+    n = len(panel)
+    panel = panel.copy()
+    panel["secid"] = panel["secid"].astype("int64")
+    panel["day0_date"] = pd.to_datetime(panel["day0_date"])
+    panel = panel.merge(feats[["secid", "day0_date", "iv_rv_eligible"]], on=["secid", "day0_date"], how="left")
+    assert len(panel) == n, "event_vol_features merge fanned out"
+    panel["iv_rv_eligible"] = panel["iv_rv_eligible"].fillna(False).astype(bool)
+    print(f"--iv-rv-filter: {panel['iv_rv_eligible'].mean():.1%} of events eligible")
+    return panel
+
+
 def run_backtest(panel: pd.DataFrame, hold_horizon: int, cal_dates: np.ndarray,
                  max_premium_frac: float, output_prefix: str) -> dict:
     n_days = len(cal_dates)
     active = panel["kelly_growth"] > 0
+    if "iv_rv_eligible" in panel.columns:
+        active = active & panel["iv_rv_eligible"]
     entry_mid = panel["kelly_premium"].to_numpy()
     kelly_frac = panel["kelly_fraction"].to_numpy() * HALF_KELLY
 
@@ -202,12 +236,20 @@ def main():
                         help="maximum outstanding premium as a fraction of trailing NAV")
     parser.add_argument("--output-prefix", default="backtest_options_optimal",
                         help="prefix for generated CSV, quarterlog, and summary files")
+    parser.add_argument("--tag", default="",
+                        help="backtest optimal_forward_prices_<tag>.parquet (e.g. 'vol')")
+    parser.add_argument("--iv-rv-filter", action="store_true",
+                        help="skip events in the richest prior-quarter tercile of implied/realized "
+                             "vol (needs 47c's event_vol_features.parquet)")
     args = parser.parse_args()
     if not 0 < args.max_premium_frac <= 1:
         parser.error("--max-premium-frac must be in (0, 1]")
 
     with StageTimer("50_options_backtest_optimal"):
-        panel = pd.read_parquet(DATA / "event_options" / "optimal_forward_prices.parquet")
+        tag = f"_{args.tag}" if args.tag else ""
+        panel = pd.read_parquet(DATA / "event_options" / f"optimal_forward_prices{tag}.parquet")
+        if args.iv_rv_filter:
+            panel = add_iv_rv_eligibility(panel)
         cal = pd.read_parquet(DATA / "metadata" / "om_trading_calendar.parquet")
         cal_dates = cal.sort_values("date")["date"].to_numpy()
         print(f"panel: {len(panel):,} events, {int((panel['kelly_growth']>0).sum()):,} with "

@@ -32,8 +32,8 @@ HORIZONS = [1, 5, 10, 20, 40, 60]
 OUT_DIR = DATA_DIR / "event_options"
 
 
-def _process_year(year, grp, force=False):
-    year_out_path = OUT_DIR / f"optimal_forward_prices_{year}.parquet"
+def _process_year(year, grp, force=False, tag=""):
+    year_out_path = OUT_DIR / f"optimal_forward_prices{tag}_{year}.parquet"
     if year_out_path.exists() and not force:
         return year, pd.read_parquet(year_out_path), \
             f"{year}: already written, skipping ({year_out_path})"
@@ -59,7 +59,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_jobs_arg(parser)
     add_force_arg(parser)
+    parser.add_argument("--tag", default="",
+                         help="read optimal_contracts_<tag>.parquet and write "
+                              "optimal_forward_prices_<tag>[_<year>].parquet (e.g. 'vol' for 48 "
+                              "--vol-conditioned's picks); default: the untagged files")
     args = parser.parse_args()
+    tag = f"_{args.tag}" if args.tag else ""
 
     cal = pd.read_parquet(METADATA_DIR / "om_trading_calendar.parquet").sort_values("date").reset_index(drop=True)
     cal_dates = cal["date"].values
@@ -82,7 +87,7 @@ def main():
             return pd.NaT
         return cal_dates[j]
 
-    picks = pd.read_parquet(OUT_DIR / "optimal_contracts.parquet")
+    picks = pd.read_parquet(OUT_DIR / f"optimal_contracts{tag}.parquet")
     picks["day0_date"] = pd.to_datetime(picks["day0_date"])
     print(f"picks loaded: {len(picks):,} events")
 
@@ -110,12 +115,12 @@ def main():
     results = {}
     if args.jobs <= 1 or len(year_groups) <= 1:
         for year, grp in year_groups.items():
-            year, matched, msg = _process_year(year, grp, args.force)
+            year, matched, msg = _process_year(year, grp, args.force, tag)
             print(msg, flush=True)
             results[year] = matched
     else:
         with ProcessPoolExecutor(max_workers=args.jobs) as ex:
-            futures = {ex.submit(_process_year, year, grp, args.force): year
+            futures = {ex.submit(_process_year, year, grp, args.force, tag): year
                        for year, grp in year_groups.items()}
             for fut in as_completed(futures):
                 year, matched, msg = fut.result()
@@ -141,7 +146,7 @@ def main():
             if fwd_col in panel.columns:
                 panel[f"{which}_ret_fwd_{h}d"] = panel[fwd_col] / panel[entry_col] - 1.0
 
-    out_path = OUT_DIR / "optimal_forward_prices.parquet"
+    out_path = OUT_DIR / f"optimal_forward_prices{tag}.parquet"
     panel.to_parquet(out_path, index=False)
     print(f"\nwrote {out_path} ({len(panel):,} rows)")
 

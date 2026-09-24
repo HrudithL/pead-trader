@@ -40,7 +40,6 @@ the same cleaning 23/24 apply, same order, superset of its columns).
 """
 import sys
 import time
-import warnings
 from pathlib import Path
 
 import numpy as np
@@ -49,47 +48,10 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common.paths import DATA_DIR, RAW_EQUITY_DIR
+from common.volatility import (trailing_window, total_vol, idio_vol, TVOL_WINDOW, IVOL_WINDOW)
 from lib.backtest_v2 import load_mktadj_panel, load_positions
 
-TVOL_WINDOW, TVOL_MIN = 60, 30
-IVOL_WINDOW, IVOL_MIN = 252, 120
 CHUNK = 20_000  # events per gather chunk: (20k x 252) float64 matrices, ~40MB each
-
-
-def trailing_window(values, eq_permno, entry_row_idx, event_permno, window):
-    """(n, window) matrix of values[entry-window .. entry-1], NaN where the window runs off the
-    panel or into a different permno's history."""
-    offsets = np.arange(-window, 0)
-    idx = entry_row_idx[:, None] + offsets[None, :]
-    in_bounds = idx >= 0
-    idx_safe = np.clip(idx, 0, len(values) - 1)
-    valid = in_bounds & (eq_permno[idx_safe] == event_permno[:, None])
-    return np.where(valid, values[idx_safe], np.nan)
-
-
-def total_vol(ret_win):
-    n = np.sum(np.isfinite(ret_win), axis=1)
-    with warnings.catch_warnings():  # rows with < 2 valid days; masked to NaN just below anyway
-        warnings.simplefilter("ignore", RuntimeWarning)
-        v = np.nanstd(ret_win, axis=1, ddof=1)
-    return np.where(n >= TVOL_MIN, v, np.nan)
-
-
-def idio_vol(ret_win, mkt_win):
-    """Per-row OLS of ret on mkt over the jointly-valid days; residual std (ddof=2)."""
-    ok = np.isfinite(ret_win) & np.isfinite(mkt_win)
-    n = ok.sum(axis=1)
-    r = np.where(ok, ret_win, 0.0)
-    m = np.where(ok, mkt_win, 0.0)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        r_mean = r.sum(axis=1) / n
-        m_mean = m.sum(axis=1) / n
-        rc = np.where(ok, r - r_mean[:, None], 0.0)
-        mc = np.where(ok, m - m_mean[:, None], 0.0)
-        beta = (rc * mc).sum(axis=1) / (mc * mc).sum(axis=1)
-        resid = np.where(ok, rc - beta[:, None] * mc, 0.0)
-        v = np.sqrt((resid * resid).sum(axis=1) / (n - 2))
-    return np.where(n >= IVOL_MIN, v, np.nan), np.where(n >= IVOL_MIN, beta, np.nan)
 
 
 def prior_quarter_ranks(df, col):

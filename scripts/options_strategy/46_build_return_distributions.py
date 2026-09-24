@@ -48,6 +48,30 @@ guess.
 Output: data/metadata/decile_return_distributions.parquet
         columns: as_of_quarter (str, e.g. "2003Q2" -- distribution built from all ann_quarter <
                  this value), decile, horizon, state, prob, ret_state
+
+## --vol-conditioned: condition on the stock's own pre-event volatility too
+
+The default distribution is conditioned on decile alone, so a 70%-vol stock and a 20%-vol stock in
+the same decile are priced off the same return spread -- wrong for options, whose payoffs depend
+mostly on that spread. The equity-side diagnostic (equity_strategy/40_vol_decile_diagnostic.py) also
+found the PEAD drift itself is WEAKER in high-vol stocks, so the center is off too, not just the
+width. With --vol-conditioned this script instead builds one distribution per (decile, vol tercile)
+cell, with each historical return first divided by that stock's own trailing 60-day daily vol
+(common.volatility, days strictly before day0). States are stored in those vol units (z_state); 48
+turns them back into returns for a specific event as market_drift + z_state * that event's own
+tvol_60d. Vol terciles use the PREVIOUS announcement quarter's 33rd/67th tvol percentiles (stored per
+row as tvol_lo/tvol_hi, so 48 classifies the event being priced with the exact same breakpoints),
+and the same walk-forward (strictly prior quarters) rule as the default mode.
+
+--vol-units return keeps the same (decile, vol tercile) cells but leaves returns in plain return
+units (z_state is then a return, and 48 adds it to market_drift without rescaling by the event's
+own vol). It separates "condition on the vol tercile" from "rescale every stock by its own
+trailing vol", which matters because trailing vol mean-reverts (see the Tier 1.5 vol results).
+
+Output (--vol-conditioned): data/metadata/decile_return_distributions_vol.parquet
+        (--vol-units return: decile_return_distributions_volterc.parquet)
+        columns: as_of_quarter, decile, vol_tercile (0 low / 1 / 2 high), horizon, state, prob,
+                 z_state, market_drift, tvol_lo, tvol_hi, units ("vol" or "return")
 """
 import argparse
 import sys
@@ -58,7 +82,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.paths import DATA_DIR, METADATA_DIR, EVENTS_DIR
+from common.paths import DATA_DIR, METADATA_DIR, EVENTS_DIR, RAW_EQUITY_DIR
+from common.volatility import event_total_vol
 
 DATA = DATA_DIR
 HORIZONS = [1, 5, 10, 20, 40, 60]
@@ -113,10 +138,60 @@ def build_distribution_for_window(prior: pd.DataFrame, n_states: int) -> list[di
     return rows
 
 
+def prior_quarter_tvol_breakpoints(events: pd.DataFrame) -> dict:
+    """{quarter Q: (lo, hi)} = 33rd/67th percentile of tvol_60d among events announced in the
+    quarter BEFORE Q -- the breakpoints usable to classify an event announced in Q."""
+    q_sorted = sorted(events["ann_quarter"].unique())
+    out = {}
+    for q_prev, q in zip(q_sorted[:-1], q_sorted[1:]):
+        ref = events.loc[events["ann_quarter"] == q_prev, "tvol_60d"].dropna()
+        if len(ref) >= 30:
+            out[q] = tuple(np.quantile(ref, [1 / 3, 2 / 3]))
+    return out
+
+
+def build_vol_distribution_for_window(prior: pd.DataFrame, n_states: int, units: str = "vol") -> list[dict]:
+    """--vol-conditioned counterpart of build_distribution_for_window: one distribution per
+    (decile, vol_tercile, horizon), states in units of each stock's own daily vol."""
+    market_drift = {}
+    for h in HORIZONS:
+        raw_col, adj_col = f"ret_fwd_{h}d", f"ret_fwd_{h}d_mktadj"
+        both = prior[[raw_col, adj_col]].dropna()
+        market_drift[h] = float((both[raw_col] - both[adj_col]).mean()) if len(both) else 0.0
+
+    usable = prior[prior["vol_tercile"].notna() & (prior["tvol_60d"] > 0)]
+    rows = []
+    for h in HORIZONS:
+        col = f"ret_fwd_{h}d_mktadj"
+        for (d, t), g in usable.groupby(["decile", "vol_tercile"]):
+            z = (g[col] / g["tvol_60d"] if units == "vol" else g[col]).dropna().to_numpy()
+            if len(z) < n_states * MIN_OBS_PER_CELL_MULT:
+                return None
+            quantile_edges = np.quantile(z, np.linspace(0, 1, n_states + 1))
+            bucket_idx = np.clip(np.digitize(z, quantile_edges[1:-1]), 0, n_states - 1)
+            for state in range(n_states):
+                in_state = z[bucket_idx == state]
+                if len(in_state) == 0:
+                    continue
+                rows.append(dict(decile=int(d), vol_tercile=int(t), horizon=h, state=state,
+                                  prob=len(in_state) / len(z), z_state=float(in_state.mean()),
+                                  market_drift=market_drift[h], units=units))
+    if usable.groupby(["decile", "vol_tercile"]).ngroups < 30:
+        return None
+    return rows
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n-states", type=int, default=N_STATES_DEFAULT,
                          help="quantile buckets per (decile, horizon) cell. Default: %(default)s")
+    parser.add_argument("--vol-conditioned", action="store_true",
+                         help="build per-(decile, vol tercile) distributions in units of each "
+                              "stock's own pre-event vol (see docstring); writes "
+                              "decile_return_distributions_vol.parquet instead")
+    parser.add_argument("--vol-units", choices=["vol", "return"], default="vol",
+                         help="with --vol-conditioned: states in units of each stock's own daily "
+                              "vol (default) or plain returns (writes ..._volterc.parquet)")
     args = parser.parse_args()
 
     events = pd.read_parquet(EVENTS_DIR / "equity_events_1996_2013.parquet")
@@ -127,6 +202,9 @@ def main():
 
     quarters = sorted(events["ann_quarter"].unique())
     print(f"{len(quarters)} announcement quarters spanning {quarters[0]}..{quarters[-1]}")
+
+    if args.vol_conditioned:
+        return main_vol_conditioned(events, quarters, args)
 
     all_rows = []
     skipped_quarters = []
@@ -166,6 +244,49 @@ def main():
           f"D1->D10 -- the same PEAD ordering every other script in this project finds):")
     print(check.xs(60, level="horizon")["expected_ret"].round(4))
     print(f"\nwrote {out_path} ({len(dist):,} rows across {n_priced} as-of quarters)")
+
+
+def main_vol_conditioned(events, quarters, args):
+    t0 = time.time()
+    events = events[events["permno"].notna()].copy()
+    events["tvol_60d"] = event_total_vol(events["permno"], events["day0_date"], RAW_EQUITY_DIR)
+    print(f"tvol_60d coverage: {events['tvol_60d'].notna().mean():.1%}  [{time.time()-t0:.1f}s]")
+    bps = prior_quarter_tvol_breakpoints(events)
+    lo = events["ann_quarter"].map(lambda q: bps.get(q, (np.nan, np.nan))[0]).astype(float)
+    hi = events["ann_quarter"].map(lambda q: bps.get(q, (np.nan, np.nan))[1]).astype(float)
+    v = events["tvol_60d"]
+    events["vol_tercile"] = np.where(v.isna() | lo.isna(), np.nan,
+                                      np.where(v <= lo, 0, np.where(v <= hi, 1, 2)))
+
+    all_rows, skipped = [], []
+    for qi, q in enumerate(quarters):
+        if qi < MIN_WARMUP_QUARTERS or q not in bps:
+            skipped.append(q)
+            continue
+        rows = build_vol_distribution_for_window(events[events["ann_quarter"] < q], args.n_states,
+                                                  args.vol_units)
+        if rows is None:
+            skipped.append(q)
+            continue
+        for r in rows:
+            r["as_of_quarter"] = str(q)
+            r["tvol_lo"], r["tvol_hi"] = bps[q]
+        all_rows.extend(rows)
+
+    dist = pd.DataFrame(all_rows)
+    suffix = "vol" if args.vol_units == "vol" else "volterc"
+    out_path = METADATA_DIR / f"decile_return_distributions_{suffix}.parquet"
+    dist.to_parquet(out_path, index=False)
+    print(f"{len(quarters) - len(skipped)} quarters priced, {len(skipped)} skipped "
+          f"(warmup / thin cells)  [{time.time()-t0:.1f}s]")
+    last_q = dist["as_of_quarter"].iloc[-1]
+    last = dist[(dist["as_of_quarter"] == last_q) & (dist["horizon"] == 60)].copy()
+    last["contrib"] = last["prob"] * last["z_state"]
+    ez = last.groupby(["decile", "vol_tercile"])["contrib"].sum().unstack("vol_tercile")
+    unit_label = "DAILY-VOL units" if args.vol_units == "vol" else "return units"
+    print(f"\nexpected 60d mkt-adj return in {unit_label} by decile x vol tercile, as-of {last_q}:")
+    print(ez.round(3).to_string())
+    print(f"\nwrote {out_path} ({len(dist):,} rows)")
 
 
 if __name__ == "__main__":

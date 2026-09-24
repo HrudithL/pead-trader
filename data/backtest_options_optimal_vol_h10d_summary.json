@@ -1,0 +1,15 @@
+{
+  "hold_horizon_days": 10,
+  "n_positions_eligible": 76498,
+  "n_positions_sized": 54345,
+  "total_return": 0.0833469222500002,
+  "annualized_return": 0.004810277255112405,
+  "annualized_vol": 0.009068442139402577,
+  "sharpe": 0.5337054112037809,
+  "max_drawdown": -0.04169623644135363,
+  "final_nav": 10833469.222500002,
+  "half_kelly_multiplier": 0.5,
+  "assumed_roundtrip_cost_pct": 0.03,
+  "max_premium_frac": 0.2,
+  "max_outstanding_premium_frac": 0.18003598875550544
+}
