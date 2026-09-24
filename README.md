@@ -861,3 +861,12 @@ GPU-tiered pipelines -- options-strategy (scripts 40+) and equity-strategy Strat
 actually running their GPU tiers; every script in both pipelines still runs on `--device cpu` with
 just the base requirements (equity's `33_gpu_walkforward_signal.py` needs only CuPy of the three,
 since its model is hand-rolled against the numpy/cupy backend rather than PyTorch).
+
+## Live paper trading
+
+`scripts/live_trading/` runs Strategy 6 (equities) and the cap30/h60d/half-Kelly optimal-contract
+selector (options) autonomously against real, free, live data -- real earnings-surprise detection,
+real prices and option chains, real (paper) brokerage fills -- on a daily GitHub Actions schedule,
+tracking its own NAV/P&L over time. See **[LIVE_TRADING.md](LIVE_TRADING.md)** for the full design:
+what live data source stands in for each WRDS/OptionMetrics input the backtests used, why, and what
+that changes.
