@@ -77,10 +77,9 @@ this setup keeps the data on the drive, not in git, by design.
 `pead_wrds_data/` is a straight copy of this repo's own `data/{raw_wrds,normalized_equity,
 earnings,events,metadata,results}/` folders, staged here once from the machine that holds the
 original WRDS pull. If you ever refresh the underlying WRDS pull, redo that copy -- there's no
-sync mechanism, this is a one-time (or refresh-when-you-refresh-the-data) staging step. Since
-there's no way to verify from this end whether a given staged copy is still current, always ask
-whoever refreshed it last, and treat results built from a GPU-box run as unverified until you
-know the copy you ran against actually matches the source machine's `data/` at the time of the run.
+sync mechanism, this is a one-time (or refresh-when-you-refresh-the-data) staging step. Verify
+the staged copy against the git-tracked `data/raw_data_manifest.json` before every real run (see
+"Step 2b" below) rather than trusting it by assumption.
 
 ## Never symlink data into this repo
 

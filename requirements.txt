@@ -1,4 +1,7 @@
-pandas>=2.0
+# pandas 3 is required, not just preferred: every committed result in data/ was built on pandas 3,
+# and pandas 2 assigns a handful of book-to-market terciles differently (06_ff_adjustment.py's
+# per-quarter qcut), which shifts 7 of 144 decay-day cells and Strategy 6's return by ~0.2pp.
+pandas>=3.0,<4
 numpy>=1.24
 pyarrow>=14.0
 reportlab>=4.0

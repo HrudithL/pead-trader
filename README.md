@@ -71,16 +71,22 @@ it blends a walk-forward-trained ML score with the SUE-rank tilt and picks its o
 values strategies 4-7 use, the same escalation in compute the options side went through in its own
 roadmap. Its pipeline is fully built and `--mock-data`-verified end to end, and has also been run
 for real once (`data/backtest_v2_strategy8_summary.json`, `data/equity_gpu_sweep_*`,
-`data/equity_walkforward_summary.json`) -- **but that run's status is currently unverified, not
-confirmed correct.** It was built against a raw-WRDS-pull copy staged onto an external drive for a
-GPU box, and that staged copy was later found to have drifted from the copy this README's own
-Strategies 1-7 table is built from (confirmed by `data/cell_decay_days.csv` changing on ~40% of
-cells with no code change in between, and `20_strategy4_tilted.py`'s own internal grid search
-picking a different trim/tilt optimum on a since-reverted rerun against that same drifted copy --
-see `scripts/git-hooks/pre-commit` and GPU_SETUP.md's "Never symlink data into this repo" for the
-incident, and the process gap that let it happen unnoticed). Strategy 8's numbers are left in place
-as a historical record rather than deleted, but not added to the results table above, and should be
-treated as unverified until re-run against a checksummed, confirmed-canonical raw-data copy.
+`data/equity_walkforward_summary.json`). It is not yet in the results table above only because it
+has not been independently re-run since.
+
+An earlier version of this README said that run used a raw-data copy (staged onto an external
+drive for a GPU box) that had "drifted" from the copy Strategies 1-7 were built from. **That turned
+out to be wrong.** Re-checked on 2026-09-24: the staged copy is byte-identical to the original
+(`data/raw_data_manifest.json` now pins it by sha256), and rebuilding the whole equity chain
+(01 -> 24) from it reproduces the committed Strategy 1-6 results exactly -- Strategy 6's daily NAV
+to the dollar; only `20_strategy4_tilted.py`'s internal grid search lands slightly differently
+(5.25% vs. 5.26%). The options Tier 1 and Tier 1.5 backtests (all horizons, all premium caps)
+reproduce exactly too. The apparent drift had two unrelated causes: (1) the reported "~40% of
+`cell_decay_days.csv` cells changed" was a *text* diff -- the values were identical to 1e-13, only
+the float formatting differed; and (2) the pandas major version genuinely matters -- pandas 2
+assigns 38 book-to-market terciles differently from pandas 3 in `06_ff_adjustment.py`, which moves
+7 of 144 decay-day cells and Strategy 6 from 6.49% to 6.32%. Every committed result was built on
+pandas 3, which `requirements.txt` now pins. Compare result files numerically, never by text diff.
 
 ## Strategy evolution, in order
 
@@ -833,12 +839,12 @@ configurable via `OPTIONMETRICS_DIR`, see `scripts/common/paths.py` and the GPU 
 above -- 31GB in the `parquet/` subfolder this pipeline actually reads, not tracked in this repo,
 not reproducible from anything checked in here, and never copied anywhere, including onto this
 repo's own disk) and writes its own regeneratable intermediates to `data/event_options/`. In the
-main checkout, `data/events/`, `data/earnings/`, `data/metadata/`, and `data/results/` are NTFS
-junctions to keep the raw WRDS pull from being duplicated on disk; an individual worktree may
-instead hold real copies of those folders (as one used to build the GPU pipeline above did), so
-the whole pipeline is runnable from inside that one directory tree without depending on the main
-checkout's junction targets -- check `data/events/` etc. for junction vs. real-copy status in any
-given checkout before assuming either.
+main checkout and in any worktree that runs the pipeline, `data/{raw_wrds,normalized_equity,
+earnings,events,metadata,results}/` are plain, real copies of the master copy on the OptionMetrics
+drive (`D:/OptionMetrics/pead_wrds_data/`) -- never junctions or symlinks. An earlier setup used
+NTFS junctions pointing into a worktree's own copy; removing that worktree deleted the data out
+from under the main checkout. At ~1.2GB, duplicating the data per checkout is the cheap option.
+Run `python scripts/verify_raw_data.py --check` after copying it anywhere.
 
 **Never symlink these paths.** A prior incident tracked a symlink at one of these paths in git; on
 a checkout with `core.symlinks=false` that silently deleted a real local copy of the raw WRDS pull
@@ -855,7 +861,8 @@ see GPU_SETUP.md's "Step 2b: verify the staged copy actually matches canonical".
 
 ## Requirements
 
-See `requirements.txt`. Python 3.11+, pandas, numpy, reportlab (PDF report generation). Both
+See `requirements.txt`. Python 3.11+, pandas 3 (required to reproduce the committed results --
+see the Strategy 8 note under "Results summary"), numpy, reportlab (PDF report generation). Both
 GPU-tiered pipelines -- options-strategy (scripts 40+) and equity-strategy Strategy 8 (scripts
 32-35) -- additionally need `requirements-gpu.txt` (PyTorch, CuPy, Optuna) only on a machine
 actually running their GPU tiers; every script in both pipelines still runs on `--device cpu` with
