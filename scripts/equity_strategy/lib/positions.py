@@ -13,16 +13,27 @@ def size_balance(df, decile_val, sign):
     return sub
 
 
-def weights_size_sector_neutral(pos, d_centered, trim, tilt_power):
+def weights_size_sector_neutral(pos, d_centered, trim, tilt_power, scale=None):
     """Trim/tilt/size+sector-neutralize an arbitrary already-centered cross-sectional signal
     (d_centered in [-0.5, 0.5], e.g. sue_rank_pct - 0.5) into a position weight vector -- the
     exact construction 23/24_finalize_strategyN.py use for sue_rank_pct specifically, generalized
     here so 34_gpu_param_sweep.py and 35_finalize_strategy8.py can reuse it for an arbitrary blend
-    of SUE rank and the walk-forward ML score instead of duplicating the neutralization logic."""
+    of SUE rank and the walk-forward ML score instead of duplicating the neutralization logic.
+
+    `scale` (optional, aligned to pos, >= 0) multiplies each event's tilt BEFORE neutralization,
+    so it only reallocates weight within a (quarter, side, sector, size) group -- the groups'
+    totals, and therefore size/sector/dollar neutrality, are unchanged. scale == 0 drops the event
+    from the book entirely (excluded from its group, not held at zero weight, so a fully-dropped
+    group doesn't keep a share of the side's budget). 41_strategy9_vol_subsampled.py uses this
+    for inverse-volatility sizing and volatility-cell filtering."""
     n_pos = len(pos)
     frac = np.clip(np.abs(d_centered) / 0.5, 0, 1)
     tilt = np.sign(d_centered) * (frac ** tilt_power)
     keep = np.abs(d_centered) > trim
+    if scale is not None:
+        scale = np.nan_to_num(np.asarray(scale, dtype=float), nan=0.0)
+        tilt = tilt * scale
+        keep = keep & (scale > 0)
     w = np.where(keep, tilt, 0.0)
     df = pos[["ann_quarter", "size_quintile", "ff12_sector"]].copy()
     df["w"] = w
