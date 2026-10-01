@@ -24,7 +24,7 @@ if [[ -n "$symlinks" ]]; then
   echo "pre-commit: refusing to commit a symlink -- this repo tracks no symlinks, by design:" >&2
   echo "$symlinks" | sed 's/^/  /' >&2
   echo >&2
-  echo "If this is raw data meant for a GPU box, point scripts/common/paths.py's PEAD_*_DIR env" >&2
+  echo "If this is raw data meant for a GPU box, point pead/common/paths.py's PEAD_*_DIR env" >&2
   echo "vars at it instead (see GPU_SETUP.md's 'Never symlink data into this repo'). If you" >&2
   echo "really mean to commit a symlink, this hook is deliberately not overridable via config --" >&2
   echo "use 'git commit --no-verify' only if you are certain, and only for something other than" >&2

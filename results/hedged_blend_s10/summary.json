@@ -1,0 +1,41 @@
+{
+  "module_doc": "PortfolioStrategy: a fixed-weight, daily-rebalanced blend of other registered strategies.\n\nA sleeve weight is a multiple of fund NAV allocated to that strategy's own sizing: weight 1.0 runs the\nstrategy exactly as backtested on the whole NAV, 0.8 runs it 20% smaller. Weights need not sum to one --\nthe sleeves are low-correlation books that each use only part of their capital (the options sleeve spends\nat most its premium budget, the equity sleeve is margin-financed long/short), so they can share one NAV.\nReturns compound daily: r_p = sum(w_i r_i), NAV_t = NAV_{t-1} (1 + r_p).\n\nSleeve results come from the strategy registry itself (re-run in-process, ~seconds), so the blend always\nreflects the current sleeve definitions. Days with no sleeve activity (options in 2011, where the source\nfile is corrupt) contribute zero for that sleeve.",
+  "name": "hedged_blend_s10",
+  "asset_class": "portfolio",
+  "family": "portfolio",
+  "parent": "hedged_blend",
+  "status": "research",
+  "description": "The same blend with the stronger research equity sleeve (s10_vol_rank_tilt: Sharpe 1.8)",
+  "thesis": "As hedged_blend, with the volatility-rank equity book as the alpha sleeve.",
+  "params": {
+    "w_s10_vol_rank_tilt": 0.9,
+    "w_opt_kelly_cap20": 1.6
+  },
+  "live_ready": false,
+  "summary": {
+    "total_return": 8.791356599499682,
+    "annualized_return": 0.12428022697145868,
+    "annualized_vol": 0.04728729374458829,
+    "sharpe": 2.501451245099347,
+    "sortino": 4.084454536722879,
+    "sharpe_fixed_capital": 2.2274749100076114,
+    "max_drawdown": -0.15503627714228285,
+    "calmar": 0.8016202998566707,
+    "final_nav": 97913565.99499682,
+    "n_days": 4908,
+    "best_day": 0.029358472370122676,
+    "worst_day": -0.020449801831985227,
+    "pct_positive_days": 0.5421760391198044,
+    "sharpe_1996_2001": 2.9158759697126637,
+    "sharpe_2002_2007": 2.837811067642605,
+    "sharpe_2008_2013": 2.1005478871828984,
+    "market_beta": 0.030435317305871106,
+    "corr_market": 0.12453692264368489,
+    "sleeve_correlation": -0.049539627985521216
+  },
+  "run": {
+    "timestamp": "2026-10-01T17:22:19+00:00",
+    "git_rev": "9044ee2",
+    "pandas": "3.0.5"
+  }
+}

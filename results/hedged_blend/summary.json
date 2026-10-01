@@ -1,0 +1,41 @@
+{
+  "module_doc": "PortfolioStrategy: a fixed-weight, daily-rebalanced blend of other registered strategies.\n\nA sleeve weight is a multiple of fund NAV allocated to that strategy's own sizing: weight 1.0 runs the\nstrategy exactly as backtested on the whole NAV, 0.8 runs it 20% smaller. Weights need not sum to one --\nthe sleeves are low-correlation books that each use only part of their capital (the options sleeve spends\nat most its premium budget, the equity sleeve is margin-financed long/short), so they can share one NAV.\nReturns compound daily: r_p = sum(w_i r_i), NAV_t = NAV_{t-1} (1 + r_p).\n\nSleeve results come from the strategy registry itself (re-run in-process, ~seconds), so the blend always\nreflects the current sleeve definitions. Days with no sleeve activity (options in 2011, where the source\nfile is corrupt) contribute zero for that sleeve.",
+  "name": "hedged_blend",
+  "asset_class": "portfolio",
+  "family": "portfolio",
+  "parent": "s9b_inverse_vol",
+  "status": "validated",
+  "description": "Market-neutral inverse-vol equity book (0.8x) + corrected-quote Kelly options book (1.6x), on one NAV",
+  "thesis": "The sleeves are uncorrelated with each other (about -0.05) and with the market (~0 / 0.18): equity alpha earned most of its return in 1996-2003 and made +10% in 2008 when the options book lost; options earned most after 2003. Weights set so each sleeve contributes equal stand-alone risk, scaled to ~5% portfolio volatility.",
+  "params": {
+    "w_s9b_inverse_vol": 0.8,
+    "w_opt_kelly_cap20": 1.6
+  },
+  "live_ready": false,
+  "summary": {
+    "total_return": 7.087907139947916,
+    "annualized_return": 0.11330103901272093,
+    "annualized_vol": 0.04827574665606132,
+    "sharpe": 2.247848922281008,
+    "sortino": 3.5769270648453824,
+    "sharpe_fixed_capital": 2.0794404242577795,
+    "max_drawdown": -0.1668335791641069,
+    "calmar": 0.6791261062694798,
+    "final_nav": 80879071.39947917,
+    "n_days": 4908,
+    "best_day": 0.03059360316080126,
+    "worst_day": -0.026486800624425114,
+    "pct_positive_days": 0.5399348003259984,
+    "sharpe_1996_2001": 2.4078152697099706,
+    "sharpe_2002_2007": 2.70418662648214,
+    "sharpe_2008_2013": 1.908634621457411,
+    "market_beta": 0.03265672395934733,
+    "corr_market": 0.13089057386912725,
+    "sleeve_correlation": -0.04870501803522166
+  },
+  "run": {
+    "timestamp": "2026-10-01T17:22:18+00:00",
+    "git_rev": "9044ee2",
+    "pandas": "3.0.5"
+  }
+}

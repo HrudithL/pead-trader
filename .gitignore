@@ -40,3 +40,7 @@ Thumbs.db
 
 # Pipeline run logs (operational, not a research finding) -- see scripts/options_strategy/run_pipeline.py
 logs/
+
+# Strategy-framework outputs that are large and fully regenerable
+results/*/positions.parquet
+data/cache/

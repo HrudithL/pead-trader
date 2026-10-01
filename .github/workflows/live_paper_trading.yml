@@ -1,6 +1,6 @@
 name: Live paper trading (daily)
 
-# Runs the PEAD live paper-trading engine (scripts/live_trading/run_daily.py) once per US trading
+# Runs the PEAD live paper-trading engine (python -m pead live run) once per US trading
 # day, before the market open, on GitHub Actions' free tier -- no server to run or pay for. State
 # (positions, NAV history, trade log, the decile return model) lives as plain CSV/JSON files under
 # data/live/ and is persisted by committing it back to the repo at the end of each run, so the next
@@ -52,7 +52,7 @@ jobs:
         run: |
           ARGS=""
           if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="--dry-run"; fi
-          python -m scripts.live_trading.run_daily $ARGS
+          python -m pead live run $ARGS
 
       - name: Commit updated state
         if: ${{ inputs.dry_run != true }}
