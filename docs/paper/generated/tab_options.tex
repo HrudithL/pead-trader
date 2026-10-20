@@ -1,0 +1,17 @@
+{\small
+\begin{adjustbox}{max width=\linewidth}
+\begin{tabular}{llrrrrrl}
+\toprule
+Book & Dead-quote mark & Return & Vol & Sharpe & Max DD & Calmar & Role \\
+\midrule
+\sn{options_cap20} & zero\_bid\_half\_ask & 4.12\% & 2.30\% & 1.77 & $-$13.8\% & 0.30 & validated headline \\
+\sn{options_cap30} & zero\_bid\_half\_ask & 5.69\% & 3.61\% & 1.55 & $-$22.3\% & 0.26 & validated \\
+\sn{options_worst_case} & zero\_bid\_zero & 2.34\% & 2.37\% & 0.99 & $-$17.1\% & 0.14 & pessimistic bound \\
+\midrule
+\sn{options_cap20_legacy} & carry\_last & 8.58\% & 2.18\% & 3.78 & $-$10.3\% & 0.83 & overstated \\
+\sn{options_cap30_legacy} & carry\_last & 12.26\% & 3.33\% & 3.49 & $-$17.4\% & 0.70 & overstated \\
+\sn{options_cap40_legacy} & carry\_last & 15.79\% & 4.50\% & 3.28 & $-$23.9\% & 0.66 & overstated \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+}

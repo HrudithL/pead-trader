@@ -1,0 +1,22 @@
+{\footnotesize
+\begin{tabularx}{\linewidth}{@{}l l X l r r r@{}}
+\toprule
+Book & Status & What it does & Unit / cap & Return & Sharpe & Max DD\\
+\midrule
+\sn{extreme_picks} & validated & Buy the top 10\% of earnings surprises, short the bottom 10\%, equal bets & 0.003 / 1.5$\times$ & 4.9\% & 0.93 & $-$18.5\% \\
+\sn{graded_bets} & validated & Bet on every stock; the more extreme the surprise, the bigger the bet & 0.002 / 1.5$\times$ & 3.9\% & 1.01 & $-$14.0\% \\
+\sn{size_balanced} & validated & Extreme Picks, with an equal budget for each of the five company sizes & 0.003 / 1.5$\times$ & 4.7\% & 0.91 & $-$17.5\% \\
+\sn{conviction_tilt} & validated & Skip the middle 15\% either side of average, lean toward the strongest surprises, balance by size & 0.002 / 1.5$\times$ & 5.2\% & 1.18 & $-$13.1\% \\
+\sn{sector_balanced} & validated & Conviction Tilt, also balanced across 12 industry groups; conservative 1.5x borrowing limit & 0.0015 / 1.5$\times$ & 4.1\% & 1.33 & $-$10.8\% \\
+\sn{balanced_leverage} & validated & Sector Balanced, allowed to hold up to 2.5x the account in positions & 0.003 / 2.5$\times$ & 6.5\% & 1.30 & $-$16.6\% \\
+\sn{market_boost} & validated & Balanced Leverage plus a market position worth half the account & 0.003 / 2.5$\times$ & 10.1\% & 0.97 & $-$23.2\% \\
+\sn{market_exposed} & reference & Balanced Leverage signal, longs and shorts not forced to match, market moves left in & 0.003 / 2.5$\times$ & 7.3\% & 1.11 & $-$15.5\% \\
+\sn{calm_weighted} & validated & Balanced Leverage, with each bet divided by how jumpy the stock is & 0.003 / 2.5$\times$ & 6.7\% & 1.47 & $-$15.6\% \\
+\sn{calm_weighted_matched} & validated & Calm Weighted resized so its ups and downs match Balanced Leverage exactly (4.94\% a year) & 0.00346881 / 2.5$\times$ & 7.3\% & 1.45 & $-$17.0\% \\
+\sn{volatility_filter} & research & Balanced Leverage, skipping long/short x jumpiness groups that have not made money so far & 0.003 / 2.5$\times$ & 6.3\% & 1.23 & $-$16.7\% \\
+\sn{calm_weighted_filter} & research & Calm Weighted plus the Volatility Filter & 0.003 / 2.5$\times$ & 6.5\% & 1.41 & $-$15.7\% \\
+\sn{calm_rank_tilt} & research & Balanced Leverage, with bets shrunk sharply for the jumpiest stocks (ranked against last quarter) & 0.003 / 2.5$\times$ & 7.1\% & 1.81 & $-$11.6\% \\
+\sn{calm_rank_levered} & research & Calm Rank Tilt with its lower risk spent on larger bets (about 1.7x) and a 4x borrowing limit & 0.005 / 4$\times$ & 9.2\% & 1.73 & $-$15.9\% \\
+\bottomrule
+\end{tabularx}
+}
