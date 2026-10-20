@@ -4,7 +4,7 @@
   "asset_class": "portfolio",
   "family": "portfolio",
   "parent": "calm_weighted",
-  "status": "validated",
+  "status": "research",
   "description": "Market-neutral inverse-vol equity book (0.8x) + corrected-quote Kelly options book (1.6x), on one NAV",
   "thesis": "The sleeves are uncorrelated with each other (about -0.05) and with the market (~0 / 0.18): equity alpha earned most of its return in 1996-2003 and made +10% in 2008 when the options book lost; options earned most after 2003. Weights set so each sleeve contributes equal stand-alone risk, scaled to ~5% portfolio volatility.",
   "params": {

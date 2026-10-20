@@ -4,7 +4,7 @@
   "asset_class": "options",
   "family": "options-kelly",
   "parent": "options_cap20",
-  "status": "validated",
+  "status": "research",
   "description": "Kelly picks, 30% premium cap, bought at the ask / sold at the bid, dead quotes at half-ask",
   "thesis": "Buy the contract whose payoff profile best matches the SUE-conditioned return distribution, sized by Kelly, spread across hundreds of independent events.",
   "params": {

@@ -4,7 +4,7 @@ _60 strategies, 1996-2013, $10M start, NAV-percentage Sharpe_
 
 ## 1. League table
 
-Every strategy that has been run, by asset class and Sharpe. `validated` strategies are candidates for use, `research` are explorations/variants, `reference` are kept as documented counter-examples.
+Every strategy that has been run, by asset class and Sharpe. `validated` means the engine reproduces the original script and no parameter was fitted to the sample -- it does NOT mean the strategy has an edge. `research` are explorations/variants or books whose parameters were chosen in-sample; `reference` are kept as documented counter-examples or pre-correction twins.
 
 | name | family | status | annualized_return | annualized_vol | sharpe | max_drawdown | calmar | sharpe_1996_2001 | sharpe_2002_2007 | sharpe_2008_2013 |
 |---|---|---|---|---|---|---|---|---|---|---|

@@ -1,6 +1,6 @@
 # hedged_blend
 
-_portfolio strategy | family: portfolio | status: validated | derived from `calm_weighted`_
+_portfolio strategy | family: portfolio | status: research | derived from `calm_weighted`_
 
 ## What this strategy does
 

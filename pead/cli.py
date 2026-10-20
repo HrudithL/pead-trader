@@ -70,7 +70,7 @@ def main(argv=None):
             r = load_result(n)
             try:   # descriptive text comes from the CURRENT strategy source, so edited docstrings reach the report
                 fresh = registry.get(n).meta()
-                r.meta.update({k: fresh[k] for k in ("module_doc", "description", "thesis") if k in fresh})
+                r.meta.update({k: fresh[k] for k in ("module_doc", "description", "thesis", "status") if k in fresh})
             except KeyError:
                 pass
             print("wrote", build_strategy_report(r))

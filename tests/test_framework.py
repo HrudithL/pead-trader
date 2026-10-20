@@ -133,8 +133,9 @@ def test_strategy4_matches_original_script_on_current_data():
     assert abs(res.summary["final_nav"] - 27_077_291.9) < 1.0
 
 
-@pytest.mark.skipif(not (HAVE_EQUITY and (DATA_DIR / "backtest_v2_strategy9_strategy6_baseline.csv").exists()),
-                    reason="needs equity inputs + Strategy 9 outputs")
+@pytest.mark.skipif(not (HAVE_EQUITY and (DATA_DIR / "backtest_v2_strategy9_strategy6_baseline.csv").exists()
+                            and (DATA_DIR / "equity_vol_panel.parquet").exists()),
+                    reason="needs equity inputs, the volatility panel and Strategy 9 outputs")
 def test_inverse_vol_matches_strategy9_script():
     from pead.strategies.base import RunContext
     got = registry.get("calm_weighted_legacy").run(RunContext()).daily["nav"].to_numpy()

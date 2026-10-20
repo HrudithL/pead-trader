@@ -66,8 +66,9 @@ def build_comprehensive_report(names=None, pdf=True):
 
     # ---- 1. league table --------------------------------------------------------------------------
     doc.h2("1. League table")
-    doc.p("Every strategy that has been run, by asset class and Sharpe. `validated` strategies are candidates for use, "
-          "`research` are explorations/variants, `reference` are kept as documented counter-examples.")
+    doc.p("Every strategy that has been run, by asset class and Sharpe. `validated` means the engine reproduces the original script and no "
+          "parameter was fitted to the sample -- it does NOT mean the strategy has an edge. `research` are explorations/variants or books whose "
+          "parameters were chosen in-sample; `reference` are kept as documented counter-examples or pre-correction twins.")
     doc.table(_league(df), fmt={"sharpe": "{:.2f}", "calmar": "{:.2f}", "sharpe_1996_2001": "{:.2f}",
                                 "sharpe_2002_2007": "{:.2f}", "sharpe_2008_2013": "{:.2f}"})
     mkt_row = dict(name="market (CRSP VW)", annualized_return=(1 + mk).prod() ** (252 / len(mk)) - 1,

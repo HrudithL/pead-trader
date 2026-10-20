@@ -60,11 +60,11 @@ Best so far (validated + research strategies):
 | options_cap30_midfill | options | reference | 6.10% | 3.70% | 1.62 | -22.54% | 0.27 |
 | options_cap30_prefix_fix | options | reference | 5.69% | 3.61% | 1.55 | -22.29% | 0.26 |
 | options_worst_case_prefix_fix | options | reference | 2.34% | 2.37% | 0.99 | -17.08% | 0.14 |
-| options_cap20 | options | validated | 0.28% | 1.92% | 0.16 | -18.87% | 0.01 |
-| options_cap30 | options | validated | -0.10% | 3.01% | -0.02 | -28.97% | -0.00 |
+| options_cap20 | options | research | 0.28% | 1.92% | 0.16 | -18.87% | 0.01 |
+| options_cap30 | options | research | -0.10% | 3.01% | -0.02 | -28.97% | -0.00 |
 | options_worst_case | options | research | -1.04% | 1.99% | -0.52 | -32.33% | -0.03 |
 | legacy_blend | portfolio | reference | 14.25% | 4.18% | 3.21 | -9.91% | 1.44 |
 | calm_blend_prefix_fix | portfolio | reference | 12.43% | 4.73% | 2.50 | -15.50% | 0.80 |
 | hedged_blend_prefix_fix | portfolio | reference | 11.33% | 4.83% | 2.25 | -16.68% | 0.68 |
 | calm_blend | portfolio | research | 5.80% | 4.48% | 1.28 | -20.13% | 0.29 |
-| hedged_blend | portfolio | validated | 4.90% | 4.46% | 1.09 | -21.79% | 0.22 |
+| hedged_blend | portfolio | research | 4.90% | 4.46% | 1.09 | -21.79% | 0.22 |

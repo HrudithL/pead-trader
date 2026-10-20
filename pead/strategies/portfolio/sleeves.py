@@ -23,7 +23,7 @@ class PortfolioStrategy(Strategy):
     asset_class = "portfolio"
     family = "portfolio"
 
-    def __init__(self, name, weights: dict, description, thesis, parent=None, status="validated"):
+    def __init__(self, name, weights: dict, description, thesis, parent=None, status="research"):
         self.name, self.sleeve_weights, self.parent, self.status = name, weights, parent, status
         self.description, self.thesis = description, thesis
 

@@ -1,6 +1,6 @@
 # options_cap20
 
-_options strategy | family: options-kelly | status: validated_
+_options strategy | family: options-kelly | status: research_
 
 ## What this strategy does
 
