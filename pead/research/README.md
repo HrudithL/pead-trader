@@ -16,6 +16,7 @@ from the repo root, but they write their old-style outputs to `data/` and are su
 | `options_evidence/` | 37-39: decile x horizon option-return statistics and the options evidence PDF | `docs/STRATEGIES.md` section 4 |
 | `options_strategy_history/` | 40 (near-ATM options backtest), 41-45 (daily option paths, GPU exit-rule optimizer, parameter sweep, ML contract selector, joint portfolio optimizer), 50-53 (Kelly backtest, charts, report, vol comparison) | `pead/engines/options.py` + `pead/strategies/options/kelly_optimal.py` |
 | `legacy/` | old single-command runners and report builders | `python -m pead run/compare/prep` |
+| `optimization_line_2026_08/` | Volatility-targeted market overlay, dispersion-filter strategy, revision/revenue/seasonal-SUE diagnostics (scripts 33-40, recovered 2026-10-18 from an uncommitted worktree) | Not ported; see its README for results, caveats and how to port |
 
 **Not ported, deliberately:**
 
