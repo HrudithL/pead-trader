@@ -38,6 +38,7 @@ import json
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.paths import DATA_DIR, RAW_EQUITY_DIR, INITIAL_CAPITAL
+from lib.positions import open_gross_notional
 
 DATA = DATA_DIR
 RAW = RAW_EQUITY_DIR
@@ -157,8 +158,14 @@ def run_backtest(positions_path, name):
             target = np.sign(target) * np.minimum(np.abs(target), cap)
             gross_requested = float(np.abs(target).sum())
             max_gross = MAX_GROSS_LEVERAGE * trailing_nav
-            if gross_requested > max_gross and gross_requested > 0:
-                scale = max_gross / gross_requested
+            # Cap against max_gross MINUS whatever's already open from prior quarters' still-live
+            # positions (holding periods span multiple quarters), not just this quarter's own new
+            # requested gross -- otherwise the cap only ever bounds entry-cohort size while actual
+            # portfolio gross exposure (overlapping quarters) can run well past MAX_GROSS_LEVERAGE.
+            open_gross = open_gross_notional(notional, entry_qcode, exit_qcode, qi)
+            available_gross = max(max_gross - open_gross, 0.0)
+            if gross_requested > available_gross:
+                scale = (available_gross / gross_requested) if gross_requested > 0 else 1.0
             notional[q_mask] = target * scale
             base_unit_at_entry[q_mask] = base_unit
 

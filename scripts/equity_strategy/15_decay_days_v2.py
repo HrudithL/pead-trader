@@ -14,6 +14,11 @@ this cell's decile (shrinking for the positive side, no-longer-falling for the n
 crosses toward zero AND STAYS there for the next 10 consecutive days (a persistence check, so
 one noisy crossing doesn't trigger a false decay call).
 
+Inherits 14_daily_decay.py's search-window fix: cell_daily_curve.csv is now built from only the
+leading SEARCH_FRAC of announcement quarters (see that script's docstring), so the windowed-slope
+decay day computed here is likewise a search-window estimate, applied unchanged to every event
+(including the untouched holdout quarters) by 16_positions_v2.py downstream.
+
 Output: data/cell_decay_days.csv (overwritten with the fixed logic)
 """
 import sys

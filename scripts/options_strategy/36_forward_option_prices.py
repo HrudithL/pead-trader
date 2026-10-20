@@ -16,7 +16,10 @@ why the default is capped rather than defaulting to every CPU core).
 
 Output: data/event_options/forward_prices_<year>.parquet (one per year touched)
         data/event_options/option_event_panel.parquet -- final wide panel: one row per event,
-        entry + forward mid prices/returns for call and put, decile, day0_date, ff12_sector etc.
+        entry + forward mid/bid/ask prices/returns for call and put, decile, day0_date,
+        ff12_sector etc. Forward best_bid/best_offer are carried through (fwd_bid_{h}d,
+        fwd_ask_{h}d) alongside fwd_mid_{h}d, not just the midpoint, so 40_options_backtest.py can
+        mark a real exit fill at the bid instead of assuming a midpoint fill.
 """
 import argparse
 import sys
@@ -142,9 +145,14 @@ def main():
 
     all_fwd = [results[y] for y in sorted(results) if results[y] is not None]
     fwd = pd.concat(all_fwd, ignore_index=True)
+    # Pivot best_bid/best_offer alongside mid (previously only `mid` survived the pivot, dropping
+    # the real quoted spread) so a downstream backtest can mark an actual EXIT fill at the real
+    # BID it would transact at, instead of assuming a fill at the midpoint -- see 40_options_
+    # backtest.py's docstring.
     fwd_wide = fwd.pivot_table(index=["event_id", "cp_type"], columns="horizon",
-                                values="mid", aggfunc="first")
-    fwd_wide.columns = [f"fwd_mid_{c}d" for c in fwd_wide.columns]
+                                values=["mid", "best_bid", "best_offer"], aggfunc="first")
+    col_name = {"mid": "fwd_mid", "best_bid": "fwd_bid", "best_offer": "fwd_ask"}
+    fwd_wide.columns = [f"{col_name[val]}_{h}d" for val, h in fwd_wide.columns]
     fwd_wide = fwd_wide.reset_index()
 
     fwd_wide_c = fwd_wide[fwd_wide["cp_type"] == "call"].drop(columns=["cp_type"])

@@ -50,7 +50,7 @@ import json
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.paths import DATA_DIR, RAW_EQUITY_DIR, INITIAL_CAPITAL
-from lib.positions import weights_size_sector_neutral
+from lib.positions import weights_size_sector_neutral, open_gross_notional, cap_new_positions_by_leverage
 
 DATA = DATA_DIR
 RAW = RAW_EQUITY_DIR
@@ -225,23 +225,9 @@ def run_backtest(weight, exp, buf, liq_cap_frac, max_leverage):
             target = weight[idx] * base_unit
             cap = liq_cap_dollars[idx]
             target = np.sign(target) * np.minimum(np.abs(target), cap)
-            gross_requested = float(np.abs(target).sum())
             max_gross = max_leverage * trailing_nav
-            q_notional = target.copy()
-            if gross_requested > max_gross and gross_requested > 0:
-                scale_note = "priority_capped"
-                order_priority = np.argsort(-np.abs(target))
-                cum = np.cumsum(np.abs(target[order_priority]))
-                keep_mask = cum <= max_gross
-                q_notional = np.zeros_like(target)
-                q_notional[order_priority[keep_mask]] = target[order_priority[keep_mask]]
-                n_kept = keep_mask.sum()
-                if n_kept < len(target):
-                    remaining = max_gross - (cum[n_kept - 1] if n_kept > 0 else 0.0)
-                    boundary = order_priority[n_kept]
-                    if remaining > 0:
-                        q_notional[boundary] = np.sign(target[boundary]) * min(abs(target[boundary]), remaining)
-                    n_dropped_q = len(target) - n_kept - (1 if remaining > 0 else 0)
+            open_gross = open_gross_notional(notional, exp["entry_qcode"], exp["exit_qcode"], qi)
+            q_notional, scale_note, n_dropped_q = cap_new_positions_by_leverage(target, max_gross, open_gross)
             notional[idx] = q_notional
             base_unit_at_entry[idx] = base_unit
         s, e = exp["boundaries"][qi], exp["boundaries"][qi + 1]

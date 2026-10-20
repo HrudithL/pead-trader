@@ -3,6 +3,47 @@
 import numpy as np
 
 
+def open_gross_notional(notional, entry_qcode, exit_qcode, qi):
+    """Abs notional of positions entered before quarter `qi` that haven't exited by it yet --
+    the carryover gross exposure already on the book that a quarter's NEW positions have to share
+    the leverage cap with. Bug this fixes: every finalize_strategyN.py script used to cap only
+    `gross_requested` (this quarter's own new-position targets) against MAX_GROSS_LEVERAGE *
+    trailing_nav, never adding in still-open positions from prior quarters (holding periods span
+    multiple quarters via the decay-day cells), so the cap only ever bound entry-cohort size, not
+    actual portfolio gross exposure -- which is why realized gross_exposure (computed post-hoc
+    from the exit/entry deltas) could run to several times the nominal cap."""
+    still_open = (entry_qcode < qi) & (exit_qcode >= qi)
+    return float(np.abs(notional[still_open]).sum())
+
+
+def cap_new_positions_by_leverage(target, max_gross, open_gross):
+    """Priority-trim this quarter's new position notional (`target`, signed dollars, lower
+    |target| dropped first) so that, combined with `open_gross` (abs notional already open from
+    prior quarters -- see open_gross_notional), total gross exposure never exceeds `max_gross`.
+    Returns (capped_notional, cap_status, n_dropped)."""
+    target = np.asarray(target, dtype=float)
+    available = max_gross - open_gross
+    gross_requested = float(np.abs(target).sum())
+    if available <= 0:
+        return np.zeros_like(target), "priority_capped", len(target)
+    if gross_requested <= available or gross_requested == 0:
+        return target.copy(), "ok", 0
+    order_priority = np.argsort(-np.abs(target))
+    cum = np.cumsum(np.abs(target[order_priority]))
+    keep_mask = cum <= available
+    q_notional = np.zeros_like(target)
+    q_notional[order_priority[keep_mask]] = target[order_priority[keep_mask]]
+    n_kept = int(keep_mask.sum())
+    n_dropped = len(target) - n_kept
+    if n_kept < len(target):
+        remaining = available - (cum[n_kept - 1] if n_kept > 0 else 0.0)
+        boundary = order_priority[n_kept]
+        if remaining > 0:
+            q_notional[boundary] = np.sign(target[boundary]) * min(abs(target[boundary]), remaining)
+            n_dropped -= 1
+    return q_notional, "priority_capped", n_dropped
+
+
 def size_balance(df, decile_val, sign):
     """Within one decile, spread +-1 unit of weight evenly across size quintiles each quarter,
     so no single size bucket dominates the leg."""

@@ -54,6 +54,7 @@ import json
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.paths import DATA_DIR, RAW_EQUITY_DIR, INITIAL_CAPITAL
+from lib.positions import open_gross_notional, cap_new_positions_by_leverage
 
 DATA = DATA_DIR
 RAW = RAW_EQUITY_DIR
@@ -61,6 +62,15 @@ MAX_GROSS_LEVERAGE = 1.5
 LIQUIDITY_CAP_FRAC = 0.05
 COST_BPS = {1: 25, 2: 15, 3: 10, 4: 7, 5: 5}
 DEFAULT_COST_BPS = 15
+
+# Search window vs. holdout (bug fixed: TRIM/TILT_POWER/base_unit_fraction used to be picked by
+# the grid-search Sharpe on the FULL sample -- the same data the resulting strategy is then
+# reported on, so "best of grid" was partly just overfitting sample noise, not a genuine
+# out-of-sample edge. Fixed by picking on only the first SEARCH_FRAC of quarters (matching the
+# convention 34_gpu_param_sweep.py/Strategy 8 already established: "rank combos by Sharpe on the
+# first --search-frac of quarters only, report the remaining quarters for the winner but never
+# use them to choose it") and reporting train/holdout performance separately below.
+SEARCH_FRAC = 0.7
 
 print("loading daily market-adjusted return panel...")
 frames = []
@@ -83,6 +93,13 @@ unique_quarters = quarter_of.unique().sort_values()
 n_quarters = len(unique_quarters)
 quarter_code_map = {q: i for i, q in enumerate(unique_quarters)}
 quarter_code_of_day = np.array([quarter_code_map[q] for q in quarter_of])
+
+# day-level boundary between the search window (used to pick trim/tilt/base_unit) and the
+# untouched holdout (reported for the winner, never used to choose it)
+train_end_day_idx = int(n_days * SEARCH_FRAC)
+print(f"search window: days 0..{train_end_day_idx} ({calendar_dt[0].date()} - "
+      f"{calendar_dt[train_end_day_idx - 1].date()}), holdout: "
+      f"{calendar_dt[train_end_day_idx].date()} - {calendar_dt[-1].date()}")
 
 # ---------- one-time setup: full rank-weighted universe (all deciles), param-independent ----------
 pos = pd.read_parquet(DATA / "positions_rankweighted_v2.parquet").reset_index(drop=True)
@@ -172,23 +189,12 @@ def simulate_priority(weight, base_unit_fraction, liquidity_cap_frac, max_gross_
             target = weight[idx] * base_unit
             cap = liq_cap_dollars[idx]
             target = np.sign(target) * np.minimum(np.abs(target), cap)
-            gross_requested = float(np.abs(target).sum())
             max_gross = max_gross_leverage * trailing_nav
-            q_notional = target.copy()
-            if gross_requested > max_gross and gross_requested > 0:
+            open_gross = open_gross_notional(notional, entry_qcode, exit_qcode, qi)
+            q_notional, scale_note_i, n_dropped_i = cap_new_positions_by_leverage(target, max_gross, open_gross)
+            if scale_note_i == "priority_capped":
                 n_capped_quarters += 1
-                order_priority = np.argsort(-np.abs(target))  # highest conviction first
-                cum = np.cumsum(np.abs(target[order_priority]))
-                keep_mask = cum <= max_gross
-                q_notional = np.zeros_like(target)
-                q_notional[order_priority[keep_mask]] = target[order_priority[keep_mask]]
-                n_kept = keep_mask.sum()
-                if n_kept < len(target):
-                    remaining = max_gross - (cum[n_kept - 1] if n_kept > 0 else 0.0)
-                    boundary = order_priority[n_kept]
-                    if remaining > 0:
-                        q_notional[boundary] = np.sign(target[boundary]) * min(abs(target[boundary]), remaining)
-                    n_dropped_positions += (len(target) - n_kept - (1 if remaining > 0 else 0))
+                n_dropped_positions += n_dropped_i
             notional[idx] = q_notional
             base_unit_at_entry[idx] = base_unit
 
@@ -229,8 +235,32 @@ def simulate_priority(weight, base_unit_fraction, liquidity_cap_frac, max_gross_
     liquidity_capped = (np.abs(weight * base_unit_at_entry) > np.abs(notional) + 1e-6) & (base_unit_at_entry > 0)
     total_costs = entry_costs.sum() + exit_costs.sum()
 
+    # ---- search-window vs. holdout split (see SEARCH_FRAC above): the grid search below selects
+    # on *_train only; ann_ret/ann_vol/sharpe/max_dd above remain the full-sample numbers reported
+    # for the finally-chosen config, exactly as before -- only the SELECTION criterion changes.
+    def _window_stats(lo, hi):
+        w_nav = nav[lo:hi]
+        w_ret = daily_ret[lo:hi]
+        w_years = (hi - lo) / 252.0
+        if w_years <= 0 or len(w_nav) < 2:
+            return dict(ann_ret=np.nan, ann_vol=np.nan, sharpe=np.nan, max_dd=np.nan)
+        w_total_ret = (w_nav[-1] - w_nav[0]) / w_nav[0]
+        w_ann_ret = (1 + w_total_ret) ** (1 / w_years) - 1
+        w_ann_vol = w_ret.std(ddof=1) * np.sqrt(252)
+        w_sharpe = (w_ret.mean() * 252) / w_ann_vol if w_ann_vol > 0 else np.nan
+        w_running_max = np.maximum.accumulate(w_nav)
+        w_max_dd = ((w_nav - w_running_max) / w_running_max).min()
+        return dict(ann_ret=w_ann_ret, ann_vol=w_ann_vol, sharpe=w_sharpe, max_dd=w_max_dd)
+
+    train = _window_stats(0, train_end_day_idx)
+    holdout = _window_stats(train_end_day_idx, n_days)
+
     return dict(
         ann_ret=ann_ret, ann_vol=ann_vol, sharpe=sharpe, max_dd=max_dd,
+        ann_ret_train=train["ann_ret"], ann_vol_train=train["ann_vol"],
+        sharpe_train=train["sharpe"], max_dd_train=train["max_dd"],
+        ann_ret_holdout=holdout["ann_ret"], ann_vol_holdout=holdout["ann_vol"],
+        sharpe_holdout=holdout["sharpe"], max_dd_holdout=holdout["max_dd"],
         avg_leverage=float(gross_exposure.mean() / INITIAL_CAPITAL),
         avg_n_open=float(n_open.mean()), n_active_positions=int((weight != 0).sum()),
         pct_leverage_capped_quarters=n_capped_quarters / n_quarters,
@@ -257,18 +287,25 @@ for trim in TRIM_GRID:
 sweep = pd.DataFrame(rows)
 sweep.to_csv(DATA / "sweep_strategy4.csv", index=False)
 pd.set_option("display.width", 160)
-print(sweep[["trim", "tilt_power", "base_unit_fraction", "ann_ret", "ann_vol", "sharpe", "max_dd",
+print(sweep[["trim", "tilt_power", "base_unit_fraction", "sharpe_train", "ann_ret_train",
+             "sharpe", "ann_ret", "sharpe_holdout", "ann_ret_holdout",
              "avg_leverage", "avg_n_open", "n_active_positions", "pct_leverage_capped_quarters",
-             "pct_liquidity_capped"]].sort_values("sharpe", ascending=False).head(15).to_string(index=False))
+             "pct_liquidity_capped"]].sort_values("sharpe_train", ascending=False).head(15).to_string(index=False))
 
-# pick the best Sharpe among points with return at or above extreme's 4.91% (so it's a genuine
-# improvement, not just a lower-risk/lower-return point)
-candidates = sweep[sweep.ann_ret >= 0.0491]
+# Selection is on the SEARCH-WINDOW (train) Sharpe/return only -- bug fixed: this used to select
+# on the full-sample sharpe/ann_ret, i.e. the same data the strategy is then reported on, so "best
+# of grid" partly measured overfitting to full-sample noise rather than a genuine out-of-sample
+# edge. Full-sample and holdout numbers are still computed and reported below for the winner, but
+# never used to choose it (see SEARCH_FRAC above).
+candidates = sweep[sweep.ann_ret_train >= 0.0491]
 if len(candidates) == 0:
     candidates = sweep
-best = candidates.sort_values("sharpe", ascending=False).iloc[0]
-print(f"\nSelected: trim={best.trim}, tilt_power={best.tilt_power}, base_unit_fraction={best.base_unit_fraction}")
+best = candidates.sort_values("sharpe_train", ascending=False).iloc[0]
+print(f"\nSelected (on search window): trim={best.trim}, tilt_power={best.tilt_power}, "
+      f"base_unit_fraction={best.base_unit_fraction}")
 print(best)
+print(f"\nHoldout check (never used for selection): ann_ret_holdout={best.ann_ret_holdout:.2%} "
+      f"sharpe_holdout={best.sharpe_holdout:.3f} max_dd_holdout={best.max_dd_holdout:.2%}")
 
 # ---------- finalize the chosen configuration ----------
 w_final = compute_weights(best.trim, best.tilt_power)
@@ -296,23 +333,9 @@ for qi in range(n_quarters):
         target = weight[idx] * base_unit
         cap = liq_cap_dollars[idx]
         target = np.sign(target) * np.minimum(np.abs(target), cap)
-        gross_requested = float(np.abs(target).sum())
         max_gross = MAX_GROSS_LEVERAGE * trailing_nav
-        q_notional = target.copy()
-        if gross_requested > max_gross and gross_requested > 0:
-            scale_note = "priority_capped"
-            order_priority = np.argsort(-np.abs(target))
-            cum = np.cumsum(np.abs(target[order_priority]))
-            keep_mask = cum <= max_gross
-            q_notional = np.zeros_like(target)
-            q_notional[order_priority[keep_mask]] = target[order_priority[keep_mask]]
-            n_kept = keep_mask.sum()
-            if n_kept < len(target):
-                remaining = max_gross - (cum[n_kept - 1] if n_kept > 0 else 0.0)
-                boundary = order_priority[n_kept]
-                if remaining > 0:
-                    q_notional[boundary] = np.sign(target[boundary]) * min(abs(target[boundary]), remaining)
-                n_dropped_q = len(target) - n_kept - (1 if remaining > 0 else 0)
+        open_gross = open_gross_notional(notional, entry_qcode, exit_qcode, qi)
+        q_notional, scale_note, n_dropped_q = cap_new_positions_by_leverage(target, max_gross, open_gross)
         notional[idx] = q_notional
         base_unit_at_entry[idx] = base_unit
     s, e = boundaries[qi], boundaries[qi + 1]

@@ -32,13 +32,17 @@ for trailing-NAV sizing" implementation pattern as those scripts:
     filling any missing interim checkpoint from the last valid price (a position only needs its
     OWN entry price to be valid; a missing interim mark just means "no new information," not "no
     position"), so every valid entry produces a usable, if coarser-than-daily, P&L path.
-  - Transaction cost: NOT yet a real bid/ask spread -- `entry_mid`/`fwd_mid` are already
-    midpoints, and best_bid/best_offer were read from the raw OM scan (options_lib.OPPRCD_COLS)
-    but dropped before scripts 35/36 wrote their output. ASSUMED_ROUNDTRIP_COST_PCT below is an
-    explicit, clearly-flagged assumption (documented near-ATM equity-option round-trip spread
-    cost) standing in for that until a follow-up script re-scans the same (secid, date,
-    optionid) keys already selected here to attach real best_bid/best_offer -- a cheap addition
-    (same narrow date filter, no new full-history scan), left as a noted next step, not done here.
+  - Transaction cost: NOW uses the real bid/ask when the panel has it (scripts 35/36 carry
+    best_bid/best_offer through as entry_bid/entry_ask and fwd_bid_{h}d/fwd_ask_{h}d -- they used
+    to be read from the raw OM scan, options_lib.OPPRCD_COLS, then collapsed into `mid` and
+    dropped before writing output). A long option actually fills by BUYING at the ask and, at
+    exit, SELLING at the bid -- so this script now sizes and costs positions off entry_ask (not
+    entry_mid) and marks the final checkpoint's exit leg at fwd_bid_{hold_horizon}d (not
+    fwd_mid_{hold_horizon}d); the true round-trip spread cost falls out of that price difference
+    directly, no separate assumed percentage needed. ASSUMED_ROUNDTRIP_COST_PCT below is now only
+    a FALLBACK, applied only when a panel lacks the bid/ask columns (older already-generated
+    panels, or --mock-data, which has no bid/ask concept) -- `run_backtest` prints which mode it
+    used for each horizon.
 
 Run for every one of the 6 available hold horizons (cheap, and the "right" horizon for options is
 genuinely unclear a priori: the call spread's t-stat is actually highest at 1 day (13.3) but
@@ -78,6 +82,14 @@ MAX_PREMIUM_FRAC = 0.20            # cap: total outstanding premium <= 20% of tr
 ASSUMED_ROUNDTRIP_COST_PCT = 0.03  # documented assumption -- see docstring above
 CONTRACT_MULTIPLIER = 100
 HORIZONS = [1, 5, 10, 20, 40, 60]
+
+
+def open_gross_notional(notional, entry_qcode, exit_qcode, qi):
+    """Abs notional (here: premium) of positions entered before quarter `qi` that haven't exited
+    by it yet -- mirrors scripts/equity_strategy/lib/positions.py's helper of the same name/logic,
+    duplicated here rather than cross-imported across the equity/options package boundary."""
+    still_open = (entry_qcode != -1) & (entry_qcode < qi) & (exit_qcode >= qi)
+    return float(np.abs(notional[still_open]).sum())
 
 
 def compute_weights(panel: pd.DataFrame) -> np.ndarray:
@@ -122,22 +134,51 @@ def run_backtest(panel: pd.DataFrame, hold_horizon: int, cal_dates: np.ndarray) 
     entry_mid = np.where(is_call, panel["call_entry_mid"].to_numpy(),
                           np.where(is_put, panel["put_entry_mid"].to_numpy(), np.nan))
 
+    # Real entry fill: a long option is bought at the ASK, not the mid. Fall back to entry_mid
+    # (and flag it) when the panel predates scripts 35/36 carrying entry_ask through.
+    has_ask_cols = "call_entry_ask" in panel.columns or "put_entry_ask" in panel.columns
+    if has_ask_cols:
+        call_ask = panel["call_entry_ask"].to_numpy() if "call_entry_ask" in panel else np.nan
+        put_ask = panel["put_entry_ask"].to_numpy() if "put_entry_ask" in panel else np.nan
+        entry_ask = np.where(is_call, call_ask, np.where(is_put, put_ask, np.nan))
+        entry_fill = np.where(np.isfinite(entry_ask) & (entry_ask > 0), entry_ask, entry_mid)
+    else:
+        entry_fill = entry_mid
+    has_real_spread = has_ask_cols
+
     day0 = pd.to_datetime(panel["day0_date"]).to_numpy().astype("datetime64[D]")
     cal_dates_d = cal_dates.astype("datetime64[D]")
     entry_cal_idx = np.searchsorted(cal_dates_d, day0)
 
     checkpoints = [h for h in HORIZONS if h <= hold_horizon]
+    exit_horizon = checkpoints[-1]  # == hold_horizon: the checkpoint the position actually closes at
     fits_calendar = (entry_cal_idx + checkpoints[-1]) < n_days
-    valid = active & np.isfinite(entry_mid) & (entry_mid > 0) & fits_calendar
+    valid = active & np.isfinite(entry_mid) & (entry_mid > 0) & np.isfinite(entry_fill) & (entry_fill > 0) & fits_calendar
     idx_all = np.where(valid)[0]
     n_pos = len(idx_all)
 
+    # Real exit fill: a long option is SOLD at the BID at the horizon it's actually closed
+    # (exit_horizon), not the mid. Interim checkpoints before exit are never transacted -- they're
+    # only used to forward-fill a missing mid mark -- so they stay at mid (this also keeps the
+    # telescoping price_deltas sum exact: entry_fill -> mid* -> ... -> exit_fill).
+    has_bid_cols = f"call_fwd_bid_{exit_horizon}d" in panel.columns or f"put_fwd_bid_{exit_horizon}d" in panel.columns
+    has_real_spread = has_real_spread and has_bid_cols
+    if has_bid_cols:
+        call_bid = panel[f"call_fwd_bid_{exit_horizon}d"].to_numpy() if f"call_fwd_bid_{exit_horizon}d" in panel else np.nan
+        put_bid = panel[f"put_fwd_bid_{exit_horizon}d"].to_numpy() if f"put_fwd_bid_{exit_horizon}d" in panel else np.nan
+        exit_bid = np.where(is_call, call_bid, np.where(is_put, put_bid, np.nan))
+    else:
+        exit_bid = np.full(len(panel), np.nan)
+
     # ---- build each valid position's checkpoint price path, forward-filling missing marks ----
-    price_cols = [entry_mid[idx_all]]
+    price_cols = [entry_fill[idx_all]]
     for h in checkpoints:
         call_fwd = panel[f"call_fwd_mid_{h}d"].to_numpy()[idx_all] if f"call_fwd_mid_{h}d" in panel else np.nan
         put_fwd = panel[f"put_fwd_mid_{h}d"].to_numpy()[idx_all] if f"put_fwd_mid_{h}d" in panel else np.nan
         fwd = np.where(is_call[idx_all], call_fwd, np.where(is_put[idx_all], put_fwd, np.nan))
+        if h == exit_horizon and has_real_spread:
+            exit_bid_h = exit_bid[idx_all]
+            fwd = np.where(np.isfinite(exit_bid_h) & (exit_bid_h > 0), exit_bid_h, fwd)
         price_cols.append(fwd)
     price_matrix = pd.DataFrame(np.column_stack(price_cols)).ffill(axis=1).to_numpy()
     price_deltas = np.diff(price_matrix, axis=1)  # shape (n_pos, n_checkpoints), per-contract $
@@ -163,9 +204,17 @@ def run_backtest(panel: pd.DataFrame, hold_horizon: int, cal_dates: np.ndarray) 
     rep_pos_idx_sorted = rep_pos_idx[order]
     boundaries = np.searchsorted(flat_qcode_sorted, np.arange(n_quarters + 1))
 
+    # positions' quarter of entry/exit, in GLOBAL (full-panel) index space, for the continuous
+    # open-premium leverage check below (-1 = never entered / not a valid position)
+    entry_qcode_full = np.full(len(panel), -1, dtype=int)
+    entry_qcode_full[idx_all] = entry_qcode
+    exit_qcode_full = np.full(len(panel), -1, dtype=int)
+    exit_qcode_full[idx_all] = quarter_code_of_day[entry_cal_idx[idx_all] + exit_horizon]
+
     # ---- true sequential quarter loop: size each quarter's new positions off trailing NAV ----
     num_contracts = np.zeros(len(panel))
     entry_cost = np.zeros(len(panel))
+    premium_notional = np.zeros(len(panel))  # num_contracts * multiplier * entry_fill, for open-premium tracking
     trailing_nav = INITIAL_CAPITAL
     quarter_log = []
 
@@ -176,20 +225,33 @@ def run_backtest(panel: pd.DataFrame, hold_horizon: int, cal_dates: np.ndarray) 
         scale_note = "ok"
         if len(q_global):
             target_premium = np.abs(weight[q_global]) * base_unit
-            contracts = np.floor(target_premium / (CONTRACT_MULTIPLIER * entry_mid[q_global]))
-            premium = contracts * CONTRACT_MULTIPLIER * entry_mid[q_global]
+            contracts = np.floor(target_premium / (CONTRACT_MULTIPLIER * entry_fill[q_global]))
+            premium = contracts * CONTRACT_MULTIPLIER * entry_fill[q_global]
             gross_requested = float(premium.sum())
             max_premium = MAX_PREMIUM_FRAC * trailing_nav
-            if gross_requested > max_premium and gross_requested > 0:
+            # Cap against max_premium MINUS premium already outstanding from prior quarters'
+            # still-open positions (options can hold across a quarter boundary too), not just
+            # this quarter's own requested premium -- same fix as the equity leverage cap (see
+            # lib.positions.open_gross_notional's docstring for why entry-cohort-only capping
+            # understates real portfolio exposure).
+            open_premium = open_gross_notional(premium_notional, entry_qcode_full, exit_qcode_full, qi)
+            available_premium = max(max_premium - open_premium, 0.0)
+            if gross_requested > available_premium:
                 scale_note = "priority_capped"
                 priority = np.argsort(-np.abs(weight[q_global]))
                 cum = np.cumsum(premium[priority])
-                keep_n = int(np.searchsorted(cum, max_premium))
+                keep_n = int(np.searchsorted(cum, available_premium))
                 mask_keep = np.zeros(len(q_global), dtype=bool)
                 mask_keep[priority[:keep_n]] = True
                 contracts = np.where(mask_keep, contracts, 0)
             num_contracts[q_global] = contracts
-            entry_cost[q_global] = contracts * CONTRACT_MULTIPLIER * entry_mid[q_global] * ASSUMED_ROUNDTRIP_COST_PCT
+            premium_notional[q_global] = contracts * CONTRACT_MULTIPLIER * entry_fill[q_global]
+            if has_real_spread:
+                # real cost = (ask paid at entry - mid) + (mid - bid received at exit), already
+                # embedded in price_deltas via entry_fill/exit_bid above -- no separate debit here.
+                entry_cost[q_global] = 0.0
+            else:
+                entry_cost[q_global] = contracts * CONTRACT_MULTIPLIER * entry_fill[q_global] * ASSUMED_ROUNDTRIP_COST_PCT
 
         s, e = boundaries[qi], boundaries[qi + 1]
         trade_pnl_q = float(np.sum(num_contracts[rep_pos_idx_sorted[s:e]] * CONTRACT_MULTIPLIER *
@@ -235,13 +297,15 @@ def run_backtest(panel: pd.DataFrame, hold_horizon: int, cal_dates: np.ndarray) 
         total_return=float(total_ret), annualized_return=float(ann_ret),
         annualized_vol=float(ann_vol), sharpe=float(sharpe), max_drawdown=float(max_dd),
         avg_premium_outstanding=float(np.abs(num_contracts * CONTRACT_MULTIPLIER *
-                                              np.nan_to_num(entry_mid)).sum() / max(n_quarters, 1)),
-        final_nav=float(nav[-1]), assumed_roundtrip_cost_pct=ASSUMED_ROUNDTRIP_COST_PCT,
+                                              np.nan_to_num(entry_fill)).sum() / max(n_quarters, 1)),
+        final_nav=float(nav[-1]), cost_model="real_bid_ask" if has_real_spread else "assumed_flat_pct",
+        assumed_roundtrip_cost_pct=None if has_real_spread else ASSUMED_ROUNDTRIP_COST_PCT,
         n_quarters_premium_capped=int(sum(1 for q in quarter_log if q["cap_status"] == "priority_capped")),
     )
     with open(DATA / f"backtest_options_v1_h{hold_horizon}d_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
-    print(f"  h={hold_horizon:>2}d: n_eligible={n_pos:,} n_sized={n_sized:,} ann.ret={ann_ret:.2%} "
+    print(f"  h={hold_horizon:>2}d: n_eligible={n_pos:,} n_sized={n_sized:,} "
+          f"cost_model={summary['cost_model']} ann.ret={ann_ret:.2%} "
           f"ann.vol={ann_vol:.2%} Sharpe={sharpe:.2f} maxDD={max_dd:.2%} final_nav=${nav[-1]:,.0f}")
     return summary
 

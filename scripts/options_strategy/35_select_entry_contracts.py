@@ -68,9 +68,14 @@ def _process_year(year, ev_y, force=False):
               raw["delta"].notna()].copy()
     raw["mid"] = (raw["best_bid"] + raw["best_offer"]) / 2.0
 
+    # Carry the real quoted best_bid/best_offer through to the output (previously collapsed into
+    # `mid` and dropped here) so a downstream backtest can fill a long option at the real ASK it
+    # would actually transact at, instead of assuming a fill at the midpoint -- see 40_options_
+    # backtest.py's docstring for why that mattered and how it's used.
     keep_cols = ["secid", "date", "optionid", "strike_price", "exdate", "dte", "delta",
-                 "impl_volatility", "mid", "volume", "open_interest"]
+                 "impl_volatility", "mid", "best_bid", "best_offer", "volume", "open_interest"]
     rename_map = {"strike_price": "strike", "impl_volatility": "iv", "mid": "entry_mid",
+                  "best_bid": "entry_bid", "best_offer": "entry_ask",
                   "volume": "entry_volume", "open_interest": "entry_oi"}
 
     best_call = pick_best_contracts_vectorized(raw, "C", 0.50, MIN_DTE, TARGET_DTE)

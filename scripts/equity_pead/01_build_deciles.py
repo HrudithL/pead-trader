@@ -6,12 +6,20 @@ in data/events/FINDINGS.md and data/results/FINDINGS.md:
   - restrict to day0_status == 'ok' (a real day-0 trading session was resolved)
   - restrict to sue_source == 'analyst' (per user decision: cleanest, most literal
     "IBES surprise" story, ~183k events; sue_seasonal kept only as an appendix robustness cut)
-  - rank sue_analyst into percentiles WITHIN each announcement calendar quarter, rounding to
-    8 decimals before ranking so exact ties don't get ordered by floating-point noise
-    (this replicates the point-in-time-safe construction already used for the project's
-    existing quintile analysis in data/results/event_study_stats.json -- we just cut into
-    deciles instead of quintiles, and restrict to a single sue_source rather than pooling)
+  - rank sue_analyst into percentiles against the EXPANDING pool of every prior, fully-completed
+    announcement quarter (not the event's own quarter -- see "Point-in-time ranking" below),
+    rounding to 8 decimals before ranking so exact ties don't get ordered by floating-point noise
   - assign deciles 1 (most negative surprise) .. 10 (most positive surprise)
+
+Point-in-time ranking (bug fixed): this used to rank each event against
+`groupby("ann_quarter")`, i.e. against every announcement in its OWN calendar quarter --
+including firms that hadn't reported yet as of that event's own anndats (earnings within a
+quarter are staggered over ~6+ weeks, so an early reporter's decile was informed by data that
+didn't exist yet on its own trade date). Fixed by ranking each event only against the
+cumulative pool of sue_analyst_r values from strictly EARLIER ann_quarters -- fully realized,
+zero look-ahead. The first ann_quarter in the sample has no prior pool and is dropped (a
+one-quarter warmup, the minimum possible given the fix, and negligible next to the ~18-year
+sample).
 
 Output: data/interim/decile_events.parquet
 """
@@ -44,7 +52,33 @@ ev["ann_quarter"] = ev["anndats"].dt.to_period("Q")
 # round to 8 decimals before ranking (matches existing pipeline's tie-handling)
 ev["sue_analyst_r"] = ev["sue_analyst"].round(8)
 
-ev["sue_rank_pct"] = ev.groupby("ann_quarter")["sue_analyst_r"].rank(pct=True, method="average")
+# Point-in-time percentile rank: each event is ranked against the EXPANDING pool of every
+# strictly earlier ann_quarter's values only, never its own quarter's (see module docstring for
+# why ranking within the event's own quarter is a look-ahead). Average-rank tie handling
+# (rank of a tied value = midpoint between its first and last position in the sorted pool),
+# matching pandas' rank(method="average", pct=True) convention used everywhere else in this repo.
+ev = ev.sort_values("ann_quarter").reset_index(drop=True)
+unique_quarters_sorted = ev["ann_quarter"].drop_duplicates().sort_values().to_numpy()
+sue_by_quarter = {q: ev.loc[ev["ann_quarter"] == q, "sue_analyst_r"].to_numpy()
+                   for q in unique_quarters_sorted}
+
+sue_rank_pct = pd.Series(np.nan, index=ev.index)
+cum_pool = np.array([], dtype=float)
+for q in unique_quarters_sorted:
+    mask = (ev["ann_quarter"] == q).to_numpy()
+    if len(cum_pool) > 0:
+        vals = ev.loc[mask, "sue_analyst_r"].to_numpy()
+        sorted_pool = np.sort(cum_pool)
+        left = np.searchsorted(sorted_pool, vals, side="left")
+        right = np.searchsorted(sorted_pool, vals, side="right")
+        sue_rank_pct.loc[mask] = (left + right) / 2.0 / len(sorted_pool)
+    cum_pool = np.concatenate([cum_pool, sue_by_quarter[q]])
+ev["sue_rank_pct"] = sue_rank_pct
+
+n_before_warmup = len(ev)
+ev = ev.dropna(subset=["sue_rank_pct"]).reset_index(drop=True)
+print(f"dropped {n_before_warmup - len(ev):,} events in the first ann_quarter "
+      f"({unique_quarters_sorted[0]}) -- no prior-quarter pool to rank against (warmup)")
 
 # decile 1..10, most negative -> 1, most positive -> 10
 ev["decile"] = np.minimum(np.ceil(ev["sue_rank_pct"] * 10), 10).astype(int)

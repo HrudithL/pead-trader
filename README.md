@@ -11,11 +11,56 @@ uncontrolled risk, to extending the whole question to the options market using O
 data. Every numbered script is independently re-runnable, and the run order below reproduces the
 entire project from raw data to final backtest results.
 
+## Four assumptions fixed, numbers below pending a rerun
+
+Four issues were found in the backtest methodology and fixed at the code level (not yet re-run
+against real WRDS data in this checkout, so every number in this README is still the PRE-fix
+figure until someone re-runs the pipeline with data access):
+
+1. **Leverage cap only bound each quarter's new positions, not total open exposure.**
+   `MAX_GROSS_LEVERAGE * trailing_nav` was checked against `gross_requested` (that quarter's own
+   new-position targets) only, never adding in still-open positions carried over from earlier
+   quarters (holding periods span multiple quarters). Realized `gross_exposure` -- computed
+   post-hoc as a reporting diagnostic -- could therefore run well past the nominal cap (averaging
+   ~4.5x, peaking ~7.6x per the original diagnosis). Fixed in `scripts/equity_strategy/lib/
+   positions.py` (`open_gross_notional` + `cap_new_positions_by_leverage`, shared helpers) and
+   applied to every strategy that produces a reported result: `17_backtest_v2.py` (strategies
+   1-3), `20_strategy4_tilted.py`, `23_finalize_strategy5.py`, `24_finalize_strategy6.py`,
+   `26_strategy7_unconstrained_netexposure.py`, `35_finalize_strategy8.py`,
+   `36_aggressive_variants.py`. The cap now bounds carryover-plus-new gross exposure every
+   quarter, so realized exposure should no longer exceed the nominal multiple. (Diagnostic-only
+   sweep scripts -- `18/19/21/22/27/34` -- were left as historical record of past parameter
+   research and were not patched; they don't produce any reported strategy's numbers.)
+2. **Deciles were ranked with a mild look-ahead.** `01_build_deciles.py` used to rank each event's
+   SUE percentile against `groupby("ann_quarter")` -- i.e. against every firm in its OWN
+   announcement quarter, including firms that hadn't reported yet as of that event's own date
+   (earnings within a quarter are staggered over 6+ weeks). Fixed to rank each event only against
+   the expanding pool of strictly EARLIER, fully-realized quarters (one-quarter warmup dropped).
+3. **The options book assumed a flat 3% round-trip cost and mid-price fills.** Best_bid/
+   best_offer were already being read from the raw OptionMetrics scan but were collapsed into a
+   single `mid` and dropped before scripts 35/36 wrote their output. Fixed to carry them through
+   (`entry_bid`/`entry_ask`, `fwd_bid_{h}d`/`fwd_ask_{h}d`) and `40_options_backtest.py` now fills
+   a long option at the real ASK on entry and the real BID at exit -- the true spread cost falls
+   out of that price difference directly. The flat 3% assumption is kept only as an explicit
+   fallback for panels/`--mock-data` runs without real quotes. (2011-corrupt-data /
+   2013-truncation are separate, known data-availability issues, not addressed here.)
+4. **Equity holding periods and position sizing were fitted on the full sample.** Cell decay days
+   (`14_daily_decay.py`) and the trim/tilt/base_unit grid search (`20_strategy4_tilted.py`) were
+   both estimated/selected using the same full 1996-2013 sample the strategy was then reported on.
+   Fixed by adopting the same "search window vs. holdout" discipline already used for Strategy 8
+   (`34_gpu_param_sweep.py`'s `--search-frac`): decay days are now estimated from only the leading
+   70% of announcement quarters (`SEARCH_FRAC` in `14_daily_decay.py`) and applied unchanged to
+   every event; the strategy-4 grid search now selects on search-window Sharpe/return only
+   (`sharpe_train`/`ann_ret_train` in `sweep_strategy4.csv`), with full-sample and untouched-
+   holdout performance reported separately for the winner, never used to pick it.
+
 ## Results summary
 
 All figures are 1996-2013, market-adjusted (or, for Strategy 7, raw) daily returns, $10,000,000
 initial capital, true NAV-percentage Sharpe ratios (see the [note on the Sharpe
-calculation](#note-a-bug-i-found-and-fixed-in-the-sharperisk-metrics) below).
+calculation](#note-a-bug-i-found-and-fixed-in-the-sharperisk-metrics) below). **These are the
+PRE-fix numbers -- see "Four assumptions fixed" above; re-run the pipeline to get corrected
+figures.**
 
 | Strategy | Design | Ann. Return | Ann. Vol | Sharpe | Max DD |
 |---|---|---|---|---|---|
