@@ -279,7 +279,7 @@ def fig_options_trades(S, ctx, out):
 
 def fig_frontiers(S, ctx, out):
     runs = ctx["runs"]
-    sw = pd.read_csv(Path(__file__).resolve().parents[2] / "data" / "sweep_aggressive_strategy6.csv")
+    sw = pd.read_csv(Path(__file__).resolve().parents[2] / "docs" / "paper" / "cache" / "pit2" / "capacity_sweep.csv")
     fig, axes = plt.subplots(1, 3, figsize=(7.4, 2.8))
     a = axes[0]
     a.plot(1e3 * sw.base_unit_fraction, 100 * sw.annualized_return, color=NAVY, marker="o", ms=3, label="Return")
