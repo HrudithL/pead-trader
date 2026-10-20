@@ -318,7 +318,7 @@ def fig_dsr(S, ctx, out):
         if n == "options_cap20":
             runs = ctx["runs"]
             vc = float(np.var(ctx["meta"][(ctx["meta"].asset == "options") & ~ctx["meta"].index.str.endswith("_legacy")]["sharpe"].to_numpy(), ddof=1))
-            ax.plot(Ns, [dsr_at(sr, T, sk, ku, g, vc)[1] for g in Ns], color=GREEN, lw=1.0, ls="--", label="options_cap20 (corrected-run dispersion)")
+            ax.plot(Ns, [dsr_at(sr, T, sk, ku, g, vc)[1] for g in Ns], color=GREEN, lw=1.0, ls="--", label="options_cap20 (dispersion of runs not under the original convention)")
     ax.axhline(0.95, color="#444444", lw=0.7, ls=":")
     for key, c in (("trials.eq", NAVY), ("trials.op", GREEN)):
         ax.axvline(S.get(key), color=c, lw=0.7, ls=":")

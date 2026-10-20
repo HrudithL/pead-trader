@@ -830,10 +830,10 @@ def equity_section(S, ctx):
         S.put(f"{n}.alphaB", r["a_02_07"], pc(r["a_02_07"], 1))
         S.put(f"{n}.alphaC", r["a_08_13"], pc(r["a_08_13"], 1))
     # market-neutral books: is beta ~ 0?
-    neutral = [n for n in ab.index if n not in ("market_boost", "market_boost_max", "market_exposed", "market_exposed_max")]
+    neutral = [n for n in ab.index if not n.startswith(("market_boost", "market_exposed")) and not n.endswith(("_legacy", "_midfill"))]
     S.put("beta.neutral.maxabs", float(ab.loc[neutral, "beta"].abs().max()), f"{ab.loc[neutral, 'beta'].abs().max():.2f}")
     S.put("beta.neutral.n", len(neutral), str(len(neutral)))
-    exposed = [n for n in ("market_boost", "market_boost_max", "market_exposed", "market_exposed_max") if n in ab.index]
+    exposed = [n for n in ab.index if n.startswith(("market_boost", "market_exposed")) and not n.endswith(("_legacy", "_midfill"))]
     S.put("beta.exposed.min", float(ab.loc[exposed, "beta"].min()), f2(ab.loc[exposed, "beta"].min()))
     S.put("beta.exposed.max", float(ab.loc[exposed, "beta"].max()), f2(ab.loc[exposed, "beta"].max()))
 
@@ -940,7 +940,7 @@ def equity_section(S, ctx):
     write_fragment("tab_alpha.tex", table("lrrrrrrrrrr", ["Book", "Return", "Alpha", "$t$", "Beta", "Alpha (+size)", "$t$", "IR", "96--01", "02--07", "08--13"],
                                           rows, size=r"\small"))
     # decay of alpha across eras (CRSP-market alpha), generated sentence
-    nm = [n for n in ab.index if n not in ("market_boost", "market_boost_max", "market_exposed", "market_exposed_max")]
+    nm = [n for n in ab.index if not n.startswith(("market_boost", "market_exposed")) and not n.endswith(("_legacy", "_midfill"))]
     frac_fade = float((ab.loc[nm, "a_08_13"] < ab.loc[nm, "a_96_01"]).mean())
     S.put("alpha.fade.frac", frac_fade, pc(frac_fade, 0))
     S.put("alpha.ratio.bl", float(ab.loc["balanced_leverage", "a_96_01"] / ab.loc["balanced_leverage", "a_08_13"]),
@@ -1635,9 +1635,9 @@ def ladder_section(S, ctx):
     d4 = eq["all_ret"] - eq["fix12_ret"]
     tot = eq["all_ret"] - eq["published_ret"]
     for tag, d in (("fix1", d1), ("fix2", d2), ("fix4", d4), ("total", tot)):
-        S.put(f"ladder.med.{tag}", float(d.median()), pp(d.median() * 100, 1))
-        S.put(f"ladder.min.{tag}", float(d.min()), pp(d.min() * 100, 1))
-        S.put(f"ladder.max.{tag}", float(d.max()), pp(d.max() * 100, 1))
+        S.put(f"ladder.med.{tag}", float(d.median()), sg(d.median() * 100, 1) + " points")
+        S.put(f"ladder.min.{tag}", float(d.min()), sg(d.min() * 100, 1))
+        S.put(f"ladder.max.{tag}", float(d.max()), sg(d.max() * 100, 1))
     steps = {"the open-book leverage cap": d1.median(), "point-in-time deciles": d2.median(), "search-window decay days": d4.median()}
     worst = min(steps, key=steps.get)
     S.put("sent.biggest_fix", f"the largest median cost to return is {worst} ({sg(steps[worst] * 100, 1)} percentage points a year)")

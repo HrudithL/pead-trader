@@ -50,7 +50,7 @@
 
 \pagestyle{fancy}
 \fancyhf{}
-\lhead{\small\textsc{Post-Earnings Drift: Mechanism, Evidence, and a Two-Book Strategy}}
+\lhead{\small\textsc{Post-Earnings Drift: Mechanism, Evidence, and an Audit}}
 \rhead{\small\thepage}
 \renewcommand{\headrulewidth}{0.4pt}
 \setlist{itemsep=2pt,topsep=4pt}
@@ -58,7 +58,7 @@
 \setlength{\emergencystretch}{3em}
 
 \title{\vspace{-1.2cm}\textbf{Post-Earnings-Announcement Drift:\\[2pt]
-Mechanism, Evidence, and a Hedged Equity--Options Strategy}}
+Mechanism, Evidence, and an Audit of Equity and Options Strategies}}
 \author{Hrudith L.\\[2pt] \small PEAD Trading Research}
 \date{\today}
 
@@ -255,7 +255,7 @@ The model suggests two harvesting designs.
 \end{itemize}
 The two books earn from the same event but through different return distributions. The equity book
 is exposed to its short leg in a junk rally, and the options book is not. This is why they
-diversify each other (Section~\ref{sec:combined}).
+be expected to diversify each other; Section~\ref{sec:combined} reports how much of that survives the corrections.
 
 %=====================================================================================
 \section{Data and sample construction}\label{sec:data}
@@ -385,7 +385,7 @@ size/value premium sitting on top of the drift (Table~\ref{tab:spreads}, Figure~
 
 \begin{table}[t]\centering
 \caption{Top-minus-bottom decile spread by horizon (\%), with quarter-clustered $t$-statistics.
-Equity columns use the full sample. Option columns use the option-matched subsample
+Equity columns use the full sample with point-in-time deciles. Option columns are from the pre-correction option tables (within-quarter deciles): they use the option-matched subsample
 (\stv{Q_opt} quarters; \stv{Q_opt60} at $+60$d) and measure the percentage return on premium of a
 buy-and-hold near-the-money contract at its mid price.}\label{tab:spreads}
 \input{generated/tab_spreads.tex}
@@ -416,7 +416,7 @@ among the saved files; we therefore do not quote it.
 \begin{figure}[t]\centering
 \includegraphics[width=\linewidth]{figures/fig_heterogeneity.pdf}
 \caption{60-day D10$-$D1 spread with 95\% confidence intervals by (a) size quintile at announcement
-and (b) era. Source: \texttt{data/subsample\_size.csv}, \texttt{data/subsample\_era.csv}.}\label{fig:het}
+and (b) era. Point-in-time deciles, recomputed from the corrected event file (Appendix~\ref{app:repro}).}\label{fig:het}
 \end{figure}
 \begin{table}[t]\centering
 \caption{The 60-day spread by size quintile and by era.}\label{tab:het}
@@ -646,7 +646,7 @@ split every position's profit into a part that the surprise rank predicts (``alp
 Daily NAV-percentage returns are regressed on the CRSP value-weighted market return (zero risk-free rate, Newey--West standard errors with five lags), alone and with an equal-weight-minus-value-weight
 (size) factor. Table~\ref{tab:alpha} reports the results. Across the \stv{beta.neutral.n} market-neutral books the largest absolute beta is \stv{beta.neutral.maxabs}; the market-exposed
 books (\sn{market_exposed}, \sn{market_boost} and their \sn{*_max} versions) carry betas between \stv{beta.exposed.min} and \stv{beta.exposed.max}. For \sn{calm_weighted} the alpha is \stv{calm_weighted.alpha}
-($t=\stv{calm_weighted.alpha_t}$); adding the size factor changes it to \stv{calm_weighted.alpha_sz}, so the return is not a small-cap loading. \stv{sent.alphafade}.
+($t=\stv{calm_weighted.alpha_t}$); adding the size factor changes it to \stv{calm_weighted.alpha_sz}. \stv{sent.alphafade}.
 
 \begin{table}[t]\centering
 \caption{Annualized alpha against the CRSP value-weighted market, with and without a size factor, by era. $t$-statistics use Newey--West errors; IR is alpha over
@@ -659,7 +659,7 @@ residual volatility. Source: \texttt{results/alpha\_benchmark.csv}.}\label{tab:a
 Against the average of \emph{all} announcers in the quarter, the long-to-short ratio of alpha per dollar for the nine profiled books runs
 \stv{sent.legs_all}. That benchmark is biased for any cut that mixes side with size, because the average announcer is dominated by small stocks, which beat the market: big stocks structurally lag
 it, which penalizes shorts less and longs more depending on size mix. Measured instead against the average announcer of the \emph{same size group and quarter} (a size-matched
-benchmark), \stv{sent.legs}. Table~\ref{tab:legs} and Figure~\ref{fig:legs} show both. The earlier conclusion that ``the shorts pay their way as well as the longs'' was a
+benchmark), \stv{sent.legs}. Table~\ref{tab:legs} and Figure~\ref{fig:legs} show both. The earlier conclusion that ``the shorts pay their way as well as the longs'' was
 sensitive to the benchmark; the size-matched benchmark is used from here on. The short leg is also where borrow costs fall, and they are not modelled (Section~\ref{sec:limits}).
 
 \begin{table}[t]\centering
@@ -705,14 +705,14 @@ Source: \texttt{results/profiles\_beta\_legs.csv}.}\label{tab:betalegs}
 \end{figure}
 
 \paragraph{Most of the money sits in recipes that are not individually proven.} Between \stv{recipes.unproven.money.min} and \stv{recipes.unproven.money.max} of each book's money is in recipes with $|t|<2$, which still earn \stv{recipes.unproven.alpha.min} to \stv{recipes.unproven.alpha.max} of the alpha.
-Moving along the lineage from \sn{extreme_picks} to \sn{calm_rank_tilt} reduces the number of recipes that lose alpha from \stv{recipes.lose.first} (using \stv{recipes.lose.first.money} of the money) to \stv{recipes.lose.last} (\stv{recipes.lose.last.money}).
+Moving along the lineage from \sn{extreme_picks} to \sn{calm_rank_tilt} changes the number of recipes that lose alpha from \stv{recipes.lose.first} (using \stv{recipes.lose.first.money} of the money) to \stv{recipes.lose.last} (\stv{recipes.lose.last.money}).
 The winners and losers are drawn from the same pool: the best 1\% of positions earn \stv{tail.top.min}--\stv{tail.top.max} times a book's total alpha, and the worst 1\% lose \stv{tail.bot.min}--\stv{tail.bot.max} times it. Win rates are \stv{win.min}--\stv{win.max}, close to coin flips, so the profit is the small net
 difference between large winners and large losers (Figure~\ref{fig:recipes}).
 
 \begin{figure}[t]\centering
 \includegraphics[width=\linewidth]{figures/fig_recipes.pdf}
 \caption{Each point is one of the \stv{recipes.n} recipes: its share of the money traded against its share of alpha. Points above the dotted diagonal earn more than their share.
-High-beta shorts (red) cluster at or below zero; the best recipe (green diamond) earns several times its share.}\label{fig:recipes}
+High-beta shorts (red) cluster at or below zero; the best recipe is the green diamond.}\label{fig:recipes}
 \end{figure}
 
 \subsection{Situations: what the money looks like when cut other ways}\label{sec:situations}
@@ -744,7 +744,7 @@ predicts such decay if arbitrage capital has grown; the data are consistent with
 
 \subsection{Is the calm edge a volatility effect or a beta effect?}\label{sec:calm}
 
-The volatility books rest on a finding about the signal: the D10$-$D1 spread is $+$\stv{vd.low} in the lowest tercile of stock-specific volatility, $+$\stv{vd.mid} in the middle and $+$\stv{vd.high} in the highest
+The volatility books rest on a finding about the signal (computed with the earlier within-quarter deciles, which this diagnostic was not rebuilt on): the D10$-$D1 spread is $+$\stv{vd.low} in the lowest tercile of stock-specific volatility, $+$\stv{vd.mid} in the middle and $+$\stv{vd.high} in the highest
 ($t$-statistics \stv{vd.low.t}, \stv{vd.mid.t}, \stv{vd.high.t}; difference between the extremes $t=\stv{vd.diff.t}$). Volatility alone does not change average returns, so it works as a \emph{sizing} input, not a filter; the
 walk-forward filters \sn{volatility_filter} and \sn{calm_weighted_filter} (Sharpe \ssh{volatility_filter} and \ssh{calm_weighted_filter}) \stv{sent.filter_vs_sizing} sizing (\ssh{calm_weighted}).
 
@@ -879,7 +879,7 @@ the middle block is the mid-price convention with a tick floor, with and without
 Table~\ref{tab:options} reports the books. With the current convention \sn{options_cap20} earns \sret{options_cap20} a year at \svol{options_cap20} volatility, a Sharpe ratio of \ssh{options_cap20} and a maximum
 drawdown of \sdd{options_cap20}. It \stv{sent.opt_edge}. The 30\% book \sn{options_cap30} earns \sret{options_cap30} (a \stv{sent.opt_cap30_sign} return) at a Sharpe ratio of \ssh{options_cap30}, and the pessimistic bound
 \sn{options_worst_case} earns \sret{options_worst_case}. These books were labelled ``validated'' because their construction was fixed before the result; that label does not imply an edge. The funded \sn{options_cap20} book
-has \stv{ot.n} trades, of which \stv{opt.nask} entries were filled at the ask. Net profit over the sample is \stv{ot.net_M} on \stv{ot.prem_M} of premium paid (\stv{ot.net_over_prem}); the win rate is \stv{ot.win} and the median trade returns
+has \stv{ot.n} trades. Net profit over the sample is \stv{ot.net_M} on \stv{ot.prem_M} of premium paid (\stv{ot.net_over_prem}); the win rate is \stv{ot.win} and the median trade returns
 \stv{ot.median} of premium. \stv{ot.pct_calls} of funded trades are calls, producing \stv{ot.pct_pnl_calls} of gross profit, and puts are \stv{ot.put.d1} of D1 selections against \stv{ot.put.d10} of D10 selections
 (Figure~\ref{fig:optsel}). Net profit is small relative to premium at risk, so shares of it (by year, or by the best trades) are unstable and we do not report them; entry years \stv{ot.loss_years} lose.
 
@@ -899,8 +899,7 @@ The last correction is the fill itself. The book had been charged a flat percent
 from \stv{ladder.options_cap20.published.ret} / \stv{ladder.options_cap20.published.sharpe} to \stv{ladder.options_cap20.fix3_only_bidask.ret} / \stv{ladder.options_cap20.fix3_only_bidask.sharpe}, and the 30\% book from
 \stv{ladder.options_cap30.published.ret} / \stv{ladder.options_cap30.published.sharpe} to \stv{ladder.options_cap30.fix3_only_bidask.ret} / \stv{ladder.options_cap30.fix3_only_bidask.sharpe} (Table~\ref{tab:ladderop}). The point-in-time deciles alone,
 with mid fills, change the 20\% book from \stv{ladder.options_cap20.published.ret} to \stv{ladder.options_cap20.fix2_only_midfill.ret}, a difference small enough to be noise. The earlier drafts' options headline
-(\sret{options_cap30_legacy} and a Sharpe ratio of \ssh{options_cap30_legacy}, the 30\% book under the original convention) was therefore an artifact of the fill convention, and \sn{options_cap20} under the original convention overstated the return by a factor of
-\stv{options_cap20.over_ret} against even the pre-fix corrected number. Figure~\ref{fig:optaudit} shows the same book under four conventions.
+(\sret{options_cap30_legacy} and a Sharpe ratio of \ssh{options_cap30_legacy}, the 30\% book under the original convention) was therefore an artifact of the fill convention, and the 20\% book under the original convention reported \stv{optchain.legacy.ret} against \sret{options_cap20} now. Figure~\ref{fig:optaudit} shows the same book under four conventions.
 
 \begin{table}[t]\centering
 \caption{Options books with each fix applied in turn (return / Sharpe ratio). Source: the attribution ladder in \texttt{docs/paper/cache/ladders/options\_ladder.csv}, produced by the fixes work.}\label{tab:ladderop}
@@ -982,12 +981,12 @@ Holding the volatility cost fixed, expected arithmetic return is concave in $b$,
 \end{proposition}
 
 Economically, as capital grows, the stocks with the highest drift saturate their liquidity limits first. Additional capital flows to larger, lower-drift names, while risk rises in proportion to gross exposure. The return of
-the \sn{balanced_leverage} construction at a six-times cap, swept over the base unit $b$ (Table~\ref{tab:frontier}, Figure~\ref{fig:frontiers}a; a pre-correction sweep file), \stv{sent.sweep_peak}: it peaks at $b=\stv{sweep.peak.b}\times10^{-3}$ with a return of
+the \sn{balanced_leverage} construction at a six-times cap, swept over the base unit $b$ (Table~\ref{tab:frontier}, Figure~\ref{fig:frontiers}a; a pre-correction sweep file), \stv{sent.sweep_peak}; the maximum is at $b=\stv{sweep.peak.b}\times10^{-3}$ with a return of
 \stv{sweep.peak.ret}, where \stv{sweep.peak.cap} of positions are volume-capped, and falls to \stv{sweep.last.ret} at $b=\stv{sweep.last.b}\times10^{-3}$ with \stv{sweep.last.cap} capped. The rule used to choose $b$ for the \sn{*_max}
 books (highest return subject to a Sharpe ratio of at least \stv{rule.sharpe} and a drawdown no worse than $-$\stv{rule.dd}) selects $b=\stv{sweep.rule.b}\times10^{-3}$ from this grid, in sample. \stv{sent.sweepnote}
 
 \begin{table}[t]\centering
-\caption{Equity capacity frontier: sweep over the base-unit fraction $b$ at a six-times gross cap (all other parameters fixed); the row used for \sn{balanced_leverage_max} is in bold. Source:
+\caption{Equity capacity frontier: sweep over the base-unit fraction $b$ at a six-times gross cap (all other parameters fixed); the row used for \sn{balanced_leverage_max} is in bold. This is the pre-correction sweep, shown for the shape of the frontier only; the saved corrected run at the chosen unit earns \sret{balanced_leverage_max}. Source:
 \texttt{data/sweep\_aggressive\_strategy6.csv}.}\label{tab:frontier}
 \input{generated/tab_frontier.tex}
 \end{table}
@@ -995,7 +994,7 @@ books (highest return subject to a Sharpe ratio of at least \stv{rule.sharpe} an
 \begin{figure}[t]\centering
 \includegraphics[width=\linewidth]{figures/fig_frontiers.pdf}
 \caption{(a) Equity: return, volatility and share of volume-capped positions against the base unit. The dotted line marks the chosen unit. (b) Options: return and volatility of the premium-cap books
-(green: corrected; red: overstated legacy). (c) Capital-split frontier of the equity and options sleeves from \texttt{results/portfolio/frontier.csv} (\stv{frontier.equity} with \sn{options_cap20}).}\label{fig:frontiers}
+(green: current bid/ask fills; red: original convention). (c) Capital-split frontier of the equity and options sleeves from \texttt{results/portfolio/frontier.csv} (\stv{frontier.equity} with \sn{options_cap20}).}\label{fig:frontiers}
 \end{figure}
 
 Equity return is capacity-bound. For options, the premium cap $c$ is a risk-appetite dial that scales risk; with the corrected fills it scales a near-zero return (Figure~\ref{fig:frontiers}b). The practical limits on the options book lie outside the backtest: quoted width, depth and market impact in single-name options.
@@ -1032,7 +1031,7 @@ $N^\ast$ is the number of trials at which the DSR would fall below 0.95 (same di
 
 \paragraph{Results.} The validated equity book \sn{calm_weighted} \stv{sent.eq_dsr} (DSR \stv{calm_weighted.dsr}); its break-even is about \stv{calm_weighted.dsr_Nstar} independent trials, against the \stv{trials.eq} counted.
 The research book \sn{calm_rank_tilt} \stv{sent.crt_dsr} the bar at the counted $N$ (DSR \stv{calm_rank_tilt.dsr}). The six-times-leveraged \sn{balanced_leverage_max} has a DSR of \stv{balanced_leverage_max.dsr} and a break-even of
-\stv{balanced_leverage_max.dsr_Nstar} trials. The options book \sn{options_cap20} \stv{sent.opt_dsr}: its DSR is \stv{options_cap20.dsr} with the dispersion of all counted trials and \stv{options_cap20.dsr_corr} with the dispersion of the corrected runs only
+\stv{balanced_leverage_max.dsr_Nstar} trials. The options book \sn{options_cap20} \stv{sent.opt_dsr}: its DSR is \stv{options_cap20.dsr} with the dispersion of all counted trials and \stv{options_cap20.dsr_corr} with the dispersion of the runs not under the original convention only
 (\stv{options_cap30.dsr} and \stv{options_cap30.dsr_corr} for \sn{options_cap30}); with a probabilistic Sharpe ratio against zero of only \stv{options_cap20.psr}, the options book does not clear a zero benchmark either, so the deflation is moot.
 The deflation does not cover choices that left no trial record: the decay-day windows, the trim and tilt, the volatility-sizing family and the exponent of \sn{calm_rank_tilt}, the options caps, and the blend multiples are all in-sample selections.
 
@@ -1043,7 +1042,7 @@ The deflation does not cover choices that left no trial record: the decay-day wi
 
 \begin{figure}[t]\centering
 \includegraphics[width=0.75\linewidth]{figures/fig_dsr.pdf}
-\caption{Deflated Sharpe ratio against the assumed number of trials. Dotted verticals mark the counted $N$ for equity and for options; the dashed green line recomputes the options curve with the dispersion of the corrected runs only.}\label{fig:dsr}
+\caption{Deflated Sharpe ratio against the assumed number of trials. Dotted verticals mark the counted $N$ for equity and for options; the dashed green line recomputes the options curve with the dispersion of the runs not under the original convention only.}\label{fig:dsr}
 \end{figure}
 
 \subsection{Audit log: defects found}\label{sec:auditlog}
@@ -1060,7 +1059,7 @@ correction to the Sharpe denominator raised Sharpe ratios.
 Defect & What exposed it & Effect (before $\to$ after)\\
 \midrule
 Look-ahead in the surprise deciles & Each surprise was ranked within its announcement quarter, i.e.\ against firms that had not reported yet; now ranked against the expanding pool of strictly earlier quarters, so the first quarter (\stv{pit.dropped} events) is dropped & \sn{calm_weighted}: \stv{ladder.calm_weighted.fix1.ret} / \stv{ladder.calm_weighted.fix1.sharpe} $\to$ \stv{ladder.calm_weighted.fix12.ret} / \stv{ladder.calm_weighted.fix12.sharpe}; median over \stv{ladder.n_books} equity books \stv{ladder.med.fix2} a year; 60-day signal spread \stv{pre.spread.mkt.h60} $\to$ \stv{spread.mkt.h60}\\
-Leverage cap ignored open positions & The cap bounded only each quarter's new positions, so realized gross exposure ran above the stated cap; the cap now bounds the whole open book at sizing time & \sn{balanced_leverage_max}: \stv{ladder.balanced_leverage_max.published.ret} / \stv{ladder.balanced_leverage_max.published.sharpe} $\to$ \stv{ladder.balanced_leverage_max.fix1.ret} / \stv{ladder.balanced_leverage_max.fix1.sharpe}; median \stv{ladder.med.fix1}; days over the cap \stv{balanced_leverage_max_legacy.days_over_cap} $\to$ \stv{balanced_leverage_max.days_over_cap}\\
+Leverage cap ignored open positions & The cap bounded only each quarter's new positions, so realized gross exposure ran above the stated cap; the cap now bounds the whole open book at sizing time & \sn{balanced_leverage_max}: \stv{ladder.balanced_leverage_max.published.ret} / \stv{ladder.balanced_leverage_max.published.sharpe} $\to$ \stv{ladder.balanced_leverage_max.fix1.ret} / \stv{ladder.balanced_leverage_max.fix1.sharpe}; median \stv{ladder.med.fix1} a year; days over the cap \stv{balanced_leverage_max_legacy.days_over_cap} $\to$ \stv{balanced_leverage_max.days_over_cap}\\
 Mid-price option fills & Options were bought and sold at the mid with a flat percentage cost; the book pays the ask and receives the bid & 20\% book: \stv{ladder.options_cap20.published.ret} / \stv{ladder.options_cap20.published.sharpe} $\to$ \stv{ladder.options_cap20.fix3_only_bidask.ret} / \stv{ladder.options_cap20.fix3_only_bidask.sharpe} (bid/ask fills only)\\
 Full-sample hold-period fitting & Decay days were estimated on the same history they were tested on; now estimated on the first \stv{fix.decay.pct} of announcement quarters (\stv{fix.decay.n} of \stv{fix.decay.of}) & \sn{calm_weighted}: \stv{ladder.calm_weighted.fix12.ret} $\to$ \stv{ladder.calm_weighted.all.ret}; median \stv{ladder.med.fix4} a year\\
 Options quotes carried forward & Dead options (zero bid) were marked at their last live mid & 20\% book: \stv{optchain.legacy.ret} / \stv{optchain.legacy.sh} $\to$ \stv{optchain.floor.ret} / \stv{optchain.floor.sh} (before the fill fix)\\
@@ -1090,8 +1089,8 @@ Source: \texttt{docs/paper/cache/ladders/equity\_ladder.csv} (copied from the fi
 \caption{The fix-attribution ladder. (a) Equity: annualized return as each fix is applied in turn. (b) Options: published (mid fills), bid/ask fills only, and all fixes.}\label{fig:ladder}
 \end{figure}
 
-Across the \stv{ladder.n_books} equity books, \stv{sent.biggest_fix}. The point-in-time deciles are the largest step for \stv{ladder.n_fix2_largest} books; the open-book cap matters mainly for the six-times books (median step \stv{ladder.med.fix1}, range \stv{ladder.min.fix1} to \stv{ladder.max.fix1} percentage points); the corrected
-hold periods raise returns for \stv{ladder.n_fix4_raise} books (median \stv{ladder.med.fix4}). Taken together the corrections lower return by a median of \stv{ladder.med.total} a year, and lower the Sharpe ratio for \stv{ladder.n_sharpe_lower} of \stv{ladder.n_books} books. The corrected caps hold at sizing time but gross exposure over the current NAV can still
+Across the \stv{ladder.n_books} equity books, \stv{sent.biggest_fix}. The point-in-time deciles are the largest step for \stv{ladder.n_fix2_largest} books; the open-book cap matters mainly for the six-times books (median step \stv{ladder.med.fix1}, range \stv{ladder.min.fix1} to \stv{ladder.max.fix1} points); the corrected
+hold periods raise returns for \stv{ladder.n_fix4_raise} books (median \stv{ladder.med.fix4}). Taken together the corrections change return by a median of \stv{ladder.med.total} a year, and lower the Sharpe ratio for \stv{ladder.n_sharpe_lower} of \stv{ladder.n_books} books. The corrected caps hold at sizing time but gross exposure over the current NAV can still
 exceed the cap when NAV falls (for \sn{balanced_leverage_max}, a peak of \stv{balanced_leverage_max.gross_max}$\times$ against a cap of \stv{balanced_leverage_max.cap}$\times$). \stv{sent.sweepnote}
 
 \paragraph{What the corrections did not address.} \texttt{docs/FIXES.md} records the residual issues, which this paper inherits. The constants chosen on the full sample (the \sn{conviction_tilt} trim and tilt, the \sn{*_max} base-unit multipliers, the \sn{calm_weighted} unit, the \sn{calm_rank_tilt} exponent,
@@ -1113,7 +1112,7 @@ market-wide surprise regimes, so decile sizes are uneven by quarter.
 
 We list these without softening. Each is either a reason realized performance would be lower or a test still to be run.
 \begin{enumerate}
-\item \textbf{The corrections lowered every headline, and the numbers are still partly in-sample.} The corrected returns are in Table~\ref{tab:ladder}. The constants chosen on the full sample before the corrections (trim, tilt, base units and the six-times ceiling, the
+\item \textbf{The corrections lowered the headline numbers, and what remains is still partly in-sample.} The corrected returns are in Table~\ref{tab:ladder}. The constants chosen on the full sample before the corrections (trim, tilt, base units and the six-times ceiling, the
       \sn{calm_rank_tilt} exponent, option caps, blend multiples) were not re-selected. Re-selecting them on a search window is an open task and would most likely lower the figures further. The split-sample check of Section~\ref{sec:eqresults} predates the corrections and was not re-run.
 \item \textbf{Sample period and decay.} All results are for 1996--2013, and alpha per dollar was lower in the last era in \stv{era.all.fade.n} of nine profiled books (to between \stv{era.all.CA.min} and \stv{era.all.CA.max} of its first-era level). A data extension and a post-publication
       decay adjustment \citep{McLeanPontiff2016} are required before any capital is allocated.
@@ -1125,7 +1124,7 @@ We list these without softening. Each is either a reason realized performance wo
 \item \textbf{Market impact and capacity (equity).} The \stv{balanced_leverage_max.liqfrac} volume cap is a participation limit, not an impact model. \stv{calm_weighted.liqcap} of \sn{calm_weighted}'s positions and \stv{balanced_leverage_max.liqcap} of \sn{balanced_leverage_max}'s sit at the cap
       \citep{FrazziniIsraelMoskowitz2018,NovyMarxVelikov2016}. Costs are \stv{cost.min}--\stv{cost.max} basis points per side by liquidity quintile.
 \item \textbf{Leverage and the drawdown screen.} The cap now bounds the open book at sizing time, but gross exposure over current NAV can exceed it, and the \sn{*_max} books run at several times NAV. \stv{max.n_breach} of the \stv{max.n} \sn{*_max} books now breach the
-      drawdown limit (\stv{rule.dd}) that was used to choose their size, with a worst drawdown of \stv{max.worst_dd}; they are research variants and are not presented as achievable results.
+      drawdown limit ($-$\stv{rule.dd}) that was used to choose their size, with a worst drawdown of \stv{max.worst_dd}; they are research variants and are not presented as achievable results.
 \item \textbf{Option execution.} The book now pays the quoted ask and receives the quoted bid, which removed the measured edge; the selector still scores at the mid, there is no market impact, and the book opens about \stv{options_cap20.pos_per_year} positions a year.
 \item \textbf{Options data coverage.} 2011 is missing because its source file is structurally corrupt, so the trading-day calendar compresses across the gap, and 2013 ends in August. The matched sample is tilted toward names with liquid, longer-dated chains.
 \item \textbf{Return-law pooling.} One distribution per (decile, quarter) is shared by every stock in the decile, regardless of its own volatility.
@@ -1164,7 +1163,7 @@ model design, and the modeling assumptions in Section~\ref{sec:limits} omit cost
 %=====================================================================================
 
 \begin{table}[h]\centering
-\caption{Mapping from the numbered labels used in earlier drafts and the project history to the plain names used in this paper. The rename retired the numbered labels and left every number unchanged.}\label{tab:oldnames}
+\caption{Mapping from the numbered labels used in earlier drafts and the project history to the plain names used in this paper. The rename retired the numbered labels and left every number unchanged. Result folders carry suffixes: \texttt{\_legacy} is the pre-correction run of an equity book, \texttt{\_prefix\_fix} the pre-correction run of an options book or blend, \texttt{\_midfill} an options book with mid fills on the corrected deciles.}\label{tab:oldnames}
 \input{generated/tab_oldnames.tex}
 \end{table}
 
