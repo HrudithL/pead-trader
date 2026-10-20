@@ -13,6 +13,8 @@
 \providecommand{\statAlphaRatioBl}{\stv{alpha.ratio.bl}}
 \expandafter\gdef\csname st:amp_ratio\endcsname{4.7\xspace}
 \providecommand{\statAmpRatio}{\stv{amp_ratio}}
+\expandafter\gdef\csname st:audit.lev\endcsname{\sn{calm_weighted}: cap 2.5$\times$, peak 2.8$\times$, over the cap on 4.0\% of days. Correction identified; not yet applied to the reported numbers\xspace}
+\providecommand{\statAuditLev}{\stv{audit.lev}}
 \expandafter\gdef\csname st:audit.opt20.dret\endcsname{4.46\%\xspace}
 \providecommand{\statAuditOptTwoZeroDret}{\stv{audit.opt20.dret}}
 \expandafter\gdef\csname st:balanced_leverage.T\endcsname{4{,}655\xspace}
@@ -271,12 +273,14 @@
 \providecommand{\statBestEqShName}{\stv{best_eq_sh.name}}
 \expandafter\gdef\csname st:best_eq_sh.val\endcsname{1.81\xspace}
 \providecommand{\statBestEqShVal}{\stv{best_eq_sh.val}}
+\expandafter\gdef\csname st:beta.exposed.max\endcsname{0.51\xspace}
+\providecommand{\statBetaExposedMax}{\stv{beta.exposed.max}}
+\expandafter\gdef\csname st:beta.exposed.min\endcsname{0.18\xspace}
+\providecommand{\statBetaExposedMin}{\stv{beta.exposed.min}}
 \expandafter\gdef\csname st:beta.neutral.maxabs\endcsname{0.05\xspace}
 \providecommand{\statBetaNeutralMaxabs}{\stv{beta.neutral.maxabs}}
 \expandafter\gdef\csname st:beta.neutral.n\endcsname{18\xspace}
 \providecommand{\statBetaNeutralN}{\stv{beta.neutral.n}}
-\expandafter\gdef\csname st:bl_max_avg_leverage_vs_cap\endcsname{\xspace}
-\providecommand{\statBlMaxAvgLeverageVsCap}{\stv{bl_max_avg_leverage_vs_cap}}
 \expandafter\gdef\csname st:blend.vs_legacy.ratio\endcsname{1.43\xspace}
 \providecommand{\statBlendVsLegacyRatio}{\stv{blend.vs_legacy.ratio}}
 \expandafter\gdef\csname st:bv.all.calm_jumpy.beta.high.bp\endcsname{$-$55\xspace}
@@ -455,7 +459,7 @@
 \providecommand{\statCalendarEnd}{\stv{calendar_end}}
 \expandafter\gdef\csname st:calendar_start\endcsname{1995-01-03\xspace}
 \providecommand{\statCalendarStart}{\stv{calendar_start}}
-\expandafter\gdef\csname st:call60\endcsname{14.38\xspace}
+\expandafter\gdef\csname st:call60\endcsname{14.38\%\xspace}
 \providecommand{\statCallSixZero}{\stv{call60}}
 \expandafter\gdef\csname st:call60.t\endcsname{4.69\xspace}
 \providecommand{\statCallSixZeroT}{\stv{call60.t}}
@@ -2097,6 +2101,16 @@
 \providecommand{\statNTradeableEvents}{\stv{n_tradeable_events}}
 \expandafter\gdef\csname st:neg_years.only2009\endcsname{9\xspace}
 \providecommand{\statNegYearsOnlyTwoZeroZeroNine}{\stv{neg_years.only2009}}
+\expandafter\gdef\csname st:olddraft.eq.dd\endcsname{$-$36.5\%\xspace}
+\providecommand{\statOlddraftEqDd}{\stv{olddraft.eq.dd}}
+\expandafter\gdef\csname st:olddraft.eq.name\endcsname{\sn{balanced_leverage_max}\xspace}
+\providecommand{\statOlddraftEqName}{\stv{olddraft.eq.name}}
+\expandafter\gdef\csname st:olddraft.eq.ret\endcsname{12.15\%\xspace}
+\providecommand{\statOlddraftEqRet}{\stv{olddraft.eq.ret}}
+\expandafter\gdef\csname st:olddraft.eq.sharpe\endcsname{1.00\xspace}
+\providecommand{\statOlddraftEqSharpe}{\stv{olddraft.eq.sharpe}}
+\expandafter\gdef\csname st:olddraft.eq.vol\endcsname{12.20\%\xspace}
+\providecommand{\statOlddraftEqVol}{\stv{olddraft.eq.vol}}
 \expandafter\gdef\csname st:oldhead.same\endcsname{identical\xspace}
 \providecommand{\statOldheadSame}{\stv{oldhead.same}}
 \expandafter\gdef\csname st:omega_hi\endcsname{6.2\xspace}
@@ -2463,7 +2477,7 @@
 \providecommand{\statPlMktRTwolog}{\stv{pl.mkt.r2log}}
 \expandafter\gdef\csname st:pl.mkt.r2lvl\endcsname{0.96\xspace}
 \providecommand{\statPlMktRTwolvl}{\stv{pl.mkt.r2lvl}}
-\expandafter\gdef\csname st:put60\endcsname{$-$10.79\xspace}
+\expandafter\gdef\csname st:put60\endcsname{$-$10.79\%\xspace}
 \providecommand{\statPutSixZero}{\stv{put60}}
 \expandafter\gdef\csname st:put60.t\endcsname{$-$6.29\xspace}
 \providecommand{\statPutSixZeroT}{\stv{put60.t}}
@@ -2687,6 +2701,8 @@
 \providecommand{\statSentBv}{\stv{sent.bv}}
 \expandafter\gdef\csname st:sent.bv.larger\endcsname{beta\xspace}
 \providecommand{\statSentBvLarger}{\stv{sent.bv.larger}}
+\expandafter\gdef\csname st:sent.bv.plain\endcsname{In plain terms, the calm edge is mostly a low-beta edge: most of the apparent gain from sizing by volatility is a gain from tilting toward low-beta stocks, which calm stocks tend to be. It means the Sharpe gain of the volatility-sized books should not be attributed to volatility itself, and that a direct beta rule is the more natural next candidate.\xspace}
+\providecommand{\statSentBvPlain}{\stv{sent.bv.plain}}
 \expandafter\gdef\csname st:sent.calmprogress\endcsname{rises\xspace}
 \providecommand{\statSentCalmprogress}{\stv{sent.calmprogress}}
 \expandafter\gdef\csname st:sent.crt_dsr\endcsname{clears\xspace}
@@ -2705,6 +2721,8 @@
 \providecommand{\statSentExpfit}{\stv{sent.expfit}}
 \expandafter\gdef\csname st:sent.ffvsmkt\endcsname{enlarges\xspace}
 \providecommand{\statSentFfvsmkt}{\stv{sent.ffvsmkt}}
+\expandafter\gdef\csname st:sent.filter_vs_sizing\endcsname{do not beat\xspace}
+\providecommand{\statSentFilterVsSizing}{\stv{sent.filter_vs_sizing}}
 \expandafter\gdef\csname st:sent.fixes_pending\endcsname{identified, not yet applied to the reported numbers (no \texttt{docs/FIXES.md} exists in this checkout)\xspace}
 \providecommand{\statSentFixesPending}{\stv{sent.fixes_pending}}
 \expandafter\gdef\csname st:sent.fixes_short\endcsname{identified; not yet applied to the reported numbers\xspace}
@@ -2977,17 +2995,17 @@
 \providecommand{\statSplitTo}{\stv{split.to}}
 \expandafter\gdef\csname st:split.train\endcsname{1996--2004\xspace}
 \providecommand{\statSplitTrain}{\stv{split.train}}
-\expandafter\gdef\csname st:spread.ff.h1\endcsname{0.80\xspace}
+\expandafter\gdef\csname st:spread.ff.h1\endcsname{0.80\%\xspace}
 \providecommand{\statSpreadFfHOne}{\stv{spread.ff.h1}}
-\expandafter\gdef\csname st:spread.ff.h10\endcsname{1.79\xspace}
+\expandafter\gdef\csname st:spread.ff.h10\endcsname{1.79\%\xspace}
 \providecommand{\statSpreadFfHOneZero}{\stv{spread.ff.h10}}
-\expandafter\gdef\csname st:spread.ff.h20\endcsname{2.18\xspace}
+\expandafter\gdef\csname st:spread.ff.h20\endcsname{2.18\%\xspace}
 \providecommand{\statSpreadFfHTwoZero}{\stv{spread.ff.h20}}
-\expandafter\gdef\csname st:spread.ff.h40\endcsname{2.79\xspace}
+\expandafter\gdef\csname st:spread.ff.h40\endcsname{2.79\%\xspace}
 \providecommand{\statSpreadFfHFourZero}{\stv{spread.ff.h40}}
-\expandafter\gdef\csname st:spread.ff.h5\endcsname{1.59\xspace}
+\expandafter\gdef\csname st:spread.ff.h5\endcsname{1.59\%\xspace}
 \providecommand{\statSpreadFfHFive}{\stv{spread.ff.h5}}
-\expandafter\gdef\csname st:spread.ff.h60\endcsname{3.76\xspace}
+\expandafter\gdef\csname st:spread.ff.h60\endcsname{3.76\%\xspace}
 \providecommand{\statSpreadFfHSixZero}{\stv{spread.ff.h60}}
 \expandafter\gdef\csname st:spread.ff.t.h1\endcsname{11.41\xspace}
 \providecommand{\statSpreadFfTHOne}{\stv{spread.ff.t.h1}}
@@ -3001,17 +3019,17 @@
 \providecommand{\statSpreadFfTHFive}{\stv{spread.ff.t.h5}}
 \expandafter\gdef\csname st:spread.ff.t.h60\endcsname{9.25\xspace}
 \providecommand{\statSpreadFfTHSixZero}{\stv{spread.ff.t.h60}}
-\expandafter\gdef\csname st:spread.mkt.h1\endcsname{0.83\xspace}
+\expandafter\gdef\csname st:spread.mkt.h1\endcsname{0.83\%\xspace}
 \providecommand{\statSpreadMktHOne}{\stv{spread.mkt.h1}}
-\expandafter\gdef\csname st:spread.mkt.h10\endcsname{1.70\xspace}
+\expandafter\gdef\csname st:spread.mkt.h10\endcsname{1.70\%\xspace}
 \providecommand{\statSpreadMktHOneZero}{\stv{spread.mkt.h10}}
-\expandafter\gdef\csname st:spread.mkt.h20\endcsname{1.96\xspace}
+\expandafter\gdef\csname st:spread.mkt.h20\endcsname{1.96\%\xspace}
 \providecommand{\statSpreadMktHTwoZero}{\stv{spread.mkt.h20}}
-\expandafter\gdef\csname st:spread.mkt.h40\endcsname{2.36\xspace}
+\expandafter\gdef\csname st:spread.mkt.h40\endcsname{2.36\%\xspace}
 \providecommand{\statSpreadMktHFourZero}{\stv{spread.mkt.h40}}
-\expandafter\gdef\csname st:spread.mkt.h5\endcsname{1.54\xspace}
+\expandafter\gdef\csname st:spread.mkt.h5\endcsname{1.54\%\xspace}
 \providecommand{\statSpreadMktHFive}{\stv{spread.mkt.h5}}
-\expandafter\gdef\csname st:spread.mkt.h60\endcsname{3.05\xspace}
+\expandafter\gdef\csname st:spread.mkt.h60\endcsname{3.05\%\xspace}
 \providecommand{\statSpreadMktHSixZero}{\stv{spread.mkt.h60}}
 \expandafter\gdef\csname st:spread.mkt.t.h1\endcsname{10.90\xspace}
 \providecommand{\statSpreadMktTHOne}{\stv{spread.mkt.t.h1}}
@@ -3025,7 +3043,7 @@
 \providecommand{\statSpreadMktTHFive}{\stv{spread.mkt.t.h5}}
 \expandafter\gdef\csname st:spread.mkt.t.h60\endcsname{5.25\xspace}
 \providecommand{\statSpreadMktTHSixZero}{\stv{spread.mkt.t.h60}}
-\expandafter\gdef\csname st:str60\endcsname{3.98\xspace}
+\expandafter\gdef\csname st:str60\endcsname{3.98\%\xspace}
 \providecommand{\statStrSixZero}{\stv{str60}}
 \expandafter\gdef\csname st:str60.t\endcsname{5.22\xspace}
 \providecommand{\statStrSixZeroT}{\stv{str60.t}}

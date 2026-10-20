@@ -535,9 +535,9 @@ def signal_evidence(S, ctx):
         rows.append(r)
     write_fragment("tab_deciles.tex", table("lrrrrrr", ["Decile"] + [f"$+{h}$d" for h in HORIZONS], rows, size=r"\small"))
     for h in HORIZONS:
-        S.put(f"spread.mkt.h{h}", float(spr.loc[h, "mean_spread"]), f"{spr.loc[h, 'mean_spread'] * 100:.2f}")
+        S.put(f"spread.mkt.h{h}", float(spr.loc[h, "mean_spread"]), f"{spr.loc[h, 'mean_spread'] * 100:.2f}\\%")
         S.put(f"spread.mkt.t.h{h}", float(spr.loc[h, "t_stat"]), f"{spr.loc[h, 't_stat']:.2f}")
-        S.put(f"spread.ff.h{h}", float(ffs.loc[h, "mean_spread"]), f"{ffs.loc[h, 'mean_spread'] * 100:.2f}")
+        S.put(f"spread.ff.h{h}", float(ffs.loc[h, "mean_spread"]), f"{ffs.loc[h, 'mean_spread'] * 100:.2f}\\%")
         S.put(f"spread.ff.t.h{h}", float(ffs.loc[h, "t_stat"]), f"{ffs.loc[h, 't_stat']:.2f}")
     rows = []
     for h in HORIZONS:
@@ -607,11 +607,11 @@ def signal_evidence(S, ctx):
     call60 = osp[(osp.cp_type == "call") & (osp.horizon == 60)].iloc[0]
     put60 = osp[(osp.cp_type == "put") & (osp.horizon == 60)].iloc[0]
     str60 = osp[(osp.cp_type == "straddle") & (osp.horizon == 60)].iloc[0]
-    S.put("call60", float(call60["mean_spread"] * 100), f"{call60['mean_spread'] * 100:.2f}")
+    S.put("call60", float(call60["mean_spread"] * 100), f"{call60['mean_spread'] * 100:.2f}\\%")
     S.put("call60.t", float(call60["t_stat"]), f"{call60['t_stat']:.2f}")
-    S.put("put60", float(put60["mean_spread"] * 100), f2(put60["mean_spread"] * 100))
+    S.put("put60", float(put60["mean_spread"] * 100), pp(put60["mean_spread"] * 100, 2))
     S.put("put60.t", float(put60["t_stat"]), f2(put60["t_stat"]))
-    S.put("str60", float(str60["mean_spread"] * 100), f"{str60['mean_spread'] * 100:.2f}")
+    S.put("str60", float(str60["mean_spread"] * 100), f"{str60['mean_spread'] * 100:.2f}\\%")
     S.put("str60.t", float(str60["t_stat"]), f"{str60['t_stat']:.2f}")
     ratio = call60["mean_spread"] / spr.loc[60, "mean_spread"]
     S.put("amp_ratio", float(ratio), f"{ratio:.1f}")
@@ -653,9 +653,9 @@ def signal_evidence(S, ctx):
     S.put("era.first.name", era.iloc[0]["group"], tx(era.iloc[0]["group"].replace("-", "--")))
     S.put("era.last", float(era.iloc[-1]["mean_spread"] * 100), pp(era.iloc[-1]["mean_spread"] * 100, 2))
     S.put("era.last.name", era.iloc[-1]["group"], tx(era.iloc[-1]["group"].replace("-", "--")))
-    rows = [[f"Size quintile {g}" + (" (smallest)" if str(g) == "1" else (" (largest)" if str(g) == "5" else "")),
+    rows = [[f"Size quintile {int(g)}" + (" (smallest)" if int(g) == 1 else (" (largest)" if int(g) == 5 else "")),
              f2(r["mean_spread"] * 100), f2(r["t_stat"]), intc(r["n_events"])]
-            for g, r in size.sort_values("group").iterrows() for g in [r["group"]]]
+            for _, r in size.sort_values("group").iterrows() for g in [r["group"]]]
     rows.append("MID")
     rows += [[f"Era {r['group'].replace('-', '--')}", f2(r["mean_spread"] * 100), f2(r["t_stat"]), intc(r["n_events"])]
              for _, r in era.iterrows()]
@@ -760,6 +760,9 @@ def equity_section(S, ctx):
     neutral = [n for n in ab.index if n not in ("market_boost", "market_boost_max", "market_exposed", "market_exposed_max")]
     S.put("beta.neutral.maxabs", float(ab.loc[neutral, "beta"].abs().max()), f"{ab.loc[neutral, 'beta'].abs().max():.2f}")
     S.put("beta.neutral.n", len(neutral), str(len(neutral)))
+    exposed = [n for n in ("market_boost", "market_boost_max", "market_exposed", "market_exposed_max") if n in ab.index]
+    S.put("beta.exposed.min", float(ab.loc[exposed, "beta"].min()), f2(ab.loc[exposed, "beta"].min()))
+    S.put("beta.exposed.max", float(ab.loc[exposed, "beta"].max()), f2(ab.loc[exposed, "beta"].max()))
 
     # ---- headline tables ----
     def row(n, extra=()):
@@ -807,7 +810,7 @@ def equity_section(S, ctx):
     write_fragment("tab_levered.tex", table("lrrrrrrrr", ["Book", "Return", "Vol", "Sharpe", "Max DD", "Avg gross", "Max gross", "ADV-capped", "Beta"],
                                             rows, size=r"\small"))
     # generated sentences about the levered rows
-    eqs = eq[eq.status.isin(["validated", "research", "reference"])]
+    eqs = eq[eq.status.isin(["validated", "research", "reference"]) & ~eq.index.str.endswith(("_legacy", "_midfill"))]
     best_ret = eqs["annualized_return"].idxmax()
     best_sh = eqs["sharpe"].idxmax()
     best_dd = eqs["max_drawdown"].idxmax()
@@ -833,7 +836,17 @@ def equity_section(S, ctx):
     # relation to the old headline
     S.put("oldhead.same", bool(np.isclose(runs["balanced_leverage_max"]["summary"]["sharpe"], runs["sector_balanced_max"]["summary"]["sharpe"])),
           "identical" if np.isclose(runs["balanced_leverage_max"]["summary"]["sharpe"], runs["sector_balanced_max"]["summary"]["sharpe"]) else "different")
-    S.put("bl_max_avg_leverage_vs_cap", float(S.get("balanced_leverage_max.gross_avg")), "")
+    # what earlier drafts reported as the equity headline: the pre-correction run of balanced_leverage_max (its legacy twin
+    # once the equity corrections are promoted; otherwise the saved run itself, which is that run)
+    old = "balanced_leverage_max_legacy" if "balanced_leverage_max_legacy" in runs else "balanced_leverage_max"
+    so = runs[old]["summary"]
+    S.put("olddraft.eq.name", old, sn(old))
+    S.put("olddraft.eq.ret", so["annualized_return"], pc(so["annualized_return"]))
+    S.put("olddraft.eq.vol", so["annualized_vol"], pc(so["annualized_vol"]))
+    S.put("olddraft.eq.sharpe", so["sharpe"], f2(so["sharpe"]))
+    S.put("olddraft.eq.dd", so["max_drawdown"], pc(so["max_drawdown"], 1))
+    S.put("sent.filter_vs_sizing",
+          "do not beat" if max(runs["volatility_filter"]["summary"]["sharpe"], runs["calm_weighted_filter"]["summary"]["sharpe"]) <= runs["calm_weighted"]["summary"]["sharpe"] else "beat")
     # vs cap: realized gross exceeds the nominal cap on carry-over positions
     for n in ("balanced_leverage", "calm_weighted", "calm_rank_tilt", "balanced_leverage_max"):
         cap = runs[n]["params"]["max_gross_leverage"]
@@ -1144,6 +1157,13 @@ def beta_vol_section(S, ctx):
     S.put("sent.bv", ("Holding beta fixed, the calm-minus-jumpy gap shrinks to an average of %s bp per dollar, while holding volatility fixed the low-minus-high-beta gap remains %s bp"
                       % (bp(cj), bp(lh))))
     S.put("sent.bv.larger", "beta" if abs(lh) > abs(cj) else "volatility")
+    if abs(lh) > abs(cj):
+        plain = ("In plain terms, the calm edge is mostly a low-beta edge: most of the apparent gain from sizing by volatility is a gain from tilting "
+                 "toward low-beta stocks, which calm stocks tend to be. It means the Sharpe gain of the volatility-sized books should not be attributed to "
+                 "volatility itself, and that a direct beta rule is the more natural next candidate.")
+    else:
+        plain = ("In plain terms, volatility carries more of the edge than beta in this cut, so the calm edge is not simply a low-beta edge.")
+    S.put("sent.bv.plain", plain)
 
 
 # ------------------------------------------------------------------------------------------------------
@@ -1507,6 +1527,15 @@ def audit_section(S, ctx):
                 if base in runs and runs[n]["asset_class"] == "equity":
                     twins.append((base, n))
     S.put("twins.eq.n", len(twins), str(len(twins)))
+    tw = dict(twins)
+    if "calm_weighted" in tw:
+        a, b = runs["calm_weighted"]["summary"], runs[tw["calm_weighted"]]["summary"]
+        lev = (sn("calm_weighted") + ": " + pc(b["annualized_return"]) + " / " + f2(b["sharpe"]) + r" $\to$ " + pc(a["annualized_return"]) + " / " + f2(a["sharpe"])
+               + "; open-book gross now bounded by the cap (peak " + S.tex["calm_weighted.gross_max"] + r"$\times$)")
+    else:
+        lev = (sn("calm_weighted") + ": cap " + S.tex["calm_weighted.cap"] + r"$\times$, peak " + S.tex["calm_weighted.gross_max"] + r"$\times$, over the cap on "
+               + S.tex["calm_weighted.days_over_cap"] + " of days. " + S.tex["sent.fixes_short"][0:0] + "Correction " + S.tex["sent.fixes_short"])
+    S.put("audit.lev", lev)
     rows = []
     for base, n in twins:
         a, b = runs[base]["summary"], runs[n]["summary"]

@@ -72,8 +72,8 @@ Markets under-react to earnings news: a stock keeps moving in the direction of i
 surprise for weeks after the announcement. We model this as gradual incorporation of
 information by heterogeneously attentive investors and test the model's predictions in a
 \stv{n_events}-event sample (1996--2013): the top-minus-bottom surprise-decile spread is
-$+$\stv{spread.mkt.h60}\% over 60 trading days ($t=$\stv{spread.mkt.t.h60}, clustered by announcement
-quarter) and $+$\stv{spread.ff.h60}\% after a size and book-to-market adjustment
+$+$\stv{spread.mkt.h60} over 60 trading days ($t=$\stv{spread.mkt.t.h60}, clustered by announcement
+quarter) and $+$\stv{spread.ff.h60} after a size and book-to-market adjustment
 ($t=$\stv{spread.ff.t.h60}); the same ordering appears in option premia, amplified
 about \stv{amp_ratio}$\times$. We then ask how much can be traded, and we audit the answer.
 The \emph{validated} market-neutral equity book \sn{calm_weighted} (positions sized by inverse
@@ -86,14 +86,14 @@ Against the CRSP value-weighted market, \sn{calm_weighted} has an annualized alp
 The corrected Kelly options books earn \sret{options_cap20} (\sn{options_cap20}, Sharpe
 \ssh{options_cap20}) and \sret{options_cap30} (\sn{options_cap30}, Sharpe \ssh{options_cap30});
 an earlier convention for marking expired quotes had overstated the first at
-\stv{optchain.legacy.ret} and a Sharpe ratio of \stv{optchain.legacy.sh}. The two sleeves are
-nearly uncorrelated (daily correlation \stv{corr.eo}); the validated blend \sn{hedged_blend}
+\stv{optchain.legacy.ret} and a Sharpe ratio of \stv{optchain.legacy.sh}. The two sleeves have
+a daily correlation of \stv{corr.eo}; the validated blend \sn{hedged_blend}
 earns \sret{hedged_blend} at \svol{hedged_blend} volatility (Sharpe \ssh{hedged_blend}, drawdown
 \sdd{hedged_blend}) and its research counterpart \sn{calm_blend} earns \sret{calm_blend} (Sharpe
-\ssh{calm_blend}). The edge is concentrated in one kind of trade (a long position in a
-thinly traded, low-beta stock held for more than two months), high-beta shorts earn no
-measurable alpha, and alpha per dollar has fallen by a factor of \stv{alpha.ratio.bl} between
-1996--2001 and 2008--13. Several corrections are identified but not yet applied to these numbers
+\ssh{calm_blend}). The single most profitable kind of trade is the same in \stv{best.n_top} of nine books (a long
+position in a thinly traded, low-beta stock held for more than two months); high-beta shorts have alpha
+statistically indistinguishable from zero in \stv{hbs.n_noalpha} of \stv{hbs.n} books; and alpha per dollar in
+1996--2001 was \stv{alpha.ratio.bl} times its 2008--13 level for \sn{balanced_leverage}. Several corrections are identified but not yet applied to these numbers
 (Section~\ref{sec:audit}), and borrow fees, financing, market impact and option spreads beyond a
 one-tick floor are not modelled (Section~\ref{sec:limits}). All figures are hypothetical backtests.
 \end{abstract}
@@ -341,8 +341,8 @@ under the market benchmark (solid) and under the leave-one-out size/book-to-mark
 \end{table}
 
 Table~\ref{tab:deciles} and Figure~\ref{fig:decile} show the canonical pattern. \stv{sent.monotone}
-The top-minus-bottom spread \stv{sent.rising.mkt}, from \stv{spread.mkt.h1}\% at one day to
-\stv{spread.mkt.h60}\% at 60 days (Table~\ref{tab:spreads}), and the smallest clustered
+The top-minus-bottom spread \stv{sent.rising.mkt}, from \stv{spread.mkt.h1} at one day to
+\stv{spread.mkt.h60} at 60 days (Table~\ref{tab:spreads}), and the smallest clustered
 $t$-statistic across all horizons and both benchmarks is \stv{tmin_spread}. A one-time reaction that
 merely differed across deciles would produce a flat spread; a rising spread is the signature of
 gradual incorporation.
@@ -372,7 +372,7 @@ its cell-mates, excluding itself:
 \end{equation}
 Leaving the event out of its own benchmark prevents its return from shrinking toward zero in thin
 cells. If the drift were a risk premium, the adjustment would shrink the spread. It \stv{sent.ffvsmkt}
-it: the 60-day spread moves from \stv{spread.mkt.h60}\% to \stv{spread.ff.h60}\%
+it: the 60-day spread moves from \stv{spread.mkt.h60} to \stv{spread.ff.h60}
 ($t=\stv{spread.ff.t.h60}$), and the worst decile \stv{sent.d1ff}. The apparent reversal of the worst decile was a
 size/value premium sitting on top of the drift (Table~\ref{tab:spreads}, Figure~\ref{fig:spreads}).
 
@@ -394,15 +394,15 @@ The one-way ANOVA on the raw spread series reported in earlier drafts needs the 
 among the saved files; we therefore do not quote it.
 \begin{itemize}
   \item \textbf{Industry (Fama--French 12).} The spread is \stv{sent.het_sector}: the group estimates
-        run from \stv{sector.min}\% (\stv{sector.min.name}) to \stv{sector.max}\%
+        run from \stv{sector.min} (\stv{sector.min.name}) to \stv{sector.max}
         (\stv{sector.max.name}) across \stv{sector.n} groups ($Q=\stv{het.sector.Q}$, $p=\stv{het.sector.p}$).
         One drift model is therefore used for the whole cross-section.
   \item \textbf{Size.} The heterogeneity is \stv{sent.het_size}. The spread \stv{sent.sizemono} with
-        size, from \stv{size.small}\% ($t=\stv{size.small.t}$) in the smallest quintile to
-        \stv{size.large}\% ($t=\stv{size.large.t}$) in the largest. This is the prediction of
+        size, from \stv{size.small} ($t=\stv{size.small.t}$) in the smallest quintile to
+        \stv{size.large} ($t=\stv{size.large.t}$) in the largest. This is the prediction of
         Section~\ref{sec:mechanism}: the drift is greatest where arbitrage is most expensive. Size is a
         first-order determinant of the signal's value, so a strategy must neutralize it, not simply load on it.
-  \item \textbf{Era.} The estimates run from \stv{era.first}\% (\stv{era.first.name}) to \stv{era.last}\%
+  \item \textbf{Era.} The estimates run from \stv{era.first} (\stv{era.first.name}) to \stv{era.last}
         (\stv{era.last.name}). \stv{sent.het_era}.
 \end{itemize}
 
@@ -432,7 +432,7 @@ The machine-readable output of this diagnostic is not kept in \texttt{results/},
 project history, not on a file the build reads.
 
 \paragraph{Filtering by volatility.} Volatility does not change average returns; it changes how much
-a given surprise is worth (Section~\ref{sec:calm}). Dropping whole volatility groups did not help
+a given surprise is worth (Section~\ref{sec:calm}). Walk-forward filters that drop whole volatility groups \stv{sent.filter_vs_sizing} sizing on the Sharpe ratio
 (Section~\ref{sec:calm}); the negative result is kept as \sn{volatility_filter} and
 \sn{calm_weighted_filter}.
 
@@ -441,8 +441,8 @@ a given surprise is worth (Section~\ref{sec:calm}). Dropping whole volatility gr
 If PEAD is a real mispricing of the stock, it must appear in the price of a leveraged claim on that
 stock. For each event with listed options we take, on the announcement day, the call (put) with delta
 nearest $+0.5$ ($-0.5$) and at least 95 calendar days to expiry. We hold it at its mid price to each
-horizon. The call spread is $+$\stv{call60}\% of premium at 60 days ($t=\stv{call60.t}$) and the put
-spread is \stv{put60}\% ($t=\stv{put60.t}$), the mirror image (Table~\ref{tab:spreads},
+horizon. The call spread is $+$\stv{call60} of premium at 60 days ($t=\stv{call60.t}$) and the put
+spread is \stv{put60} ($t=\stv{put60.t}$), the mirror image (Table~\ref{tab:spreads},
 Figure~\ref{fig:spreads}).
 
 \paragraph{Magnitude check.} The ratio of the 60-day call spread to the stock spread is
@@ -452,7 +452,7 @@ the option's time decay over 60 days. The options market carries the same direct
 by leverage.
 
 \paragraph{Direction versus volatility.} A long straddle has roughly zero delta and isolates the
-non-directional component. Its 60-day spread is $+$\stv{str60}\% ($t=\stv{str60.t}$), a fraction
+non-directional component. Its 60-day spread is $+$\stv{str60} ($t=\stv{str60.t}$), a fraction
 \stv{str_over_call} of the call spread. Extreme-surprise names carry some excess volatility, but the
 dominant effect is directional.
 
@@ -600,7 +600,7 @@ drawdown \sdd{calm_weighted}, Calmar \stv{calm_weighted.calmar}), compared with 
 
 \paragraph{The research book.} \sn{calm_rank_tilt} weights each event by $(1.02-\pi_i)^k$, which all but switches off the most volatile stocks. Its Sharpe ratio
 \stv{sent.calmprogress} along the lineage \sn{balanced_leverage} ($\ssh{balanced_leverage}$), \sn{calm_weighted} ($\ssh{calm_weighted}$), \sn{calm_rank_tilt}
-($\ssh{calm_rank_tilt}$), and it is higher than \sn{calm_weighted}'s in \stv{crt_vs_cw.n_better} of three sub-periods. \textbf{It is a research book, not a
+($\ssh{calm_rank_tilt}$), and it is higher than \sn{calm_weighted}'s in \stv{crt_vs_cw.n_better} of the three sub-periods. \textbf{It is a research book, not a
 validated one:} the exponent $k=\stv{calm_rank_tilt.power}$ was chosen after seeing \sn{calm_weighted}'s full-sample results, so its Sharpe ratio is
 in-sample. The only out-of-sample evidence is a split-sample check recorded with the strategy: an exponent chosen on \stv{split.train} data alone (best
 $k=\stv{split.k}$) lifts the \stv{split.test} Sharpe ratio from \stv{split.from} to \stv{split.to}, the same as the full-sample best. That is one check on
@@ -613,14 +613,14 @@ volatility \svol{market_boost}, beta \stv{market_boost.beta}. It earns the marke
 
 \subsection{The leveraged and market-exposed research variants}\label{sec:levered}
 
-Earlier drafts headlined an equity book earning \sret{balanced_leverage_max} at \svol{balanced_leverage_max} volatility (Sharpe \ssh{balanced_leverage_max},
-drawdown \sdd{balanced_leverage_max}). That book is the six-times-cap research variant \sn{balanced_leverage_max}, which is \stv{oldhead.same} to \sn{sector_balanced_max}; it is
+Earlier drafts headlined an equity book earning \stv{olddraft.eq.ret} at \stv{olddraft.eq.vol} volatility (Sharpe \stv{olddraft.eq.sharpe},
+drawdown \stv{olddraft.eq.dd}). That book is the pre-correction run of the six-times-cap research variant \stv{olddraft.eq.name}, and \sn{balanced_leverage_max} is \stv{oldhead.same} to \sn{sector_balanced_max}; it is
 not the validated headline. Each \sn{*_max} book keeps its parent's signal and neutralization and changes only two dials, the base unit and a gross cap of
 \stv{balanced_leverage_max.cap}$\times$. The base unit was chosen by sweeping the unit and taking the highest return subject to a Sharpe ratio of at least \stv{rule.sharpe} and a drawdown no
 worse than $-$\stv{rule.dd} (Section~\ref{sec:capacity}): an in-sample choice. Table~\ref{tab:levered} reports them with the leverage they actually use. Realized gross
 exposure for \sn{balanced_leverage_max} averages \stv{balanced_leverage_max.gross_avg}$\times$ NAV and peaks at \stv{balanced_leverage_max.gross_max}$\times$, which is
 prime-brokerage-level leverage, and \stv{balanced_leverage_max.liqcap} of its positions sit at the volume cap. Its return is \stv{sent.levered_ret} and its Sharpe ratio is
-\stv{sent.levered_sh} than \sn{calm_weighted}'s, with a \stv{sent.levered_dd} drawdown. \sn{market_boost_max} adds the market overlay to this book: it has the highest return of any book in
+\stv{sent.levered_sh} than \sn{calm_weighted}'s, with a \stv{sent.levered_dd} drawdown. \sn{market_boost_max} adds the market overlay to this book: it earns
 \texttt{results/} (\sret{market_boost_max}, which is \stv{sent.mbmax_vs_mkt} the market's \stv{market.ret}), a beta of \stv{market_boost_max.beta} and a drawdown of \sdd{market_boost_max}. The
 extra return is the market's, paid for with the market's drawdown, and it should be read as a leveraged, market-exposed research variant.
 
@@ -640,14 +640,14 @@ earlier cohorts are still held.}\label{fig:leverage}
 \section{Where the equity return comes from}\label{sec:where}
 %=====================================================================================
 
-This section decomposes the equity returns. It rests on the saved attribution files (\texttt{results/alpha\_benchmark.csv}, \texttt{situations\_*.csv}, \texttt{profiles\_*.csv}), which
-split every position's profit into a part that the surprise rank predicts (``alpha'') and a part that comes from holding the average announcer.
+\begin{sloppypar}This section decomposes the equity returns. It rests on the saved attribution files (\texttt{results/alpha\_benchmark.csv}, \texttt{situations\_*.csv}, \texttt{profiles\_*.csv}), which
+split every position's profit into a part that the surprise rank predicts (``alpha'') and a part that comes from holding the average announcer.\end{sloppypar}
 
 \subsection{Alpha against the market}\label{sec:alpha}
 
 Daily NAV-percentage returns are regressed on the CRSP value-weighted market return (zero risk-free rate, Newey--West standard errors with five lags), alone and with an equal-weight-minus-value-weight
 (size) factor. Table~\ref{tab:alpha} reports the results. Across the \stv{beta.neutral.n} market-neutral books the largest absolute beta is \stv{beta.neutral.maxabs}; the market-exposed
-books (\sn{market_exposed}, \sn{market_boost} and their \sn{*_max} versions) carry betas near \stv{market_boost.beta}. For \sn{calm_weighted} the alpha is \stv{calm_weighted.alpha}
+books (\sn{market_exposed}, \sn{market_boost} and their \sn{*_max} versions) carry betas between \stv{beta.exposed.min} and \stv{beta.exposed.max}. For \sn{calm_weighted} the alpha is \stv{calm_weighted.alpha}
 ($t=\stv{calm_weighted.alpha_t}$); adding the size factor changes it to \stv{calm_weighted.alpha_sz}, so the return is not a small-cap loading. \stv{sent.alphafade}.
 
 \begin{table}[t]\centering
@@ -656,13 +656,13 @@ residual volatility. Source: \texttt{results/alpha\_benchmark.csv}.}\label{tab:a
 \input{generated/tab_alpha.tex}
 \end{table}
 
-\subsection{Long leg versus short leg: a benchmark artifact}\label{sec:legs}
+\subsection{Long leg versus short leg: sensitivity to the benchmark}\label{sec:legs}
 
-Against the average of \emph{all} announcers in the quarter, the surprise signal earns about the same on the long and short legs: for the nine profiled books the long-to-short ratio runs
+Against the average of \emph{all} announcers in the quarter, the long-to-short ratio of alpha per dollar for the nine profiled books runs
 \stv{sent.legs_all}. That benchmark is biased for any cut that mixes side with size, because the average announcer is dominated by small stocks, which beat the market: big stocks structurally lag
 it, which penalizes shorts less and longs more depending on size mix. Measured instead against the average announcer of the \emph{same size group and quarter} (a size-matched
 benchmark), \stv{sent.legs}. Table~\ref{tab:legs} and Figure~\ref{fig:legs} show both. The earlier conclusion that ``the shorts pay their way as well as the longs'' was a
-benchmark artifact; the size-matched benchmark is used from here on. The short leg is also where borrow costs fall, and they are not modelled (Section~\ref{sec:limits}).
+sensitive to the benchmark; the size-matched benchmark is used from here on. The short leg is also where borrow costs fall, and they are not modelled (Section~\ref{sec:limits}).
 
 \begin{table}[t]\centering
 \caption{Alpha per dollar traded on the long and short legs under the two benchmarks, and the size-matched dollar alpha of each leg. Source:
@@ -674,12 +674,12 @@ benchmark artifact; the size-matched benchmark is used from here on. The short l
 \caption{Alpha per dollar traded by leg under (a) the all-announcer benchmark and (b) the size-matched benchmark.}\label{fig:legs}
 \end{figure}
 
-\subsection{The best trade, and the trade that never pays}\label{sec:recipes}
+\subsection{The best trade, and high-beta shorts}\label{sec:recipes}
 
 We label every position with a \emph{recipe}: side (long or short) $\times$ how easily the stock trades (thin, mid, liquid) $\times$ beta (low, mid, high) $\times$ holding period
 (at most 60 days, or longer), giving \stv{recipes.n} recipes per book.
 
-\paragraph{The best trade is the same in every book.} In \stv{best.n_top} of the nine profiled books the single most profitable recipe is a long position in a thinly traded, low-beta stock held more than 60 days
+\paragraph{The most profitable recipe.} In \stv{best.n_top} of the nine profiled books the single most profitable recipe is a long position in a thinly traded, low-beta stock held more than 60 days
 (Table~\ref{tab:bestrecipe}). It uses \stv{best.money.min}--\stv{best.money.max} of the money, earns \stv{best.share.min}--\stv{best.share.max} of the alpha at \stv{best.bp.min}--\stv{best.bp.max} basis points per dollar, is
 positive in \stv{best.qpos.min}--\stv{best.qpos.max} of quarters, and makes \stv{best.net.min} to \stv{best.net.max} of real profit per book. It is positive in all three eras in
 \stv{best.n_all3} of nine books (the exceptions: \stv{best.neg_books}, which are negative in one era).
@@ -724,12 +724,12 @@ For the reference book \sn{balanced_leverage}, \texttt{results/situations\_all.c
 ($t\ge2.5$, positive in at least two of three eras, and above the book's average). About \stv{sit.n} situations are tested per book, so a few look good by chance; the three-era rule is the guard against that. Table~\ref{tab:situations} shows the cuts
 discussed here, and the paired-by-quarter contrasts are:
 \begin{itemize}
-  \item \textbf{Hard-to-trade names pay.} Thinnest-trading versus most-heavily-traded: \stv{sit.thin.a} versus \stv{sit.thin.b} basis points per dollar, a difference of \stv{sit.thin.diff} ($t=\stv{sit.thin.t}$). Smallest versus largest company: \stv{sit.small.a} versus \stv{sit.small.b}
+  \item \textbf{Trading ease.} Thinnest-trading versus most-heavily-traded: \stv{sit.thin.a} versus \stv{sit.thin.b} basis points per dollar, a difference of \stv{sit.thin.diff} ($t=\stv{sit.thin.t}$). Smallest versus largest company: \stv{sit.small.a} versus \stv{sit.small.b}
         (difference \stv{sit.small.diff}, $t=\stv{sit.small.t}$). Company size and trading volume rank almost alike, so the data cannot separate them; in the joint regression neither survives once beta and hold length are held fixed (size \stv{drv.small.bp} basis points per standard deviation, $t=\stv{drv.small.t}$).
-  \item \textbf{Long holds do the work, with a caveat.} Holds over 90 days against holds up to 40 days: \stv{sit.hold.a} versus \stv{sit.hold.b} (difference \stv{sit.hold.diff}, $t=\stv{sit.hold.t}$). But each cell's hold length was estimated on the same history (Section~\ref{sec:decay}), so part of this is look-ahead.
-  \item \textbf{Low beta pays, high beta does not.} In the joint regression one standard deviation more beta costs \stv{drv.beta.bp} basis points per dollar ($t=\stv{drv.beta.t}$) with everything else fixed; longer hold windows add \stv{drv.hold.bp} ($t=\stv{drv.hold.t}$).
-  \item \textbf{The edge has faded.} Alpha per dollar was \stv{eraA.bp} basis points in 1996--2001, \stv{eraB.bp} in 2002--07 and \stv{eraC.bp} in 2008--13, while the share of money traded in the last era rose to \stv{eraC.money}. Early versus late differ by \stv{sit.era.diff} ($t=\stv{sit.era.t}$).
-  \item \textbf{The market's direction does not matter.} Alpha per dollar is \stv{sit.mkt.a} when the market rose more than 5\% during the hold and \stv{sit.mkt.b} when it fell by more than 5\% (difference \stv{sit.mkt.diff}, $t=\stv{sit.mkt.t}$): the market-neutral design working.
+  \item \textbf{Hold length, with a caveat.} Holds over 90 days against holds up to 40 days: \stv{sit.hold.a} versus \stv{sit.hold.b} (difference \stv{sit.hold.diff}, $t=\stv{sit.hold.t}$). But each cell's hold length was estimated on the same history (Section~\ref{sec:decay}), so part of this is look-ahead.
+  \item \textbf{Beta.} In the joint regression one standard deviation more beta costs \stv{drv.beta.bp} basis points per dollar ($t=\stv{drv.beta.t}$) with everything else fixed; longer hold windows add \stv{drv.hold.bp} ($t=\stv{drv.hold.t}$).
+  \item \textbf{Era.} Alpha per dollar was \stv{eraA.bp} basis points in 1996--2001, \stv{eraB.bp} in 2002--07 and \stv{eraC.bp} in 2008--13, while the share of money traded in the last era rose to \stv{eraC.money}. Early versus late differ by \stv{sit.era.diff} ($t=\stv{sit.era.t}$).
+  \item \textbf{Market direction.} Alpha per dollar is \stv{sit.mkt.a} when the market rose more than 5\% during the hold and \stv{sit.mkt.b} when it fell by more than 5\% (difference \stv{sit.mkt.diff}, $t=\stv{sit.mkt.t}$); a small and insignificant difference is what a market-neutral design should produce.
 \end{itemize}
 
 \begin{table}[t]\centering
@@ -747,9 +747,9 @@ predicts such decay if arbitrage capital has grown; the data are consistent with
 
 \subsection{Is the calm edge a volatility effect or a beta effect?}\label{sec:calm}
 
-The volatility books rest on a finding about the signal: the D10$-$D1 spread is $+$\stv{vd.low}\% in the lowest tercile of stock-specific volatility, $+$\stv{vd.mid}\% in the middle and $+$\stv{vd.high}\% in the highest
+The volatility books rest on a finding about the signal: the D10$-$D1 spread is $+$\stv{vd.low} in the lowest tercile of stock-specific volatility, $+$\stv{vd.mid} in the middle and $+$\stv{vd.high} in the highest
 ($t$-statistics \stv{vd.low.t}, \stv{vd.mid.t}, \stv{vd.high.t}; difference between the extremes $t=\stv{vd.diff.t}$). Volatility alone does not change average returns, so it works as a \emph{sizing} input, not a filter; the
-walk-forward filters \sn{volatility_filter} and \sn{calm_weighted_filter} (Sharpe \ssh{volatility_filter} and \ssh{calm_weighted_filter}) do not beat sizing (\ssh{calm_weighted}).
+walk-forward filters \sn{volatility_filter} and \sn{calm_weighted_filter} (Sharpe \ssh{volatility_filter} and \ssh{calm_weighted_filter}) \stv{sent.filter_vs_sizing} sizing (\ssh{calm_weighted}).
 
 Volatility and beta are correlated (correlation \stv{bv.corr} between a position's beta and its volatility percentile; \stv{bv.calm_lowbeta} of calm-tercile dollars are low-beta and \stv{bv.jumpy_highbeta} of jumpy-tercile dollars are
 high-beta), so the calm edge could be a beta edge. We separate them with a $3\times3$ cut of the \sn{balanced_leverage} positions by beta tercile and idiosyncratic-volatility tercile (Table~\ref{tab:betavol}, Figure~\ref{fig:betavol}),
@@ -761,12 +761,10 @@ tercile. The right column and bottom row are the margins. Positions are read fro
 \input{generated/tab_betavol_size.tex}
 \end{table}
 
-Holding beta fixed, the calm-minus-jumpy gap averages \stv{bv.avg_calm_jumpy} basis points per dollar across the three beta terciles and changes sign across them (within the low-beta tercile the jumpy positions earn
+Holding beta fixed, the calm-minus-jumpy gap averages \stv{bv.avg_calm_jumpy} basis points per dollar across the three beta terciles (within the low-beta tercile the jumpy positions earn
 \stv{bv.size.cell.low_jumpy.bp} and the calm ones \stv{bv.size.cell.low_calm.bp}). Holding volatility fixed, the low-minus-high-beta gap averages \stv{bv.avg_low_high} basis points per dollar across the three volatility
-terciles: \stv{bv.size.low_high.vol.calm.bp} for calm, \stv{bv.size.low_high.vol.mid.bp} for mid-volatility and \stv{bv.size.low_high.vol.jumpy.bp} for jumpy stocks. The larger margin is \stv{sent.bv.larger}.
-In plain terms, the calm edge is mostly a low-beta edge: most of the apparent gain from sizing by volatility is a gain from tilting toward low-beta stocks, which calm stocks tend to be. The joint regression of Section~\ref{sec:situations}
-agrees (volatility \stv{drv.vol.bp} basis points per standard deviation with beta, size, liquidity and hold fixed, $t=\stv{drv.vol.t}$). This does not make \sn{calm_weighted} a worse book. It means its Sharpe gain should not be
-attributed to volatility itself, and that a direct beta rule is the more natural next candidate. The same cut under the all-announcer benchmark is in \texttt{docs/paper/generated/tab\_betavol\_all.tex} and gives the same ordering of the two margins.
+terciles: \stv{bv.size.low_high.vol.calm.bp} for calm, \stv{bv.size.low_high.vol.mid.bp} for mid-volatility and \stv{bv.size.low_high.vol.jumpy.bp} for jumpy stocks. The larger margin is \stv{sent.bv.larger}. \stv{sent.bv.plain} The joint regression of Section~\ref{sec:situations}
+gives (volatility \stv{drv.vol.bp} basis points per standard deviation with beta, size, liquidity and hold fixed, $t=\stv{drv.vol.t}$). The same cut under the all-announcer benchmark is written to \texttt{docs/paper/generated/tab\_betavol\_all.tex} for comparison.
 
 \begin{figure}[t]\centering
 \includegraphics[width=0.62\linewidth]{figures/fig_beta_vol.pdf}
@@ -924,7 +922,7 @@ Let the two sleeves have annualized volatilities $\sigma_e,\sigma_o$, correlatio
   \label{eq:blendvar}
 \end{equation}
 Over the options book's active window the daily correlation between \sn{calm_weighted} and \sn{options_cap20} is \stv{corr.eo} (monthly: \stv{corr.eo.monthly} over \stv{corr.eo.months} months); the equity sleeve's correlation with the market is \stv{corr.em} and the options
-sleeve's is \stv{corr.om}. The cross term is therefore negligible or negative. The correlation is low for an economic reason. Both books earn from the same events, but the equity book's short leg loses in a rally led by low-quality, heavily shorted stocks, the regime that
+sleeve's is \stv{corr.om}. The cross term in \eqref{eq:blendvar} is proportional to $\rho$. The correlation is low for an economic reason. Both books earn from the same events, but the equity book's short leg loses in a rally led by low-quality, heavily shorted stocks, the regime that
 produces momentum crashes \citep{DanielMoskowitz2016}, and it has no cap on that loss. A purchased put loses at most its premium, and calls on positive-surprise names participate in the rally.
 
 \subsection{The blends}
@@ -992,8 +990,7 @@ books (highest return subject to a Sharpe ratio of at least \stv{rule.sharpe} an
 \end{figure}
 
 Equity return is capacity-bound; options return is budget-bound. For options, to first order return and volatility scale with the premium cap $c$, which is a risk-appetite dial (Figure~\ref{fig:frontiers}b). The practical limits on the options book lie outside the backtest: quoted width, depth and market impact in single-name options.
-Among capital-split blends (sleeve weights summing to one; panel c), the Sharpe ratio runs from \stv{frontier.sh.min} to \stv{frontier.sh.max} and peaks at \stv{frontier.best.w} equity (return \stv{frontier.best.ret}, volatility \stv{frontier.best.vol}), a lower-risk and lower-return corner than the multiples used
-for \sn{hedged_blend}.
+Among capital-split blends (sleeve weights summing to one; panel c), the Sharpe ratio runs from \stv{frontier.sh.min} to \stv{frontier.sh.max} and peaks at \stv{frontier.best.w} equity (return \stv{frontier.best.ret}, volatility \stv{frontier.best.vol}), to be compared with \sn{hedged_blend}, which uses sleeve multiples above one (return \sret{hedged_blend}, volatility \svol{hedged_blend}).
 
 %=====================================================================================
 \section{Statistical robustness and backtest hygiene}\label{sec:audit}
@@ -1027,7 +1024,7 @@ $N^\ast$ is the number of trials at which the DSR would fall below 0.95 (same di
 \paragraph{Results.} The validated equity book \sn{calm_weighted} \stv{sent.eq_dsr} (DSR \stv{calm_weighted.dsr}); its break-even is about \stv{calm_weighted.dsr_Nstar} independent trials, against the \stv{trials.eq} counted.
 The research book \sn{calm_rank_tilt} \stv{sent.crt_dsr} the bar at the counted $N$ (DSR \stv{calm_rank_tilt.dsr}). The six-times-leveraged \sn{balanced_leverage_max} has a DSR of \stv{balanced_leverage_max.dsr} and a break-even of
 \stv{balanced_leverage_max.dsr_Nstar} trials. The options book \sn{options_cap20} \stv{sent.opt_dsr}: its DSR is \stv{options_cap20.dsr} with the dispersion of all counted trials and \stv{options_cap20.dsr_corr} with the dispersion of the corrected runs only
-(\stv{options_cap30.dsr} and \stv{options_cap30.dsr_corr} for \sn{options_cap30}). The honest reading is that the options Sharpe ratio is not distinguishable from selection when one allows the dispersion that the overstated runs displayed, and is when one does not.
+(\stv{options_cap30.dsr} and \stv{options_cap30.dsr_corr} for \sn{options_cap30}). The result depends on how much dispersion across trials is assumed, and the legacy runs inflate it.
 The deflation does not cover choices that left no trial record: the decay-day windows, the trim and tilt, the volatility-sizing family and the exponent of \sn{calm_rank_tilt}, the options caps, and the blend multiples are all in-sample selections.
 
 \begin{table}[t]\centering
@@ -1052,8 +1049,8 @@ Table~\ref{tab:audit} lists every defect found, with the number before and after
 Defect & What exposed it & Effect (before $\to$ after)\\
 \midrule
 Options quotes carried forward & Dead options (zero bid) were marked at their last live mid, so a dying contract was never marked down & 20\% book: \stv{optchain.legacy.ret} / \stv{optchain.legacy.sh} $\to$ \stv{optchain.floor.ret} / \stv{optchain.floor.sh}; 30\% book: \sret{options_cap30_legacy} / \ssh{options_cap30_legacy} $\to$ \sret{options_cap30} / \ssh{options_cap30}\\
-Benchmark artifact in the long/short split & The all-announcer benchmark is biased when side and size are mixed; it made the short leg look as good as the long leg & Long-to-short ratio \stv{sent.legs_all} (all-announcer) $\to$ \stv{ls.ratio.min} to \stv{ls.ratio.max} (size-matched)\\
-Leverage cap not binding on carried-over positions & The cap applies to each entry cohort, so open-book gross exceeds the nominal cap & \sn{calm_weighted}: cap \stv{calm_weighted.cap}$\times$, peak \stv{calm_weighted.gross_max}$\times$, over the cap on \stv{calm_weighted.days_over_cap} of days. \stv{sent.fixes_short}\\
+Benchmark sensitivity of the long/short split & The all-announcer benchmark is biased when side and size are mixed, and it made the short leg look as good as the long leg & Long-to-short ratio \stv{sent.legs_all} (all-announcer) $\to$ \stv{ls.ratio.min} to \stv{ls.ratio.max} (size-matched)\\
+Leverage cap not binding on carried-over positions & The cap applies to each entry cohort, so open-book gross exceeds the nominal cap & \stv{audit.lev}\\
 Decile look-ahead & Deciles are ranked on the full announcement quarter's cross-section, so an early announcer is ranked against later ones & \emph{Identified}: \stv{sent.fixes_short}\\
 Full-sample hold-period fitting & Decay-day windows are estimated on the same history they are tested on & \emph{Identified}: \stv{sent.fixes_short}\\
 Sharpe denominator & Daily P\&L was once divided by initial capital instead of prior-day NAV, overstating volatility as the NAV compounded & \sn{calm_weighted}: \stv{calm_weighted.sharpe_fixed} (fixed capital) $\to$ \ssh{calm_weighted}; \sn{options_cap20}: \stv{options_cap20.sharpe_fixed} $\to$ \ssh{options_cap20}\\
@@ -1098,7 +1095,7 @@ We list these without softening. Each is either a reason realized performance wo
 \item \textbf{Live universe.} The backtest trades the full CRSP event universe. A live book restricted to large stocks earns much less per dollar: for \sn{balanced_leverage}, \stv{sit.small.b} basis points in the largest company-size quintile against \stv{sit.small.a} in the smallest.
 \item \textbf{Reporting convention.} Stored summary statistics cover each book's full calendar, including idle periods before the first position; the active-period figures differ slightly (Section~\ref{sec:engine}). The equity daily series runs to \stv{calendar_end}
       while events end in 2013.
-\item \textbf{What the earlier drafts claimed that is not repeated.} The earlier drafts quoted an equity book at \sret{balanced_leverage_max} as the strategy, an options book at \sret{options_cap30_legacy} and a Sharpe ratio of \ssh{options_cap30_legacy}, and described forward-filled missing quotes as a caveat rather than the
+\item \textbf{What the earlier drafts claimed that is not repeated.} The earlier drafts quoted an equity book at \stv{olddraft.eq.ret} as the strategy, an options book at \sret{options_cap30_legacy} and a Sharpe ratio of \ssh{options_cap30_legacy}, and described forward-filled missing quotes as a caveat rather than the
       error it was. None of these is a headline here.
 \end{enumerate}
 
@@ -1109,11 +1106,11 @@ We list these without softening. Each is either a reason realized performance wo
 Post-earnings-announcement drift in this sample passes the tests an allocator should require. It is significant under earnings-season clustering. It survives a size/value characteristic benchmark, which \stv{sent.ffvsmkt} the spread. It is graded by firm size as limits to arbitrage predicts, and it
 appears in a second, independently priced market at roughly the magnitude implied by option elasticity. We harvest it two ways. The linear book neutralizes the unpriced exposures we could measure and earns \sret{calm_weighted} a year in its validated form
 (\sn{calm_weighted}, Sharpe \ssh{calm_weighted}) with no market beta; its research counterpart \sn{calm_rank_tilt} earns \sret{calm_rank_tilt} (Sharpe \ssh{calm_rank_tilt}), but with an exponent chosen in sample. The convex book chooses, event by event, the contract with the
-highest expected log growth and earns \sret{options_cap20} (Sharpe \ssh{options_cap20}) after the quote-marking correction, not the \stv{optchain.legacy.ret} first reported. The two are close to uncorrelated and hedge each other's worst year; the validated blend earns
+highest expected log growth and earns \sret{options_cap20} (Sharpe \ssh{options_cap20}) after the quote-marking correction, not the \stv{optchain.legacy.ret} first reported. The two have a daily correlation of \stv{corr.eo}; the validated blend earns
 \sret{hedged_blend} at a Sharpe ratio of \ssh{hedged_blend}.
 
-The decomposition adds three cautions. The edge is concentrated in a kind of trade: long positions in thinly traded, low-beta stocks held more than two months. High-beta shorts earn no alpha and lose real dollars. And the calm edge is mostly a low-beta edge. The long leg earns more than the short
-leg once the benchmark is size-matched, alpha per dollar has fallen across the sample, and the places where the drift is largest are the places where the costs we do not model are largest. Three corrections are identified and not yet applied, and the multiple-testing adjustment
+The decomposition adds cautions that the headline numbers hide. The most profitable recipe is the same in \stv{best.n_top} of nine books (a long position in a thinly traded, low-beta stock held more than two months). \stv{sent.hbs}. In the beta-by-volatility cut the larger margin is \stv{sent.bv.larger}. Against a size-matched benchmark \stv{sent.legs}; alpha per dollar was \stv{eraA.bp} basis points in 1996--2001 and \stv{eraC.bp} in 2008--13 for \sn{balanced_leverage}. These are separate statements; the
+mechanism of Section~\ref{sec:mechanism} adds that the places where the drift is largest are the places where the costs we do not model are largest. Three corrections are identified and not yet applied, and the multiple-testing adjustment
 covers only the trials that left files. The work that remains before deployment is concrete: a walk-forward re-estimation of the holding windows, trailing-breakpoint ranking, borrow and financing costs, quote-level option execution costs, and data after 2013.
 
 \vspace{1em}
@@ -1148,7 +1145,7 @@ model design, and the modeling assumptions in Section~\ref{sec:limits} omit cost
 \paragraph{Holding windows.} Per-cell decay days (Section~\ref{sec:decay}), from \stv{decay.min} to \stv{decay.max} trading days.
 \paragraph{Runs.} The \stv{n_runs} saved runs in \texttt{results/} were produced between \stv{runs.first} and \stv{runs.last} at git revision(s) \stv{runs.revs} under pandas \stv{runs.pandas}; results reproduce only under the pinned pandas 3 (see \texttt{requirements.txt}).
 
-\paragraph{Where every number comes from.}
+\paragraph{Where every number comes from.}\begin{sloppypar}
 Per-book statistics: \texttt{results/<name>/summary.json} and \texttt{daily.csv.gz} (realized leverage, active-period Sharpe, calendar returns, correlations, deflated Sharpe ratios). Leaderboard checks: \texttt{results/leaderboard.json} and \texttt{leaderboard.md}.
 Alpha against the market: \texttt{results/alpha\_benchmark.csv}. Situations: \texttt{results/situations\_*.csv}. Recipes, leg and beta splits, timing and tails: \texttt{results/profiles\_*.csv}. Capital-split frontier: \texttt{results/portfolio/frontier.csv}.
 Signal evidence (Sections~\ref{sec:data}--\ref{sec:evidence}): the committed tables under \texttt{data/} (\texttt{decile\_horizon\_stats}, \texttt{spread\_horizon\_stats}, the \texttt{ff\_*} and \texttt{option\_*} versions, \texttt{subsample\_*}, \texttt{sue\_reversal\_summary.json}, \texttt{cell\_decay\_days.csv},
@@ -1156,6 +1153,7 @@ Signal evidence (Sections~\ref{sec:data}--\ref{sec:evidence}): the committed tab
 Three groups of numbers need files that are not committed: the $3\times3$ beta-by-volatility cut and the per-trade options statistics (from \texttt{results/*/positions.parquet}, git-ignored) and the CRSP market series (licensed). They are recomputed whenever the main repository's data is reachable (environment variable
 \texttt{PEAD\_MAIN\_REPO}) and the run it holds is the run in \texttt{results/}; otherwise the committed cache in \texttt{docs/paper/cache/} is used, and the build warns when the cache is stale.
 
+\end{sloppypar}
 \paragraph{Rebuilding.} After any change to \texttt{results/} or \texttt{data/}, one command rebuilds the statistics, tables, figures and PDF with no hand edits:
 \begin{center}\texttt{python -m pead.reporting.paper}\end{center}
 (equivalently \texttt{python -m pead paper}; \texttt{--no-pdf} skips the LaTeX step, \texttt{--refresh-external} recomputes the cached quantities). The build fails if a number macro used here is undefined, if a strategy name used here is not in \texttt{results/}, if

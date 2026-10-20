@@ -270,7 +270,7 @@ def fig_options_trades(S, ctx, out):
     axes[0].grid(axis="x", visible=False)
     yrs = sorted(ys)
     axes[1].bar(yrs, [100 * ys[y] for y in yrs], color=[GREEN if ys[y] >= 0 else RED for y in yrs], width=0.7)
-    axes[1].set(xlabel="Entry year", ylabel="Share of net P&L (%)", title="(b) Where the profit comes from")
+    axes[1].set(xlabel="Entry year", ylabel="Share of net P&L (%)", title="(b) Where the profit comes from", xticks=yrs)
     axes[1].tick_params(axis="x", labelsize=7.5, rotation=60)
     axes[1].grid(axis="x", visible=False)
     _save(fig, out, "fig_options_trades")
