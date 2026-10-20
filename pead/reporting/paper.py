@@ -51,6 +51,8 @@ MAIN_REPO = Path(os.environ.get(
     r"C:\Users\hrudi\Documents\BEI\PEAD_Trading\.claude\worktrees\strategy-analysis-backtest-481b86"))
 
 FIXED_DATA = Path(os.environ.get("PEAD_FIXED_DATA", str(ROOT.parent / "vintage_fixed" / "data")))   # corrected data vintage
+PAPER_VINT = Path(os.environ.get("PEAD_PAPER_VINTAGE", str(ROOT.parent / "vintage_paper")))       # corrected-vintage paper inputs
+PIT2 = CACHE / "pit2"
 HORIZONS = [1, 5, 10, 20, 40, 60]
 TRADING_DAYS = 252
 # Assumptions of the stylized model in Section 2 (not estimated from data): used only to evaluate the elasticity band.
@@ -80,7 +82,7 @@ OLD_LABELS = [
 def tx(s):
     """Escape plain text for LaTeX."""
     return (str(s).replace("\\", r"\textbackslash{}").replace("&", r"\&").replace("%", r"\%").replace("#", r"\#")
-            .replace("_", r"\_").replace("$", r"\$"))
+            .replace("_", r"\_").replace("$", r"\$").replace("^", r"\^{}"))
 
 
 def sn(name):
@@ -247,6 +249,17 @@ def _stamp(path):
         return json.loads(Path(path).read_text(encoding="utf-8"))["run"]["timestamp"]
     except Exception:
         return None
+
+
+def sync_pit2():
+    """Copy the corrected-vintage inputs produced for the paper (SUE-reversal summary from the corrected event file, capacity sweep
+    from the current engine) into docs/paper/cache/pit2/ when they are reachable; otherwise the committed copies are used."""
+    PIT2.mkdir(parents=True, exist_ok=True)
+    for src, name in ((PAPER_VINT / "data" / "sue_reversal_summary.json", "sue_reversal_summary.json"),
+                      (PAPER_VINT / "data" / "sue_reversal_by_decile.csv", "sue_reversal_by_decile.csv"),
+                      (PAPER_VINT / "capacity_sweep.csv", "capacity_sweep.csv")):
+        if src.exists():
+            shutil.copyfile(src, PIT2 / name)
 
 
 def external(runs, refresh=False):
@@ -564,7 +577,7 @@ def signal_evidence(S, ctx):
     era["start"] = era["group"].str[:4].astype(int)
     era = era.sort_values("start")
     sec = pd.DataFrame(pit["subs"]["sector"]).sort_values("mean_spread")
-    rev = json.loads((DATA / "sue_reversal_summary.json").read_text(encoding="utf-8"))
+    rev = json.loads((PIT2 / "sue_reversal_summary.json").read_text(encoding="utf-8"))
     decay = pd.read_csv(PIT / "cell_decay_days.csv")
     ctx.update(dec=dec, ffd=ffd, spr=spr, ffs=ffs, osp=osp, size=size, era=era, sec=sec, pre_spr=pre_spr, pre_ffs=pre_ffs)
     for h in HORIZONS:
@@ -762,7 +775,7 @@ def signal_evidence(S, ctx):
     m_ = re.search(r"threshold\s*=\s*([\d.]+)\s*\*\s*peak_mag", src)
     S.put("decay.thresh", float(m_.group(1)) if m_ else -1, f"{float(m_.group(1)) * 100:.0f}" + chr(92) + "%" if m_ else "--")
     # volatility diagnostic: D10-D1 by volatility tercile
-    vd = json.loads((DATA / "vol_decile_diagnostic_summary.json").read_text(encoding="utf-8"))
+    vd = json.loads((RES / "vol_decile_diagnostic_summary.json").read_text(encoding="utf-8"))
     ctx["vd"] = vd
     meas = "ivol_252d" if "ivol_252d" in vd else "tvol_60d"
     blk = vd[meas]["d10_minus_d1_hold_ret"]
@@ -1436,9 +1449,9 @@ def blend_section(S, ctx):
 
 def frontier_section(S, ctx):
     """Equity capacity frontier from the base-unit sweep of the balanced_leverage construction at a 6x cap
-    (data/sweep_aggressive_strategy6.csv), checked against the saved balanced_leverage_max run."""
+    (docs/paper/cache/pit2/capacity_sweep.csv, from scripts/capacity_sweep.py), checked against the saved balanced_leverage_max run."""
     runs = ctx["runs"]
-    sw = read_csv("sweep_aggressive_strategy6.csv")
+    sw = pd.read_csv(PIT2 / "capacity_sweep.csv")
     chosen_b = runs["balanced_leverage_max"]["params"]["base_unit_fraction"]
     rows = []
     for _, r in sw.iterrows():
@@ -1518,12 +1531,53 @@ def inference_section(S, ctx):
     S.put("trials.eq.runs", len(eq_runs), str(len(eq_runs)))
     S.put("trials.eq.sweepfiles", len(sweeps), str(len(sweeps)))
     S.put("trials.eq.sweeprows", n_sweep, str(n_sweep))
-    S.put("trials.eq", n_eq_trials, str(n_eq_trials))
     S.put("trials.op.runs", len(op_runs), str(len(op_runs)))
     S.put("trials.op.oldfiles", len(opt_old), str(len(opt_old)))
     S.put("trials.op.oldrows", sum(len(v) for v in opt_old.values()), str(sum(len(v) for v in opt_old.values())))
     S.put("trials.op", n_op_trials, str(n_op_trials))
-    eq_sr = np.concatenate([eq_runs["sharpe"].to_numpy()] + list(sweeps.values()))
+    vs = pd.read_csv(RES / "vol_sweeps.csv")
+    vs = vs[~vs["group"].str.startswith("baseline")]
+    cs = pd.read_csv(PIT2 / "capacity_sweep.csv")
+    S.put("trials.volsweeps", len(vs), str(len(vs)))
+    S.put("trials.capsweep", len(cs), str(len(cs)))
+    n_eq_trials += len(vs) + len(cs)
+    # the section-6.6 search, re-run on the corrected data and engine (scripts/vol_sweeps.py -> results/vol_sweeps.csv)
+    vsa = pd.read_csv(RES / "vol_sweeps.csv")
+    rows = []
+    for g, d in vsa.groupby("group", sort=False):
+        for _, r in d.iterrows():
+            rows.append([tx(g), tx(str(r["setting"])), pc(r["ret"], 1), f2(r["sharpe"]), pc(r["max_dd"], 1), f"{r['s_96_01']:.2f} / {r['s_02_07']:.2f} / {r['s_08_13']:.2f}"])
+        rows.append("MID")
+    write_fragment("tab_vol_sweeps.tex", table("llrrrr", ["Experiment", "Setting", "Return", "Sharpe", "Max DD", "Sharpe by era"], rows[:-1], size=r"\footnotesize"))
+    def grp(prefix):
+        return vsa[vsa["group"].str.startswith(prefix)].reset_index(drop=True)
+    gk, gr, gt, gtl = grp("1/ivol^k"), grp("(1.02"), grp("trim"), grp("tilt exponent")
+    kbest = gk.loc[gk["sharpe"].idxmax()]
+    S.put("vs.ivolk.best.k", str(kbest["setting"]), tx(str(kbest["setting"])))
+    S.put("vs.ivolk.best.sh", float(kbest["sharpe"]), f2(kbest["sharpe"]))
+    S.put("vs.ivolk.first.sh", float(gk.iloc[0]["sharpe"]), f2(gk.iloc[0]["sharpe"]))
+    S.put("vs.ivolk.last.k", str(gk.iloc[-1]["setting"]), tx(str(gk.iloc[-1]["setting"])))
+    S.put("vs.ivolk.last.sh", float(gk.iloc[-1]["sharpe"]), f2(gk.iloc[-1]["sharpe"]))
+    S.put("sent.ivolk", "rises with the exponent throughout" if np.all(np.diff(gk["sharpe"].to_numpy()) > 0) else
+          "rises with the exponent up to $k=%s$ and does not rise further" % str(kbest["setting"]))
+    rb = gr.loc[gr["sharpe"].idxmax()]
+    S.put("vs.rank.best.k", str(rb["setting"]), tx(str(rb["setting"])))
+    S.put("vs.rank.best.sh", float(rb["sharpe"]), f2(rb["sharpe"]))
+    S.put("vs.rank.k2.sh", float(gr[gr["setting"].astype(str) == "2"]["sharpe"].iloc[0]), f2(gr[gr["setting"].astype(str) == "2"]["sharpe"].iloc[0]))
+    tb = gt.loc[gt["sharpe"].idxmax()]
+    S.put("vs.trim.best", str(tb["setting"]), tx(str(tb["setting"])))
+    S.put("vs.trim.best.sh", float(tb["sharpe"]), f2(tb["sharpe"]))
+    S.put("vs.trim.range", f"{gt['sharpe'].min():.2f}--{gt['sharpe'].max():.2f}", f"{gt['sharpe'].min():.2f}--{gt['sharpe'].max():.2f}")
+    S.put("vs.tilt.range", f"{gtl['sharpe'].min():.2f}--{gtl['sharpe'].max():.2f}", f"{gtl['sharpe'].min():.2f}--{gtl['sharpe'].max():.2f}")
+    dd = vsa[vsa["group"].str.startswith(("drop deciles", "drop short"))]
+    S.put("vs.drop.max", float(dd["sharpe"].max()), f2(dd["sharpe"].max()))
+    S.put("sent.vs.drop", "none of the drop variants beats the baseline" if dd["sharpe"].max() <= vsa.iloc[0]["sharpe"] else "at least one drop variant beats the baseline")
+    sz = grp("sizing")
+    S.put("vs.sizing.best.ret", float(sz["ret"].max()), pc(sz["ret"].max(), 1))
+    S.put("vs.sizing.n", len(sz), str(len(sz)))
+    S.put("vs.total", len(vsa), str(len(vsa)))
+    S.put("trials.eq", n_eq_trials, str(n_eq_trials))
+    eq_sr = np.concatenate([eq_runs["sharpe"].to_numpy()] + list(sweeps.values()) + [vs["sharpe"].to_numpy(), cs["sharpe"].to_numpy()])
     op_sr = np.concatenate([op_runs["sharpe"].to_numpy()] + list(opt_old.values()))
     op_sr_corrected = op_runs[~op_runs.index.str.endswith("_legacy")]["sharpe"].to_numpy()
     S.put("trials.eq.sd", float(np.std(eq_sr, ddof=1)), f2(np.std(eq_sr, ddof=1)))
@@ -1935,6 +1989,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     OUT.mkdir(parents=True, exist_ok=True); FIG.mkdir(exist_ok=True); GEN.mkdir(exist_ok=True)
     runs = load_runs()
+    sync_pit2()
     ext, mkt = external(runs, refresh=args.refresh_external)
     S = Stats()
     ctx = compute(S, runs, ext, mkt)

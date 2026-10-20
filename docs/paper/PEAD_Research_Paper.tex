@@ -744,7 +744,7 @@ predicts such decay if arbitrage capital has grown; the data are consistent with
 
 \subsection{Is the calm edge a volatility effect or a beta effect?}\label{sec:calm}
 
-The volatility books rest on a finding about the signal (computed with the earlier within-quarter deciles, which this diagnostic was not rebuilt on): the D10$-$D1 spread is $+$\stv{vd.low} in the lowest tercile of stock-specific volatility, $+$\stv{vd.mid} in the middle and $+$\stv{vd.high} in the highest
+The volatility books rest on a finding about the signal (recomputed on the corrected data, \texttt{results/vol\_decile\_diagnostic\_summary.json}): the D10$-$D1 spread is $+$\stv{vd.low} in the lowest tercile of stock-specific volatility, $+$\stv{vd.mid} in the middle and $+$\stv{vd.high} in the highest
 ($t$-statistics \stv{vd.low.t}, \stv{vd.mid.t}, \stv{vd.high.t}; difference between the extremes $t=\stv{vd.diff.t}$). Volatility alone does not change average returns, so it works as a \emph{sizing} input, not a filter; the
 walk-forward filters \sn{volatility_filter} and \sn{calm_weighted_filter} (Sharpe \ssh{volatility_filter} and \ssh{calm_weighted_filter}) \stv{sent.filter_vs_sizing} sizing (\ssh{calm_weighted}).
 
@@ -770,9 +770,16 @@ gives (volatility \stv{drv.vol.bp} basis points per standard deviation with beta
 
 \subsection{Selecting the sizing: what was tried}\label{sec:tried}
 
-The volatility-sizing family was chosen from a search whose results are recorded in \texttt{docs/STRATEGIES.md} (\stv{trials.volrows} experiment rows, each with several parameter values: trim, tilt exponent, dropping deciles or holding cells,
-a small-cap tilt, inverse-volatility powers, the rank-based tilt, and larger base units). The relevant fact for this paper is that the search was run on the full sample, so \sn{calm_weighted}'s construction and \sn{calm_rank_tilt}'s exponent are in-sample
-choices, with the single split-sample check noted above. Section~\ref{sec:multiple} counts the trials that can be counted from files and deflates the Sharpe ratios accordingly.
+The volatility-sizing family was chosen from a search on the full sample. We re-ran that search on the corrected data and engine (\texttt{scripts/vol\_sweeps.py}, \stv{vs.total} settings counting the baselines; Table~\ref{tab:volsweeps}). With the
+corrections, the Sharpe ratio of the inverse-volatility book \stv{sent.ivolk} (from \stv{vs.ivolk.first.sh} at $k=1$ to \stv{vs.ivolk.best.sh} at $k=\stv{vs.ivolk.best.k}$); for the rank-based tilt the best exponent in the grid is $k=\stv{vs.rank.best.k}$ (Sharpe \stv{vs.rank.best.sh};
+\stv{vs.rank.k2.sh} at the chosen $k=2$); the Sharpe ratios of the trim and tilt-exponent variants range over \stv{vs.trim.range} and \stv{vs.tilt.range}; \stv{sent.vs.drop} (the best has a Sharpe ratio of \stv{vs.drop.max}); and the larger sizing variants of \sn{calm_rank_tilt} raise the return
+as far as \stv{vs.sizing.best.ret}. The search was run on the full sample, so \sn{calm_weighted}'s construction and \sn{calm_rank_tilt}'s exponent remain in-sample choices, with the single split-sample check noted above. Section~\ref{sec:multiple} counts the trials that can be counted from files and
+deflates the Sharpe ratios accordingly.
+
+\begin{table}[t]\centering
+\caption{The section's parameter search re-run on the corrected data and engine: return, Sharpe ratio, maximum drawdown and Sharpe ratio by era (1996--2001 / 2002--07 / 2008--13) for each setting. Source: \texttt{results/vol\_sweeps.csv}.}\label{tab:volsweeps}
+\input{generated/tab_vol_sweeps.tex}
+\end{table}
 
 %=====================================================================================
 \section{The options strategy}\label{sec:options}
@@ -981,13 +988,13 @@ Holding the volatility cost fixed, expected arithmetic return is concave in $b$,
 \end{proposition}
 
 Economically, as capital grows, the stocks with the highest drift saturate their liquidity limits first. Additional capital flows to larger, lower-drift names, while risk rises in proportion to gross exposure. The return of
-the \sn{balanced_leverage} construction at a six-times cap, swept over the base unit $b$ (Table~\ref{tab:frontier}, Figure~\ref{fig:frontiers}a; a pre-correction sweep file), \stv{sent.sweep_peak}; the maximum is at $b=\stv{sweep.peak.b}\times10^{-3}$ with a return of
+the \sn{balanced_leverage} construction at a six-times cap, swept over the base unit $b$ (Table~\ref{tab:frontier}, Figure~\ref{fig:frontiers}a), \stv{sent.sweep_peak}; the maximum is at $b=\stv{sweep.peak.b}\times10^{-3}$ with a return of
 \stv{sweep.peak.ret}, where \stv{sweep.peak.cap} of positions are volume-capped, and falls to \stv{sweep.last.ret} at $b=\stv{sweep.last.b}\times10^{-3}$ with \stv{sweep.last.cap} capped. The rule used to choose $b$ for the \sn{*_max}
-books (highest return subject to a Sharpe ratio of at least \stv{rule.sharpe} and a drawdown no worse than $-$\stv{rule.dd}) selects $b=\stv{sweep.rule.b}\times10^{-3}$ from this grid, in sample. \stv{sent.sweepnote}
+books (highest return subject to a Sharpe ratio of at least \stv{rule.sharpe} and a drawdown no worse than $-$\stv{rule.dd}) selects $b=\stv{sweep.rule.b}\times10^{-3}$ from this corrected grid, whereas the \sn{*_max} books keep the unit chosen before the corrections ($b=\stv{balanced_leverage_max.base}$ of NAV per unit weight); the chosen unit is therefore not what the rule would now select. \stv{sent.sweepnote}
 
 \begin{table}[t]\centering
-\caption{Equity capacity frontier: sweep over the base-unit fraction $b$ at a six-times gross cap (all other parameters fixed); the row used for \sn{balanced_leverage_max} is in bold. This is the pre-correction sweep, shown for the shape of the frontier only; the saved corrected run at the chosen unit earns \sret{balanced_leverage_max}. Source:
-\texttt{data/sweep\_aggressive\_strategy6.csv}.}\label{tab:frontier}
+\caption{Equity capacity frontier: sweep over the base-unit fraction $b$ at a six-times gross cap (all other parameters fixed); the row used for \sn{balanced_leverage_max} is in bold. Re-run on the corrected data and engine; the bold row reproduces the saved \sn{balanced_leverage_max} run. Source:
+\texttt{docs/paper/cache/pit2/capacity\_sweep.csv} (\texttt{scripts/capacity\_sweep.py}).}\label{tab:frontier}
 \input{generated/tab_frontier.tex}
 \end{table}
 
@@ -1018,10 +1025,10 @@ kurtosis $\hat\gamma_4$ of the returns:
 with Sharpe ratios in per-period units and $T$ the number of active days.
 
 \paragraph{How the trials were counted.} Every count is a count of entries in a committed file. For equity, $N=\stv{trials.eq}$: the \stv{trials.eq.runs} equity runs in \texttt{results/} (the \stv{n_registered_equity} registered strategies, with their pre-correction \texttt{*\_legacy} twins, which were trials too) plus the
-\stv{trials.eq.sweeprows} rows in the \stv{trials.eq.sweepfiles} sweep files \texttt{data/sweep\_*.csv} (base unit, liquidity cap, leverage and trim sweeps for the numbered designs). The standard deviation of their Sharpe ratios is
+\stv{trials.eq.sweeprows} rows in the \stv{trials.eq.sweepfiles} sweep files \texttt{data/sweep\_*.csv} (base unit, liquidity cap, leverage and trim sweeps for the numbered designs), plus \stv{trials.volsweeps} settings of the corrected volatility sweeps and \stv{trials.capsweep} of the corrected capacity sweep. The standard deviation of their Sharpe ratios is
 \stv{trials.eq.sd}. For options, $N=\stv{trials.op}$: the \stv{trials.op.runs} options runs in \texttt{results/} plus the \stv{trials.op.oldrows} rows of the \stv{trials.op.oldfiles} horizon-by-budget comparison files from before the correction (four constructions $\times$ six
-holding horizons); the standard deviation of their Sharpe ratios is \stv{trials.op.sd}, but across only the \stv{trials.op.n_corr} runs not under the original convention it is \stv{trials.op.sd_corr}. These counts are lower bounds. The experiment tables recorded in \texttt{docs/STRATEGIES.md}
-(\stv{trials.volrows} rows of several parameter values each) are not files with Sharpe ratios and are not counted, nor are discarded designs that left no file. Table~\ref{tab:dsrsens} therefore shows how the answer moves with $N$.
+holding horizons); the standard deviation of their Sharpe ratios is \stv{trials.op.sd}, but across only the \stv{trials.op.n_corr} runs not under the original convention it is \stv{trials.op.sd_corr}. These counts are lower bounds. The pre-correction experiment tables recorded in \texttt{docs/STRATEGIES.md}
+(\stv{trials.volrows} rows of several parameter values each) are not files with Sharpe ratios and are not counted separately (their corrected re-run is), nor are discarded designs that left no file. Table~\ref{tab:dsrsens} therefore shows how the answer moves with $N$.
 
 \begin{table}[t]\centering
 \caption{Probabilistic and deflated Sharpe ratios on active-period daily returns. $N$ is the counted number of trials; $\widehat{\mathrm{SR}}_0$ is the expected maximum Sharpe ratio under the null for that $N$ and the dispersion of the counted trials;
@@ -1117,7 +1124,7 @@ We list these without softening. Each is either a reason realized performance wo
 \item \textbf{Sample period and decay.} All results are for 1996--2013, and alpha per dollar was lower in the last era in \stv{era.all.fade.n} of nine profiled books (to between \stv{era.all.CA.min} and \stv{era.all.CA.max} of its first-era level). A data extension and a post-publication
       decay adjustment \citep{McLeanPontiff2016} are required before any capital is allocated.
 \item \textbf{Residual look-ahead.} The corrections remove the decile look-ahead and the full-sample decay-day fit, not every use of future information: the hold-period back-off thresholds, the leave-one-out risk benchmark and the weight normalisation still see the full sample, and the
-      signal tables of Sections~\ref{sec:data}--\ref{sec:evidence} that depend on the option chain or on volatility terciles (option spreads, the volatility diagnostic) were not rebuilt on point-in-time deciles.
+      signal tables of Sections~\ref{sec:data}--\ref{sec:evidence} that depend on the option chain (the option spreads of Section~\ref{sec:evidence}) were not rebuilt on point-in-time deciles, because the OptionMetrics source files were not available when the corrected vintage was rebuilt for this paper.
 \item \textbf{Borrow fees and financing (equity).} Neither is modelled, and the short leg is small-cap-heavy. The short side averages \stv{calm_weighted.short_avg}$\times$ NAV for \sn{calm_weighted}, so each 1\% a year of borrow cost removes \stv{calm_weighted.borrow_1pct} of
       return; a fee of \stv{calm_weighted.borrow_breakeven} would remove all of it, and a uniform 5\% would leave \stv{calm_weighted.ret_at5} (for \sn{balanced_leverage}: \stv{balanced_leverage.ret_at5}). Hard-to-borrow names cost more, and the model of
       Section~\ref{sec:mechanism} predicts they are the names with the most drift. Gross exposure above NAV and the stacked blend multiples also need financing.
@@ -1184,7 +1191,7 @@ model design, and the modeling assumptions in Section~\ref{sec:limits} omit cost
 \paragraph{Holding windows.} Per-cell decay days (Section~\ref{sec:decay}), from \stv{decay.min} to \stv{decay.max} trading days.
 \paragraph{Runs.} The \stv{n_runs} saved runs in \texttt{results/} were produced between \stv{runs.first} and \stv{runs.last} at git revision(s) \stv{runs.revs} under pandas \stv{runs.pandas}; results reproduce only under the pinned pandas 3 (see \texttt{requirements.txt}). \texttt{results/<name>} holds the run with all four corrections of \texttt{docs/FIXES.md}; \texttt{*\_legacy} (equity) and \texttt{*\_prefix\_fix} (options, blends) keep the pre-correction numbers, and \texttt{*\_midfill} the mid-fill options references.
 
-\paragraph{Data vintages.} The committed \texttt{data/} tables are the pre-correction vintage (within-quarter deciles). The corrected vintage was built in an isolated directory (\texttt{PEAD\_FIXED\_DATA}, default \texttt{../vintage\_fixed/data} beside the worktree) and is not committed. From it the builder recomputes the point-in-time decile tables and subsample spreads (Fama--MacBeth means, validated by reproducing the committed tables exactly from the old event file) and copies the size/book-to-market tables and the decay-day table into \texttt{docs/paper/cache/pit/}. The attribution ladders are copied from the fixes work into \texttt{docs/paper/cache/ladders/} with a provenance note. The option-spread tables, the volatility diagnostic and the SUE-reversal summary exist only in the pre-correction vintage and are labelled as such.
+\paragraph{Data vintages.} The committed \texttt{data/} tables are the pre-correction vintage (within-quarter deciles). The corrected vintage was built in an isolated directory (\texttt{PEAD\_FIXED\_DATA}, default \texttt{../vintage\_fixed/data} beside the worktree) and is not committed. From it the builder recomputes the point-in-time decile tables and subsample spreads (Fama--MacBeth means, validated by reproducing the committed tables exactly from the old event file) and copies the size/book-to-market tables and the decay-day table into \texttt{docs/paper/cache/pit/}. The attribution ladders are copied from the fixes work into \texttt{docs/paper/cache/ladders/} with a provenance note. The volatility diagnostic and the volatility sweeps are read from \texttt{results/} (recomputed on the corrected vintage). The SUE-reversal summary and the capacity sweep were recomputed on the corrected vintage in a separate folder (\texttt{PEAD\_PAPER\_VINTAGE}, default \texttt{../vintage\_paper}; \texttt{pead/research/equity\_strategy\_history/28\_sue\_reversal\_test.py} and \texttt{scripts/capacity\_sweep.py}) and are committed in \texttt{docs/paper/cache/pit2/}. Only the option-spread and option-coverage tables remain pre-correction: rebuilding them needs the OptionMetrics source files, which were not attached when this was done, and they are labelled as such wherever they appear.
 
 \paragraph{Where every number comes from.}\begin{sloppypar}
 Per-book statistics: \texttt{results/<name>/summary.json} and \texttt{daily.csv.gz} (realized leverage, active-period Sharpe, calendar returns, correlations, deflated Sharpe ratios). Leaderboard checks: \texttt{results/leaderboard.json} and \texttt{leaderboard.md}.
