@@ -1,6 +1,6 @@
 # options_cap30
 
-_options strategy | family: options-kelly | status: validated | derived from `options_cap20`_
+_options strategy | family: options-kelly | status: research | derived from `options_cap20`_
 
 ## What this strategy does
 

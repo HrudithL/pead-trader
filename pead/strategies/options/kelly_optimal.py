@@ -51,7 +51,7 @@ class KellyOptimal(OptionsStrategy):
     thesis = ("Buy the contract whose payoff profile best matches the SUE-conditioned return "
               "distribution, sized by Kelly, spread across hundreds of independent events.")
 
-    def __init__(self, name, cap, horizon=60, parent=None, status="validated", description=None, **sizing_kw):
+    def __init__(self, name, cap, horizon=60, parent=None, status="research", description=None, **sizing_kw):
         self.name, self.parent, self.status = name, parent, status
         if description:
             self.description = description
