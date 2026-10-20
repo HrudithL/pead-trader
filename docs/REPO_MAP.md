@@ -85,6 +85,8 @@ tests/                   test_framework.py (engine reproduces the original scrip
 
 ## 7. Where every old branch and worktree went
 
+**State on 2026-10-20:** eight old worktrees (`equity-strategies-overview-b81011`, `fund-leverage-backtest-assumptions-3d4dc8`, `gpu-equity-trading-strategy-a87ac6`, `gpu-options-master-script-888a09`, `live-paper-trading-earnings-acf39f`, `paper-strategy-mechanics-29026a`, `pead-strategy-optimization-634f65`, `scripts-reorganize-refactor-4ab9db`) were **moved, not deleted**, to `C:\Users\hrudi\Documents\BEI\_pead_archived_worktrees\` (file-for-file identical to the `D:` backup) and git's registrations were pruned. Their git-ignored derived data (for example the 25 MB of `data/event_options` files in the `scripts-reorganize-refactor` folder) is still in those folders. Delete them only when you are sure nothing in them is needed. Branch labels are left in place until the PRs merge.
+
 | Old branch / worktree | Content | Fate |
 |---|---|---|
 | `claude/strategy-analysis-backtest-481b86` (worktree of the same name) | the restructure + live trading + volatility work | PR #7; its folder also hosted the fixes work (PR #9) |
