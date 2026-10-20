@@ -67,262 +67,262 @@ Single-dimension findings here survive it (thin 153 vs 136 bp, low-beta 137 vs 1
 
 Puts half its money on each end of the ranking (biggest beats, biggest misses). Simple, so its fortunes are tied to how the very best and very worst surprises behave.
 
-**Total:** $13.5M alpha over 72 quarters, 78 bp per dollar traded, ~1,908 positions a year.
+**Total:** $9.0M alpha over 71 quarters, 69 bp per dollar traded, ~2,135 positions a year.
 
 | Situation | Share of money traded | Share of alpha | Alpha per $ traded (bp) | Sure? (t) | Verdict |
 |---|---|---|---|---|---|
-| Biggest beats (long) | 52% | 68% | 103 | 4.4 | ENGINE |
-| Biggest misses (short) | 48% | 32% | 52 | 1.5 | UNPROVEN |
-| Smallest companies | 8% | 13% | 122 | 1.1 | UNPROVEN |
-| Largest companies | 22% | 4% | 15 | 0.4 | UNPROVEN |
-| Thinnest trading | 5% | 21% | 301 | 4.7 | ENGINE |
-| Most heavily traded | 22% | 2% | 7 | 0.2 | UNPROVEN |
-| Calm stocks | 33% | 48% | 112 | 5.0 | ENGINE |
-| Jumpy stocks | 34% | 14% | 33 | 1.0 | UNPROVEN |
-| Low-beta stocks | 28% | 62% | 172 | 5.6 | ENGINE |
-| High-beta stocks | 35% | -10% | -22 | -0.4 | UNPROVEN |
-| Holds over 90 days | 10% | 51% | 399 | 4.8 | ENGINE |
-| Holds up to 40 days | 20% | 19% | 75 | 3.0 | WORKS |
-| Reports in Apr-Jun | 24% | 69% | 219 | 7.2 | ENGINE |
-| Reports in Oct-Dec | 26% | -4% | -12 | -0.2 | UNPROVEN |
-| 1996-2001 | 20% | 35% | 136 | 2.7 | ENGINE |
-| 2008-2013 | 46% | 15% | 25 | 0.4 | UNPROVEN |
+| Biggest beats (long) | 54% | 69% | 89 | 3.6 | ENGINE |
+| Biggest misses (short) | 46% | 31% | 45 | 2.4 | WORKS |
+| Smallest companies | 9% | -10% | -78 | -0.2 | UNPROVEN |
+| Largest companies | 22% | 14% | 42 | 1.3 | UNPROVEN |
+| Thinnest trading | 6% | 18% | 211 | 3.5 | ENGINE |
+| Most heavily traded | 23% | 12% | 37 | 1.0 | UNPROVEN |
+| Calm stocks | 33% | 59% | 123 | 5.2 | ENGINE |
+| Jumpy stocks | 34% | -4% | -8 | 0.6 | UNPROVEN |
+| Low-beta stocks | 31% | 77% | 172 | 5.1 | ENGINE |
+| High-beta stocks | 34% | -32% | -64 | -0.4 | UNPROVEN |
+| Holds over 90 days | 5% | 29% | 380 | 4.3 | ENGINE |
+| Holds up to 40 days | 20% | 43% | 146 | 3.6 | ENGINE |
+| Reports in Apr-Jun | 17% | 45% | 180 | 6.8 | ENGINE |
+| Reports in Oct-Dec | 25% | 3% | 7 | -0.0 | UNPROVEN |
+| 1996-2001 | 24% | 35% | 100 | 2.3 | WORKS |
+| 2008-2013 | 40% | 4% | 7 | 0.9 | UNPROVEN |
 
-**Money with no proven edge:** 48% of dollars sit in surprise groups whose alpha is not reliably above zero (short D01); together they earn 32% of the alpha.
+**Money with no proven edge:** 0% of dollars sit in surprise groups whose alpha is not reliably above zero (none); together they earn 0% of the alpha.
 
-**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -82 (t -3.0); Longer hold window: +80 (t +2.9)
+**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -98 (t -2.9)
 
 ### Graded Bets  (`graded_bets`)
 
 Spreads money over every company, so a lot of it sits on mild surprises that barely pay.
 
-**Total:** $10.4M alpha over 72 quarters, 61 bp per dollar traded, ~9,634 positions a year.
+**Total:** $6.1M alpha over 71 quarters, 47 bp per dollar traded, ~9,606 positions a year.
 
 | Situation | Share of money traded | Share of alpha | Alpha per $ traded (bp) | Sure? (t) | Verdict |
 |---|---|---|---|---|---|
-| Biggest beats (long) | 18% | 40% | 136 | 5.3 | ENGINE |
-| Biggest misses (short) | 17% | 12% | 43 | 1.2 | UNPROVEN |
-| Smallest companies | 10% | 23% | 145 | 2.6 | ENGINE |
-| Largest companies | 24% | 4% | 11 | 0.8 | UNPROVEN |
-| Thinnest trading | 9% | 32% | 222 | 5.7 | ENGINE |
-| Most heavily traded | 25% | 0% | 1 | 0.4 | UNPROVEN |
-| Calm stocks | 34% | 44% | 80 | 6.0 | ENGINE |
-| Jumpy stocks | 33% | 15% | 26 | 1.2 | UNPROVEN |
-| Low-beta stocks | 31% | 58% | 114 | 5.1 | ENGINE |
-| High-beta stocks | 35% | 5% | 9 | 0.3 | UNPROVEN |
-| Holds over 90 days | 10% | 52% | 327 | 6.8 | ENGINE |
-| Holds up to 40 days | 39% | 6% | 9 | 0.9 | UNPROVEN |
-| Reports in Apr-Jun | 24% | 59% | 147 | 5.8 | ENGINE |
-| Reports in Oct-Dec | 26% | 5% | 12 | 0.5 | UNPROVEN |
-| 1996-2001 | 25% | 41% | 101 | 2.9 | ENGINE |
-| 2008-2013 | 41% | 15% | 23 | 0.9 | UNPROVEN |
+| Biggest beats (long) | 20% | 45% | 104 | 4.3 | ENGINE |
+| Biggest misses (short) | 18% | 14% | 36 | 2.0 | UNPROVEN |
+| Smallest companies | 10% | -3% | -13 | 0.5 | UNPROVEN |
+| Largest companies | 25% | 13% | 24 | 1.4 | UNPROVEN |
+| Thinnest trading | 9% | 22% | 117 | 3.7 | ENGINE |
+| Most heavily traded | 25% | 5% | 9 | 0.7 | UNPROVEN |
+| Calm stocks | 33% | 58% | 82 | 6.3 | ENGINE |
+| Jumpy stocks | 33% | -5% | -8 | 0.4 | UNPROVEN |
+| Low-beta stocks | 32% | 78% | 115 | 5.4 | ENGINE |
+| High-beta stocks | 34% | -22% | -30 | -0.1 | UNPROVEN |
+| Holds over 90 days | 8% | 36% | 214 | 5.0 | ENGINE |
+| Holds up to 40 days | 34% | 27% | 37 | 2.4 | WORKS |
+| Reports in Apr-Jun | 19% | 57% | 142 | 5.7 | ENGINE |
+| Reports in Oct-Dec | 25% | 5% | 10 | 0.3 | UNPROVEN |
+| 1996-2001 | 28% | 46% | 77 | 2.3 | WORKS |
+| 2008-2013 | 37% | 0% | 0 | 0.5 | UNPROVEN |
 
-**Money with no proven edge:** 42% of dollars sit in surprise groups whose alpha is not reliably above zero (long D06, long D07, long D09, short D01, short D05); together they earn 18% of the alpha.
+**Money with no proven edge:** 45% of dollars sit in surprise groups whose alpha is not reliably above zero (long D06, long D07, long D08, short D01, short D03, short D05); together they earn 2% of the alpha.
 
-**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Thinner trading: +42 (t +2.1); Higher beta: -39 (t -2.5); Longer hold window: +64 (t +5.1)
+**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -57 (t -3.1); More extreme surprise (|rank - median|): +40 (t +4.9)
 
 ### Size Balanced  (`size_balanced`)
 
 Extreme Picks with an equal budget for each company size, so no size group can dominate.
 
-**Total:** $15.2M alpha over 72 quarters, 97 bp per dollar traded, ~1,908 positions a year.
+**Total:** $11.3M alpha over 71 quarters, 81 bp per dollar traded, ~2,135 positions a year.
 
 | Situation | Share of money traded | Share of alpha | Alpha per $ traded (bp) | Sure? (t) | Verdict |
 |---|---|---|---|---|---|
-| Biggest beats (long) | 48% | 65% | 131 | 4.7 | ENGINE |
-| Biggest misses (short) | 52% | 35% | 65 | 2.5 | WORKS |
-| Smallest companies | 10% | 18% | 186 | 1.2 | UNPROVEN |
-| Largest companies | 23% | 7% | 27 | 1.2 | UNPROVEN |
-| Thinnest trading | 6% | 19% | 307 | 4.7 | ENGINE |
-| Most heavily traded | 23% | 5% | 22 | 0.8 | UNPROVEN |
-| Calm stocks | 33% | 44% | 130 | 5.9 | ENGINE |
-| Jumpy stocks | 34% | 20% | 58 | 1.5 | UNPROVEN |
-| Low-beta stocks | 30% | 58% | 192 | 6.2 | ENGINE |
-| High-beta stocks | 35% | -7% | -19 | -0.3 | UNPROVEN |
-| Holds over 90 days | 10% | 46% | 433 | 4.1 | ENGINE |
-| Holds up to 40 days | 21% | 19% | 86 | 3.1 | WORKS |
-| Reports in Apr-Jun | 25% | 61% | 242 | 7.4 | ENGINE |
-| Reports in Oct-Dec | 26% | 5% | 18 | 0.4 | UNPROVEN |
-| 1996-2001 | 24% | 39% | 159 | 3.4 | ENGINE |
-| 2008-2013 | 43% | 24% | 54 | 1.3 | UNPROVEN |
+| Biggest beats (long) | 49% | 59% | 98 | 4.1 | ENGINE |
+| Biggest misses (short) | 51% | 41% | 66 | 3.0 | WORKS |
+| Smallest companies | 10% | 0% | 4 | -0.0 | UNPROVEN |
+| Largest companies | 23% | 12% | 43 | 1.8 | UNPROVEN |
+| Thinnest trading | 6% | 17% | 225 | 3.5 | ENGINE |
+| Most heavily traded | 23% | 14% | 48 | 1.4 | UNPROVEN |
+| Calm stocks | 33% | 51% | 126 | 5.9 | ENGINE |
+| Jumpy stocks | 34% | 7% | 16 | 0.8 | UNPROVEN |
+| Low-beta stocks | 31% | 63% | 164 | 5.5 | ENGINE |
+| High-beta stocks | 34% | -18% | -45 | -0.5 | UNPROVEN |
+| Holds over 90 days | 5% | 22% | 337 | 3.7 | ENGINE |
+| Holds up to 40 days | 23% | 39% | 136 | 3.7 | ENGINE |
+| Reports in Apr-Jun | 19% | 44% | 194 | 6.8 | ENGINE |
+| Reports in Oct-Dec | 25% | 8% | 24 | 0.5 | UNPROVEN |
+| 1996-2001 | 25% | 35% | 111 | 2.7 | ENGINE |
+| 2008-2013 | 40% | 17% | 35 | 1.5 | UNPROVEN |
 
 **Money with no proven edge:** 0% of dollars sit in surprise groups whose alpha is not reliably above zero (none); together they earn 0% of the alpha.
 
-**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -89 (t -3.5); Longer hold window: +82 (t +2.5)
+**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -91 (t -3.5)
 
 ### Conviction Tilt  (`conviction_tilt`)
 
 Drops the unsure middle and leans on the strongest surprises, balanced by company size.
 
-**Total:** $17.6M alpha over 72 quarters, 86 bp per dollar traded, ~6,242 positions a year.
+**Total:** $11.6M alpha over 71 quarters, 78 bp per dollar traded, ~4,983 positions a year.
 
 | Situation | Share of money traded | Share of alpha | Alpha per $ traded (bp) | Sure? (t) | Verdict |
 |---|---|---|---|---|---|
-| Biggest beats (long) | 20% | 38% | 167 | 5.7 | ENGINE |
-| Biggest misses (short) | 20% | 10% | 44 | 1.2 | UNPROVEN |
-| Smallest companies | 14% | 31% | 194 | 3.2 | ENGINE |
-| Largest companies | 22% | 6% | 25 | 1.8 | UNPROVEN |
-| Thinnest trading | 10% | 29% | 251 | 5.3 | ENGINE |
-| Most heavily traded | 22% | 5% | 21 | 1.1 | UNPROVEN |
-| Calm stocks | 33% | 40% | 103 | 7.2 | ENGINE |
-| Jumpy stocks | 33% | 22% | 57 | 1.8 | UNPROVEN |
-| Low-beta stocks | 30% | 52% | 148 | 6.2 | ENGINE |
-| High-beta stocks | 35% | 8% | 19 | 0.6 | UNPROVEN |
-| Holds over 90 days | 12% | 48% | 355 | 5.9 | ENGINE |
-| Holds up to 40 days | 35% | 15% | 37 | 2.6 | WORKS |
-| Reports in Apr-Jun | 25% | 51% | 179 | 6.9 | ENGINE |
-| Reports in Oct-Dec | 26% | 12% | 41 | 1.1 | UNPROVEN |
-| 1996-2001 | 24% | 41% | 151 | 4.0 | ENGINE |
-| 2008-2013 | 43% | 27% | 54 | 2.3 | WORKS |
+| Biggest beats (long) | 24% | 38% | 125 | 4.9 | ENGINE |
+| Biggest misses (short) | 25% | 18% | 57 | 2.1 | WORKS |
+| Smallest companies | 16% | 15% | 75 | 1.3 | UNPROVEN |
+| Largest companies | 20% | 7% | 26 | 1.4 | UNPROVEN |
+| Thinnest trading | 11% | 23% | 165 | 3.0 | ENGINE |
+| Most heavily traded | 20% | 5% | 21 | 1.1 | UNPROVEN |
+| Calm stocks | 33% | 44% | 104 | 6.5 | ENGINE |
+| Jumpy stocks | 33% | 14% | 33 | 1.3 | UNPROVEN |
+| Low-beta stocks | 32% | 56% | 137 | 5.1 | ENGINE |
+| High-beta stocks | 34% | 4% | 9 | 0.5 | UNPROVEN |
+| Holds over 90 days | 10% | 32% | 261 | 4.1 | ENGINE |
+| Holds up to 40 days | 31% | 34% | 86 | 3.8 | ENGINE |
+| Reports in Apr-Jun | 21% | 52% | 197 | 6.6 | ENGINE |
+| Reports in Oct-Dec | 26% | 13% | 38 | 1.0 | UNPROVEN |
+| 1996-2001 | 26% | 40% | 121 | 2.9 | ENGINE |
+| 2008-2013 | 40% | 22% | 43 | 1.8 | UNPROVEN |
 
-**Money with no proven edge:** 23% of dollars sit in surprise groups whose alpha is not reliably above zero (long D07, short D01); together they earn 14% of the alpha.
+**Money with no proven edge:** 18% of dollars sit in surprise groups whose alpha is not reliably above zero (long D07, long D08, short D03, short D04); together they earn 8% of the alpha.
 
-**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Thinner trading: +47 (t +2.1); Higher beta: -43 (t -2.6); Longer hold window: +63 (t +3.9)
+**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Thinner trading: +40 (t +2.0); Higher beta: -54 (t -2.7); More extreme surprise (|rank - median|): +25 (t +2.4)
 
 ### Sector Balanced  (`sector_balanced`)
 
 Conviction Tilt with an equal budget for each of 12 industry groups, so no industry can dominate.
 
-**Total:** $12.0M alpha over 72 quarters, 91 bp per dollar traded, ~6,618 positions a year.
+**Total:** $8.5M alpha over 71 quarters, 72 bp per dollar traded, ~6,368 positions a year.
 
 | Situation | Share of money traded | Share of alpha | Alpha per $ traded (bp) | Sure? (t) | Verdict |
 |---|---|---|---|---|---|
-| Biggest beats (long) | 18% | 45% | 220 | 6.8 | ENGINE |
-| Biggest misses (short) | 19% | 3% | 16 | 0.2 | UNPROVEN |
-| Smallest companies | 12% | 40% | 292 | 5.1 | ENGINE |
-| Largest companies | 23% | 7% | 29 | 2.4 | WORKS |
-| Thinnest trading | 10% | 34% | 312 | 6.9 | ENGINE |
-| Most heavily traded | 22% | 6% | 24 | 1.5 | UNPROVEN |
-| Calm stocks | 35% | 40% | 105 | 6.3 | ENGINE |
-| Jumpy stocks | 31% | 22% | 63 | 1.8 | UNPROVEN |
-| Low-beta stocks | 34% | 59% | 160 | 7.7 | ENGINE |
-| High-beta stocks | 32% | 9% | 26 | 0.0 | UNPROVEN |
-| Holds over 90 days | 11% | 49% | 400 | 6.2 | ENGINE |
-| Holds up to 40 days | 36% | 16% | 40 | 2.7 | WORKS |
-| Reports in Apr-Jun | 25% | 44% | 160 | 7.1 | ENGINE |
-| Reports in Oct-Dec | 25% | 15% | 54 | 1.8 | UNPROVEN |
-| 1996-2001 | 25% | 42% | 154 | 6.1 | ENGINE |
-| 2008-2013 | 42% | 23% | 49 | 1.4 | UNPROVEN |
+| Biggest beats (long) | 20% | 40% | 144 | 5.0 | ENGINE |
+| Biggest misses (short) | 20% | 9% | 32 | 1.0 | UNPROVEN |
+| Smallest companies | 13% | 17% | 98 | 1.7 | UNPROVEN |
+| Largest companies | 23% | 10% | 31 | 2.3 | WORKS |
+| Thinnest trading | 10% | 25% | 180 | 4.2 | ENGINE |
+| Most heavily traded | 22% | 8% | 26 | 1.6 | UNPROVEN |
+| Calm stocks | 35% | 45% | 94 | 5.9 | ENGINE |
+| Jumpy stocks | 31% | 14% | 33 | 0.9 | UNPROVEN |
+| Low-beta stocks | 35% | 65% | 135 | 5.9 | ENGINE |
+| High-beta stocks | 32% | 5% | 11 | -0.4 | UNPROVEN |
+| Holds over 90 days | 9% | 29% | 238 | 3.6 | ENGINE |
+| Holds up to 40 days | 33% | 27% | 58 | 2.8 | WORKS |
+| Reports in Apr-Jun | 25% | 48% | 140 | 5.5 | ENGINE |
+| Reports in Oct-Dec | 26% | 15% | 41 | 1.5 | UNPROVEN |
+| 1996-2001 | 26% | 44% | 123 | 4.1 | ENGINE |
+| 2008-2013 | 41% | 19% | 33 | 1.1 | UNPROVEN |
 
-**Money with no proven edge:** 43% of dollars sit in surprise groups whose alpha is not reliably above zero (long D07, long D09, short D01, short D04); together they earn 18% of the alpha.
+**Money with no proven edge:** 47% of dollars sit in surprise groups whose alpha is not reliably above zero (long D07, long D08, short D01, short D03, short D04); together they earn 23% of the alpha.
 
-**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -44 (t -3.1); Longer hold window: +68 (t +4.1); Market return while held (known only afterwards): -62 (t -2.2)
+**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -46 (t -2.7)
 
 ### Balanced Leverage  (`balanced_leverage`)
 
 Sector Balanced allowed to hold more; same bets, bigger. The reference book.
 
-**Total:** $24.9M alpha over 72 quarters, 73 bp per dollar traded, ~6,618 positions a year.
+**Total:** $18.4M alpha over 71 quarters, 62 bp per dollar traded, ~6,109 positions a year.
 
 | Situation | Share of money traded | Share of alpha | Alpha per $ traded (bp) | Sure? (t) | Verdict |
 |---|---|---|---|---|---|
-| Biggest beats (long) | 18% | 36% | 142 | 5.3 | ENGINE |
-| Biggest misses (short) | 18% | 13% | 52 | 1.4 | UNPROVEN |
-| Smallest companies | 9% | 25% | 203 | 3.3 | ENGINE |
-| Largest companies | 25% | 10% | 28 | 2.4 | WORKS |
-| Thinnest trading | 7% | 23% | 249 | 5.9 | ENGINE |
-| Most heavily traded | 24% | 7% | 22 | 1.5 | UNPROVEN |
-| Calm stocks | 34% | 41% | 88 | 6.4 | ENGINE |
-| Jumpy stocks | 32% | 22% | 49 | 1.6 | UNPROVEN |
-| Low-beta stocks | 31% | 55% | 129 | 6.6 | ENGINE |
-| High-beta stocks | 33% | 9% | 20 | -0.0 | UNPROVEN |
-| Holds over 90 days | 10% | 42% | 303 | 5.0 | ENGINE |
-| Holds up to 40 days | 38% | 19% | 37 | 2.5 | WORKS |
-| Reports in Apr-Jun | 25% | 44% | 130 | 5.7 | ENGINE |
-| Reports in Oct-Dec | 26% | 14% | 40 | 1.6 | UNPROVEN |
-| 1996-2001 | 21% | 38% | 136 | 5.7 | ENGINE |
-| 2008-2013 | 46% | 21% | 33 | 1.2 | UNPROVEN |
+| Biggest beats (long) | 20% | 35% | 109 | 4.3 | ENGINE |
+| Biggest misses (short) | 20% | 18% | 56 | 1.8 | UNPROVEN |
+| Smallest companies | 9% | 4% | 28 | 0.8 | UNPROVEN |
+| Largest companies | 24% | 11% | 29 | 2.4 | WORKS |
+| Thinnest trading | 7% | 15% | 133 | 3.6 | ENGINE |
+| Most heavily traded | 24% | 9% | 24 | 1.7 | UNPROVEN |
+| Calm stocks | 34% | 45% | 83 | 6.0 | ENGINE |
+| Jumpy stocks | 32% | 15% | 29 | 1.0 | UNPROVEN |
+| Low-beta stocks | 32% | 62% | 121 | 5.7 | ENGINE |
+| High-beta stocks | 33% | 3% | 5 | -0.4 | UNPROVEN |
+| Holds over 90 days | 8% | 23% | 185 | 3.0 | ENGINE |
+| Holds up to 40 days | 34% | 32% | 59 | 3.0 | WORKS |
+| Reports in Apr-Jun | 23% | 44% | 119 | 4.9 | ENGINE |
+| Reports in Oct-Dec | 26% | 17% | 40 | 1.6 | UNPROVEN |
+| 1996-2001 | 22% | 43% | 120 | 4.2 | ENGINE |
+| 2008-2013 | 44% | 13% | 19 | 0.9 | UNPROVEN |
 
-**Money with no proven edge:** 43% of dollars sit in surprise groups whose alpha is not reliably above zero (long D07, long D09, short D01, short D04); together they earn 23% of the alpha.
+**Money with no proven edge:** 47% of dollars sit in surprise groups whose alpha is not reliably above zero (long D07, long D08, short D01, short D03, short D04); together they earn 31% of the alpha.
 
-**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -39 (t -3.0); Longer hold window: +55 (t +3.5); Market return while held (known only afterwards): -59 (t -2.4)
+**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -47 (t -2.8); More extreme surprise (|rank - median|): +26 (t +2.5)
 
 ### Calm Weighted  (`calm_weighted`)
 
 Balanced Leverage with bets divided by how jumpy the stock is.
 
-**Total:** $26.1M alpha over 72 quarters, 76 bp per dollar traded, ~6,618 positions a year.
+**Total:** $19.7M alpha over 71 quarters, 65 bp per dollar traded, ~6,147 positions a year.
 
 | Situation | Share of money traded | Share of alpha | Alpha per $ traded (bp) | Sure? (t) | Verdict |
 |---|---|---|---|---|---|
-| Biggest beats (long) | 18% | 35% | 146 | 5.1 | ENGINE |
-| Biggest misses (short) | 18% | 14% | 60 | 1.8 | UNPROVEN |
-| Smallest companies | 9% | 24% | 207 | 3.5 | ENGINE |
-| Largest companies | 25% | 11% | 34 | 3.3 | WORKS |
-| Thinnest trading | 7% | 21% | 240 | 5.8 | ENGINE |
-| Most heavily traded | 24% | 10% | 31 | 2.3 | WORKS |
-| Calm stocks | 42% | 46% | 83 | 7.0 | ENGINE |
-| Jumpy stocks | 25% | 19% | 59 | 1.8 | UNPROVEN |
-| Low-beta stocks | 34% | 54% | 121 | 6.9 | ENGINE |
-| High-beta stocks | 30% | 11% | 29 | 0.3 | UNPROVEN |
-| Holds over 90 days | 10% | 39% | 295 | 5.4 | ENGINE |
-| Holds up to 40 days | 38% | 23% | 45 | 3.3 | WORKS |
-| Reports in Apr-Jun | 25% | 43% | 131 | 6.2 | ENGINE |
-| Reports in Oct-Dec | 26% | 16% | 47 | 1.9 | UNPROVEN |
-| 1996-2001 | 20% | 38% | 144 | 6.5 | ENGINE |
-| 2008-2013 | 47% | 23% | 38 | 1.5 | UNPROVEN |
+| Biggest beats (long) | 20% | 35% | 115 | 4.1 | ENGINE |
+| Biggest misses (short) | 20% | 19% | 61 | 2.0 | WORKS |
+| Smallest companies | 9% | 5% | 33 | 1.0 | UNPROVEN |
+| Largest companies | 25% | 13% | 33 | 3.0 | WORKS |
+| Thinnest trading | 7% | 13% | 128 | 3.6 | ENGINE |
+| Most heavily traded | 23% | 11% | 30 | 2.2 | WORKS |
+| Calm stocks | 42% | 51% | 79 | 6.4 | ENGINE |
+| Jumpy stocks | 24% | 12% | 32 | 1.2 | UNPROVEN |
+| Low-beta stocks | 34% | 61% | 116 | 6.2 | ENGINE |
+| High-beta stocks | 30% | 5% | 12 | -0.1 | UNPROVEN |
+| Holds over 90 days | 8% | 21% | 175 | 3.4 | ENGINE |
+| Holds up to 40 days | 34% | 35% | 67 | 3.4 | ENGINE |
+| Reports in Apr-Jun | 23% | 44% | 124 | 5.4 | ENGINE |
+| Reports in Oct-Dec | 26% | 18% | 44 | 2.0 | UNPROVEN |
+| 1996-2001 | 21% | 43% | 131 | 5.0 | ENGINE |
+| 2008-2013 | 45% | 16% | 24 | 1.1 | UNPROVEN |
 
-**Money with no proven edge:** 54% of dollars sit in surprise groups whose alpha is not reliably above zero (long D07, long D08, long D09, short D01, short D04); together they earn 33% of the alpha.
+**Money with no proven edge:** 16% of dollars sit in surprise groups whose alpha is not reliably above zero (long D07, long D08, short D04); together they earn 2% of the alpha.
 
-**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -37 (t -2.9); Longer hold window: +51 (t +3.7); Market return while held (known only afterwards): -59 (t -2.7)
+**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -43 (t -2.7); More extreme surprise (|rank - median|): +33 (t +3.3)
 
 ### Calm Rank Tilt  (`calm_rank_tilt`)
 
 Balanced Leverage with bets for the jumpiest stocks shrunk hard, so most of its money is in calm stocks.
 
-**Total:** $28.4M alpha over 72 quarters, 81 bp per dollar traded, ~6,618 positions a year.
+**Total:** $21.5M alpha over 71 quarters, 70 bp per dollar traded, ~6,211 positions a year.
 
 | Situation | Share of money traded | Share of alpha | Alpha per $ traded (bp) | Sure? (t) | Verdict |
 |---|---|---|---|---|---|
-| Biggest beats (long) | 18% | 31% | 143 | 4.0 | ENGINE |
-| Biggest misses (short) | 17% | 22% | 102 | 3.4 | ENGINE |
-| Smallest companies | 7% | 20% | 219 | 4.0 | ENGINE |
-| Largest companies | 26% | 13% | 38 | 3.6 | WORKS |
-| Thinnest trading | 6% | 16% | 223 | 6.4 | ENGINE |
-| Most heavily traded | 23% | 12% | 41 | 3.0 | WORKS |
-| Calm stocks | 57% | 54% | 77 | 7.9 | WORKS |
-| Jumpy stocks | 8% | 12% | 120 | 2.8 | ENGINE |
-| Low-beta stocks | 39% | 54% | 112 | 7.4 | ENGINE |
-| High-beta stocks | 22% | 13% | 49 | 0.7 | UNPROVEN |
-| Holds over 90 days | 10% | 34% | 288 | 5.6 | ENGINE |
-| Holds up to 40 days | 40% | 26% | 53 | 3.7 | WORKS |
-| Reports in Apr-Jun | 25% | 39% | 128 | 5.9 | ENGINE |
-| Reports in Oct-Dec | 26% | 19% | 59 | 2.7 | WORKS |
-| 1996-2001 | 19% | 40% | 170 | 8.2 | ENGINE |
-| 2008-2013 | 47% | 23% | 40 | 2.1 | WORKS |
+| Biggest beats (long) | 20% | 33% | 117 | 3.1 | ENGINE |
+| Biggest misses (short) | 19% | 29% | 106 | 3.0 | ENGINE |
+| Smallest companies | 8% | 8% | 73 | 2.0 | UNPROVEN |
+| Largest companies | 26% | 13% | 34 | 3.2 | WORKS |
+| Thinnest trading | 6% | 12% | 133 | 3.8 | ENGINE |
+| Most heavily traded | 22% | 9% | 30 | 2.3 | WORKS |
+| Calm stocks | 57% | 59% | 73 | 6.7 | ENGINE |
+| Jumpy stocks | 8% | 9% | 74 | 1.8 | UNPROVEN |
+| Low-beta stocks | 39% | 61% | 110 | 6.7 | ENGINE |
+| High-beta stocks | 22% | 9% | 27 | -0.3 | UNPROVEN |
+| Holds over 90 days | 7% | 15% | 143 | 3.0 | ENGINE |
+| Holds up to 40 days | 35% | 36% | 72 | 3.3 | ENGINE |
+| Reports in Apr-Jun | 24% | 45% | 132 | 5.4 | ENGINE |
+| Reports in Oct-Dec | 26% | 17% | 46 | 2.3 | WORKS |
+| 1996-2001 | 20% | 44% | 154 | 5.8 | ENGINE |
+| 2008-2013 | 45% | 20% | 30 | 1.6 | UNPROVEN |
 
-**Money with no proven edge:** 37% of dollars sit in surprise groups whose alpha is not reliably above zero (long D07, long D08, long D09, short D04); together they earn 15% of the alpha.
+**Money with no proven edge:** 46% of dollars sit in surprise groups whose alpha is not reliably above zero (long D07, long D08, short D02, short D03, short D04); together they earn 23% of the alpha.
 
-**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Jumpier stock (stock-specific vol): +32 (t +2.4); Higher beta: -38 (t -3.1); Longer hold window: +45 (t +3.9); More extreme surprise (|rank - median|): +24 (t +2.4); Market return while held (known only afterwards): -54 (t -3.2)
+**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -42 (t -2.7); More extreme surprise (|rank - median|): +53 (t +5.1); Market return while held (known only afterwards): -49 (t -2.1)
 
 ### Market Exposed  (`market_exposed`)
 
 Balanced Leverage's signal with raw returns and no forced long/short match, so market moves leak in. (Its alpha figure here is still measured against the average announcing company, so it leaves out the market's own contribution, which is why it is below this strategy's total P&L.)
 
-**Total:** $23.2M alpha over 72 quarters, 63 bp per dollar traded, ~6,618 positions a year.
+**Total:** $19.4M alpha over 71 quarters, 55 bp per dollar traded, ~6,199 positions a year.
 
 | Situation | Share of money traded | Share of alpha | Alpha per $ traded (bp) | Sure? (t) | Verdict |
 |---|---|---|---|---|---|
-| Biggest beats (long) | 19% | 35% | 117 | 4.6 | ENGINE |
-| Biggest misses (short) | 19% | 15% | 51 | 1.1 | UNPROVEN |
-| Smallest companies | 9% | 24% | 166 | 2.3 | WORKS |
-| Largest companies | 25% | 7% | 17 | 1.3 | UNPROVEN |
-| Thinnest trading | 6% | 24% | 237 | 5.6 | ENGINE |
-| Most heavily traded | 24% | 6% | 16 | 1.1 | UNPROVEN |
-| Calm stocks | 34% | 44% | 81 | 5.2 | ENGINE |
-| Jumpy stocks | 32% | 23% | 44 | 1.6 | UNPROVEN |
-| Low-beta stocks | 31% | 56% | 113 | 4.9 | ENGINE |
-| High-beta stocks | 34% | 10% | 19 | 0.2 | UNPROVEN |
-| Holds over 90 days | 10% | 44% | 281 | 4.8 | ENGINE |
-| Holds up to 40 days | 38% | 17% | 28 | 1.8 | UNPROVEN |
-| Reports in Apr-Jun | 25% | 50% | 126 | 4.4 | ENGINE |
-| Reports in Oct-Dec | 26% | 11% | 28 | 1.0 | UNPROVEN |
-| 1996-2001 | 20% | 40% | 124 | 4.3 | ENGINE |
-| 2008-2013 | 46% | 13% | 18 | 0.5 | UNPROVEN |
+| Biggest beats (long) | 22% | 37% | 96 | 3.8 | ENGINE |
+| Biggest misses (short) | 20% | 20% | 55 | 1.8 | UNPROVEN |
+| Smallest companies | 9% | -3% | -21 | 0.0 | UNPROVEN |
+| Largest companies | 25% | 16% | 36 | 2.2 | WORKS |
+| Thinnest trading | 6% | 13% | 116 | 3.2 | ENGINE |
+| Most heavily traded | 24% | 15% | 34 | 1.8 | UNPROVEN |
+| Calm stocks | 34% | 52% | 85 | 5.1 | ENGINE |
+| Jumpy stocks | 32% | 11% | 20 | 0.9 | UNPROVEN |
+| Low-beta stocks | 31% | 70% | 123 | 5.2 | ENGINE |
+| High-beta stocks | 33% | -4% | -7 | -0.3 | UNPROVEN |
+| Holds over 90 days | 7% | 20% | 153 | 2.6 | ENGINE |
+| Holds up to 40 days | 32% | 38% | 64 | 2.7 | ENGINE |
+| Reports in Apr-Jun | 23% | 48% | 114 | 4.2 | ENGINE |
+| Reports in Oct-Dec | 26% | 16% | 34 | 1.2 | UNPROVEN |
+| 1996-2001 | 21% | 42% | 110 | 3.4 | ENGINE |
+| 2008-2013 | 44% | 7% | 9 | 0.4 | UNPROVEN |
 
-**Money with no proven edge:** 54% of dollars sit in surprise groups whose alpha is not reliably above zero (long D07, long D08, long D09, short D01, short D04); together they earn 32% of the alpha.
+**Money with no proven edge:** 46% of dollars sit in surprise groups whose alpha is not reliably above zero (long D07, long D08, short D01, short D03, short D04); together they earn 29% of the alpha.
 
-**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -33 (t -2.2); Longer hold window: +53 (t +3.3); Market return while held (known only afterwards): -64 (t -2.2)
+**What matters once everything is controlled for at once** (bp per $ for one standard deviation more of the feature; only |t| >= 2 shown): Higher beta: -50 (t -2.7); More extreme surprise (|rank - median|): +32 (t +3.3)
 
 ### Variants that share a book with the above
 

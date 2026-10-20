@@ -1,3 +1,5 @@
+> **Stale prose (2026-10 correction).** The recipe tables behind this document (`results/profiles_*.csv`) were regenerated on the corrected data, but the narrative and every number quoted below were written before the four methodology fixes (see [FIXES.md](FIXES.md)) and have NOT been rewritten. Use the CSVs and `docs/SITUATIONS.md` (regenerated) for current figures.
+
 # Strategy profiles: where each equity strategy wins, where it loses, and why
 
 Generated from `results/profiles_recipes.csv`, `profiles_trades.csv`, `profiles_timing.csv` (code: `scripts/strategy_profiles.py`).
