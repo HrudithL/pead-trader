@@ -1,14 +1,17 @@
 """Regression tests for the four methodology fixes (open-book leverage cap, point-in-time deciles,
-bid/ask option fills, search-window decay). All synthetic -- no WRDS / OptionMetrics data needed."""
+bid/ask option fills, search-window decay). Synthetic, except one check against the committed decile events."""
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+from pead.common.paths import DATA_DIR  # noqa: E402
+from pead.common.pit_rank import rank_pct  # noqa: E402
 from pead.core.data import EquityUniverse  # noqa: E402
 from pead.engines.equity import Sizing, run_equity_backtest  # noqa: E402
 from pead.engines.options import OptionsSizing, run_options_backtest  # noqa: E402
@@ -52,6 +55,54 @@ def test_open_book_matches_legacy_when_nothing_overlaps():
     a = run_equity_backtest(uni, w, Sizing(exposure_cap="entry_cohort", **kw)).daily["nav"].to_numpy()
     b = run_equity_backtest(uni, w, Sizing(exposure_cap="open_book", **kw)).daily["nav"].to_numpy()
     assert np.abs(a - b).max() < 1e-6
+
+
+# ----------------------------------------------------------------------------- fix 2: point-in-time rank
+def test_pit_rank_uses_only_strictly_earlier_quarters():
+    rng = np.random.default_rng(0)
+    q = pd.Series(np.repeat(pd.period_range("2000Q1", periods=6, freq="Q"), 50))
+    v = pd.Series(rng.normal(size=len(q)))
+    base = rank_pct(v, q, "prior_quarters")
+    assert base[q == q.min()].isna().all() and base[q > q.min()].notna().all()
+    late = q >= pd.Period("2000Q4", "Q")
+    v2 = v.copy()
+    v2[late] = rng.normal(size=int(late.sum()))                                  # change the future
+    again = rank_pct(v2, q, "prior_quarters")
+    assert np.allclose(base[~late].fillna(-1), again[~late].fillna(-1))          # earlier ranks cannot see later data
+    # a SAME-quarter peer must not move an event's rank (the old within-quarter rank let it)
+    in_q3 = np.flatnonzero(q == pd.Period("2000Q3", "Q"))
+    i, peer = int(in_q3[0]), int(in_q3[1])
+    v3 = v.copy()
+    v3.iloc[peer] = v.iloc[i] + 10.0 if v.iloc[peer] < v.iloc[i] else v.iloc[i] - 10.0
+    assert rank_pct(v3, q, "prior_quarters").iloc[i] == base.iloc[i]
+    assert rank_pct(v3, q, "within_quarter").iloc[i] != rank_pct(v, q, "within_quarter").iloc[i]
+
+
+def test_pit_rank_mode_env_and_ties(monkeypatch):
+    from pead.common import pit_rank
+    monkeypatch.setenv(pit_rank.MODE_ENV, "within_quarter")
+    assert pit_rank.ranking_mode() == "within_quarter"
+    monkeypatch.setenv(pit_rank.MODE_ENV, "bogus")
+    with pytest.raises(ValueError):
+        pit_rank.ranking_mode()
+    monkeypatch.delenv(pit_rank.MODE_ENV)
+    assert pit_rank.ranking_mode() == "prior_quarters"
+    q = pd.Series([0, 0, 1, 1])
+    out = rank_pct(pd.Series([1.0, 1.0, 1.0, 2.0]), q, "prior_quarters")    # pool {1,1}: tie -> midpoint 0.5; 2 above all -> 1.0
+    assert out.iloc[:2].isna().all() and out.iloc[2] == 0.5 and out.iloc[3] == 1.0
+
+
+@pytest.mark.skipif(not (DATA_DIR / "decile_events.parquet").exists(), reason="needs the committed decile events")
+def test_within_quarter_reproduces_stored_sue_rank_pct_exactly():
+    ev = pd.read_parquet(DATA_DIR / "decile_events.parquet")
+    got = rank_pct(ev["sue_analyst"].round(8), ev["ann_quarter"], "within_quarter")
+    assert np.abs(got - ev["sue_rank_pct"]).max() == 0.0
+
+
+# ------------------------------------------------------------------------- fix 4: search-window decay
+def test_decay_search_fraction_is_configurable_and_defaults_to_holdout():
+    src = (REPO / "pead" / "prep" / "equity" / "daily_decay.py").read_text()
+    assert 'PEAD_DECAY_SEARCH_FRAC", "0.7"' in src and "vmask = ~np.isnan(col) & search_mask" in src
 
 
 # -------------------------------------------------------------------------------- fix 3: bid/ask fills

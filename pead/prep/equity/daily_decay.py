@@ -23,10 +23,18 @@ thin, drop size too and fall back to decile alone. This keeps every event assign
 finest cell the data can actually support, rather than either forcing a uniform grid that's
 too noisy in the thin corners, or forcing everything back to only 10 decile-level buckets.
 
+Search window vs. holdout: the daily curve (and therefore every cell's decay day) is built from only the first
+SEARCH_FRAC of announcement quarters (default 0.7; env PEAD_DECAY_SEARCH_FRAC, 1.0 = the old full-sample fit);
+the resulting decay days are applied unchanged to EVERY event, including the untouched holdout quarters.
+Cell ASSIGNMENT (event_cells.parquet) still covers all events -- classifying an event is not fitting.
+Known residual: the fine/medium/coarse back-off thresholds (MIN_QUARTERS/MIN_EVENTS) and the leave-one-out
+risk benchmark still see the full sample.
+
 Output: data/event_cells.parquet (event -> assigned cell + cell metadata)
-        data/cell_daily_curve.csv (cell x day -> cumulative & marginal adjusted return)
-        data/cell_decay_days.csv (cell -> exact decay day)
+        data/cell_daily_curve.csv (cell x day -> cumulative & marginal adjusted return, search window only)
+        data/cell_decay_days.csv (cell -> exact decay day, estimated on the search window)
 """
+import os
 import sys
 from pathlib import Path
 import pandas as pd
@@ -41,6 +49,7 @@ RAW = RAW_EQUITY_DIR
 MAX_DAYS = 200
 MIN_QUARTERS = 20      # a holding-period cell needs at least this many announcement quarters...
 MIN_EVENTS = 400       # ...and at least this many events, or it backs off to a coarser cell.
+SEARCH_FRAC = float(os.environ.get("PEAD_DECAY_SEARCH_FRAC", "0.7"))   # leading share of quarters the decay days are fitted on
 
 # ---------- rebuild the daily market-adjusted panel + cumulative log return ----------
 print("loading daily panel...")
@@ -69,6 +78,13 @@ ev["size_quintile"] = ev["size_quintile"].astype(int)
 ev["bm_tercile"] = ev["bm_tercile"].astype(int)
 ev["decile"] = ev["decile"].astype(int)
 print(f"events usable for daily curve: {len(ev):,}")
+
+# search-window mask: only these events' returns feed cell_daily_curve / decay days below
+quarters_sorted = np.sort(ev["ann_quarter"].unique())
+train_quarters = quarters_sorted[:max(1, int(len(quarters_sorted) * SEARCH_FRAC))]
+search_mask = ev["ann_quarter"].isin(train_quarters).to_numpy()
+print(f"search window: {len(train_quarters)}/{len(quarters_sorted)} announcement quarters "
+      f"({search_mask.sum():,}/{len(ev):,} events) fit cell_daily_curve.csv / decay days (SEARCH_FRAC={SEARCH_FRAC})")
 
 # ---------- build the full (event x day) cumulative market-adjusted return matrix ----------
 entry_idx = ev["row_idx"].to_numpy()
@@ -156,7 +172,7 @@ cum_by_cellday = np.full((len(cell_labels), MAX_DAYS), np.nan)
 
 for day in range(MAX_DAYS):
     col = adj_cum_ret[:, day]
-    vmask = ~np.isnan(col)
+    vmask = ~np.isnan(col) & search_mask
     sums = np.bincount(composite[vmask], weights=col[vmask], minlength=n_composite)
     counts = np.bincount(composite[vmask], minlength=n_composite)
     with np.errstate(divide="ignore", invalid="ignore"):

@@ -6,11 +6,11 @@ in data/events/FINDINGS.md and data/results/FINDINGS.md:
   - restrict to day0_status == 'ok' (a real day-0 trading session was resolved)
   - restrict to sue_source == 'analyst' (per user decision: cleanest, most literal
     "IBES surprise" story, ~183k events; sue_seasonal kept only as an appendix robustness cut)
-  - rank sue_analyst into percentiles WITHIN each announcement calendar quarter, rounding to
-    8 decimals before ranking so exact ties don't get ordered by floating-point noise
-    (this replicates the point-in-time-safe construction already used for the project's
-    existing quintile analysis in data/results/event_study_stats.json -- we just cut into
-    deciles instead of quintiles, and restrict to a single sue_source rather than pooling)
+  - rank sue_analyst into percentiles against the EXPANDING pool of strictly earlier announcement
+    quarters (pead.common.pit_rank; the old within-own-quarter rank let early reporters be ranked
+    against firms that had not reported yet). The first quarter has no pool and is dropped.
+    Rounding to 8 decimals before ranking so exact ties don't get ordered by floating-point noise.
+    PEAD_DECILE_RANKING=within_quarter rebuilds the old (look-ahead) deciles.
   - assign deciles 1 (most negative surprise) .. 10 (most positive surprise)
 
 Output: data/interim/decile_events.parquet
@@ -22,6 +22,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from pead.common.paths import EVENTS_DIR, RESULTS_DIR, DATA_DIR
+from pead.common.pit_rank import rank_pct, ranking_mode
 
 IN_EVENTS = EVENTS_DIR / "equity_events_1996_2013.parquet"
 IN_FEATURES = RESULTS_DIR / "event_classification_features.parquet"
@@ -44,7 +45,10 @@ ev["ann_quarter"] = ev["anndats"].dt.to_period("Q")
 # round to 8 decimals before ranking (matches existing pipeline's tie-handling)
 ev["sue_analyst_r"] = ev["sue_analyst"].round(8)
 
-ev["sue_rank_pct"] = ev.groupby("ann_quarter")["sue_analyst_r"].rank(pct=True, method="average")
+ev["sue_rank_pct"] = rank_pct(ev["sue_analyst_r"], ev["ann_quarter"])
+n_pre = len(ev)
+ev = ev.dropna(subset=["sue_rank_pct"]).reset_index(drop=True)      # warmup quarter: nothing earlier to rank against
+print(f"ranking mode {ranking_mode()}: dropped {n_pre - len(ev):,} warmup events")
 
 # decile 1..10, most negative -> 1, most positive -> 10
 ev["decile"] = np.minimum(np.ceil(ev["sue_rank_pct"] * 10), 10).astype(int)

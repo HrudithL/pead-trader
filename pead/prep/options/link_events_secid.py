@@ -18,6 +18,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from pead.common.paths import EVENTS_DIR, RESULTS_DIR, METADATA_DIR, DATA_DIR
+from pead.common.pit_rank import rank_pct
 
 IN_EVENTS = EVENTS_DIR / "equity_events_1996_2013.parquet"
 IN_FEATURES = RESULTS_DIR / "event_classification_features.parquet"
@@ -39,7 +40,8 @@ ev["day0_date"] = pd.to_datetime(ev["day0_date"])
 ev["ann_quarter"] = ev["anndats"].dt.to_period("Q")
 
 ev["sue_analyst_r"] = ev["sue_analyst"].round(8)
-ev["sue_rank_pct"] = ev.groupby("ann_quarter")["sue_analyst_r"].rank(pct=True, method="average")
+ev["sue_rank_pct"] = rank_pct(ev["sue_analyst_r"], ev["ann_quarter"])      # must match build_deciles.py
+ev = ev.dropna(subset=["sue_rank_pct"]).reset_index(drop=True)
 ev["decile"] = np.minimum(np.ceil(ev["sue_rank_pct"] * 10), 10).astype(int)
 ev.loc[ev["sue_rank_pct"] <= 0, "decile"] = 1
 
