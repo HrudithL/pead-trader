@@ -1,0 +1,221 @@
+strategy,driver,bp_per_1sd,t_stat
+balanced_leverage,(baseline: average position),63.808430783087324,4.025034483136761
+balanced_leverage,Smaller company,2.0286370656045283,0.0701977734069005
+balanced_leverage,Thinner trading,25.148749068234892,1.0669906933756024
+balanced_leverage,Jumpier stock (stock-specific vol),2.0895652423208158,0.1425141000365841
+balanced_leverage,Higher beta,-39.48763032275608,-2.977579558685343
+balanced_leverage,Longer hold window,54.540531669794355,3.4581835318540834
+balanced_leverage,More extreme surprise (|rank - median|),6.993389056655912,0.7787376594712307
+balanced_leverage,Value (high book/market),-0.953040809749804,-0.07803069415382223
+balanced_leverage,Long side (vs short),-13.078731088400236,-0.9428099265205809
+balanced_leverage,Market return while held (known only afterwards),-58.83873247407464,-2.403490769625416
+balanced_leverage_max,(baseline: average position),43.42156504152686,2.9557783541327334
+balanced_leverage_max,Smaller company,-7.472642962638595,-0.25783038211788417
+balanced_leverage_max,Thinner trading,24.575913591498324,0.9642221880729009
+balanced_leverage_max,Jumpier stock (stock-specific vol),-12.449317588864531,-1.4260882903691785
+balanced_leverage_max,Higher beta,-17.109175230647587,-1.2920666162858303
+balanced_leverage_max,Longer hold window,37.52453854930481,2.6494159436464533
+balanced_leverage_max,More extreme surprise (|rank - median|),6.825364441389945,0.7311726393439808
+balanced_leverage_max,Value (high book/market),-2.9042894641585684,-0.32066662638319693
+balanced_leverage_max,Long side (vs short),-48.77902974512635,-2.189388684206626
+balanced_leverage_max,Market return while held (known only afterwards),-49.93566725664529,-2.1616596109519
+calm_rank_levered,(baseline: average position),69.01908624905161,4.803391458602142
+calm_rank_levered,Smaller company,-9.034577542464259,-0.36265234744788366
+calm_rank_levered,Thinner trading,25.33256078603196,1.0960991417897683
+calm_rank_levered,Jumpier stock (stock-specific vol),23.95228826027907,2.220510596908517
+calm_rank_levered,Higher beta,-28.721052618753628,-2.4554746002873142
+calm_rank_levered,Longer hold window,43.24123253561542,4.06508399351597
+calm_rank_levered,More extreme surprise (|rank - median|),21.28452703500503,2.5145537952031822
+calm_rank_levered,Value (high book/market),5.820966131635733,0.7532982073986937
+calm_rank_levered,Long side (vs short),-41.177843272816155,-1.1285292179060273
+calm_rank_levered,Market return while held (known only afterwards),-56.987745745357905,-3.019567664013558
+calm_rank_tilt,(baseline: average position),81.1472973211014,4.891073375302842
+calm_rank_tilt,Smaller company,1.8814475574998062,0.07017855544212015
+calm_rank_tilt,Thinner trading,19.673022132773507,0.8112996109964823
+calm_rank_tilt,Jumpier stock (stock-specific vol),32.464735630270425,2.4366760641425564
+calm_rank_tilt,Higher beta,-37.519489495948704,-3.059787655510928
+calm_rank_tilt,Longer hold window,44.53112344373094,3.905691306895883
+calm_rank_tilt,More extreme surprise (|rank - median|),24.286178113308566,2.383397325895286
+calm_rank_tilt,Value (high book/market),4.084215547281642,0.4888674689772056
+calm_rank_tilt,Long side (vs short),-27.420902427346817,-0.7981845774699966
+calm_rank_tilt,Market return while held (known only afterwards),-54.35101507637234,-3.1959468581320696
+calm_weighted,(baseline: average position),63.84470802886397,3.9713314395321695
+calm_weighted,Smaller company,3.193988429890572,0.11574580507081145
+calm_weighted,Thinner trading,20.337376341009158,0.8881226786083296
+calm_weighted,Jumpier stock (stock-specific vol),6.6290747170533715,0.4776968577636528
+calm_weighted,Higher beta,-36.5862284181446,-2.881687732426996
+calm_weighted,Longer hold window,51.03986780917266,3.65253751356116
+calm_weighted,More extreme surprise (|rank - median|),11.758367649921203,1.2729860437884242
+calm_weighted,Value (high book/market),0.2593313989024008,0.02497877558634956
+calm_weighted,Long side (vs short),-16.392759826994265,-0.8946248679734781
+calm_weighted,Market return while held (known only afterwards),-59.161525185489,-2.6568553918090605
+calm_weighted_filter,(baseline: average position),61.75335642660854,3.715730789276966
+calm_weighted_filter,Smaller company,1.2558047262437009,0.04509449337641444
+calm_weighted_filter,Thinner trading,22.375684689748322,0.9665112028222116
+calm_weighted_filter,Jumpier stock (stock-specific vol),5.770738311280351,0.4067309184373532
+calm_weighted_filter,Higher beta,-37.71707951806914,-2.9546538770372273
+calm_weighted_filter,Longer hold window,52.207560093121664,3.7471026260242115
+calm_weighted_filter,More extreme surprise (|rank - median|),12.326760893045542,1.299142374171498
+calm_weighted_filter,Value (high book/market),0.9369069340564978,0.090552261643794
+calm_weighted_filter,Long side (vs short),-15.50178378537684,-0.8288341247252197
+calm_weighted_filter,Market return while held (known only afterwards),-56.745520996411734,-2.4904072620752267
+calm_weighted_matched,(baseline: average position),62.051096138255716,3.9568933056464135
+calm_weighted_matched,Smaller company,0.9796682496024629,0.03545188008937407
+calm_weighted_matched,Thinner trading,21.62411771034429,0.9355535073845559
+calm_weighted_matched,Jumpier stock (stock-specific vol),6.395374448086111,0.49193947662315207
+calm_weighted_matched,Higher beta,-35.657736346835556,-2.857574409178249
+calm_weighted_matched,Longer hold window,50.089103490763684,3.664634944627685
+calm_weighted_matched,More extreme surprise (|rank - median|),11.398323267557439,1.3000579445224623
+calm_weighted_matched,Value (high book/market),-0.3549175902278601,-0.03568324166181624
+calm_weighted_matched,Long side (vs short),-20.945682041369963,-1.0949701890221346
+calm_weighted_matched,Market return while held (known only afterwards),-60.07970241561925,-2.7589485785195293
+conviction_tilt,(baseline: average position),66.83232874885084,4.592653587221194
+conviction_tilt,Smaller company,-23.51031114854718,-0.9401959050061794
+conviction_tilt,Thinner trading,46.58039020303051,2.122416637737694
+conviction_tilt,Jumpier stock (stock-specific vol),9.195312742569918,0.6077703408826046
+conviction_tilt,Higher beta,-43.31962421497398,-2.5798599380152742
+conviction_tilt,Longer hold window,62.82188902591158,3.9131731260881133
+conviction_tilt,More extreme surprise (|rank - median|),4.636497051445753,0.47476532980146624
+conviction_tilt,Value (high book/market),9.975468198981805,0.8790191166417064
+conviction_tilt,Long side (vs short),2.1136399215934896,0.24012947707176974
+conviction_tilt,Market return while held (known only afterwards),-38.78183705795634,-1.3958252133494404
+conviction_tilt_max,(baseline: average position),50.875461472340824,3.71308337895511
+conviction_tilt_max,Smaller company,-9.596159466220916,-0.3479478973440661
+conviction_tilt_max,Thinner trading,28.752532967301285,1.268853585549753
+conviction_tilt_max,Jumpier stock (stock-specific vol),3.412642019141337,0.3536801967504607
+conviction_tilt_max,Higher beta,-36.05180211422535,-2.1287065805918166
+conviction_tilt_max,Longer hold window,41.59096443783522,3.235516998801463
+conviction_tilt_max,More extreme surprise (|rank - median|),5.554088328979962,0.6285141944720543
+conviction_tilt_max,Value (high book/market),5.814932625191857,0.6021664469826824
+conviction_tilt_max,Long side (vs short),-42.89896798928999,-2.701163709934283
+conviction_tilt_max,Market return while held (known only afterwards),-36.30002348135013,-1.3202757376876142
+extreme_picks,(baseline: average position),85.74545438553447,2.979031626482336
+extreme_picks,Smaller company,-29.41503513213745,-0.6636333443288459
+extreme_picks,Thinner trading,44.59881955385955,1.3381361193107846
+extreme_picks,Jumpier stock (stock-specific vol),0.14706483964197273,0.005909550939007271
+extreme_picks,Higher beta,-82.11943262042469,-3.01426760605653
+extreme_picks,Longer hold window,80.42789375597094,2.902190308344973
+extreme_picks,More extreme surprise (|rank - median|),30.137323636548327,1.885113952842758
+extreme_picks,Value (high book/market),35.26342693331248,1.9024042172988371
+extreme_picks,Long side (vs short),14.173500073043616,1.0425303254539608
+extreme_picks,Market return while held (known only afterwards),-45.66082564578729,-0.9011135207848698
+extreme_picks_max,(baseline: average position),84.02776591600062,3.0251543973005983
+extreme_picks_max,Smaller company,-1.794859204990532,-0.0372494853853082
+extreme_picks_max,Thinner trading,27.70675799653288,0.663527442261113
+extreme_picks_max,Jumpier stock (stock-specific vol),-3.0829690825396,-0.16916651724053464
+extreme_picks_max,Higher beta,-66.18958488836493,-2.184606093829644
+extreme_picks_max,Longer hold window,50.420727176484256,2.412503118969606
+extreme_picks_max,More extreme surprise (|rank - median|),19.142323183341485,1.2687141041637597
+extreme_picks_max,Value (high book/market),43.887262116484195,2.5296888781730407
+extreme_picks_max,Long side (vs short),-23.12386286088263,-1.3324452443294683
+extreme_picks_max,Market return while held (known only afterwards),-17.32600258669664,-0.3292967863652174
+graded_bets,(baseline: average position),35.248897012087276,2.7161191672064846
+graded_bets,Smaller company,-24.082683146569728,-0.9751487053699559
+graded_bets,Thinner trading,41.74008471385443,2.100181301238592
+graded_bets,Jumpier stock (stock-specific vol),0.25652701927670357,0.01943717281639738
+graded_bets,Higher beta,-39.37193549851058,-2.5491876801773645
+graded_bets,Longer hold window,64.26719205516468,5.123921872912001
+graded_bets,More extreme surprise (|rank - median|),16.99204299227908,1.5724688119447738
+graded_bets,Value (high book/market),8.910750699780975,0.9381001313998887
+graded_bets,Long side (vs short),-10.192759623835919,-1.646281194801933
+graded_bets,Market return while held (known only afterwards),-39.32600941105269,-1.44667195679818
+graded_bets_max,(baseline: average position),29.325825020090907,2.594167595240444
+graded_bets_max,Smaller company,-17.89511559596529,-0.6515956376523334
+graded_bets_max,Thinner trading,31.48572893702276,1.368126924089739
+graded_bets_max,Jumpier stock (stock-specific vol),2.640105905414131,0.30573422503012293
+graded_bets_max,Higher beta,-29.17201048223406,-1.6799334330234081
+graded_bets_max,Longer hold window,46.10920150531887,4.392241949781106
+graded_bets_max,More extreme surprise (|rank - median|),12.872386518190757,1.238862713411996
+graded_bets_max,Value (high book/market),10.502868116686674,1.3003240387817028
+graded_bets_max,Long side (vs short),-43.075783956564116,-2.684622115645834
+graded_bets_max,Market return while held (known only afterwards),-30.2673355924231,-1.285201514670029
+market_boost,(baseline: average position),63.808430783087324,4.025034483136761
+market_boost,Smaller company,2.0286370656045283,0.0701977734069005
+market_boost,Thinner trading,25.148749068234892,1.0669906933756024
+market_boost,Jumpier stock (stock-specific vol),2.0895652423208158,0.1425141000365841
+market_boost,Higher beta,-39.48763032275608,-2.977579558685343
+market_boost,Longer hold window,54.540531669794355,3.4581835318540834
+market_boost,More extreme surprise (|rank - median|),6.993389056655912,0.7787376594712307
+market_boost,Value (high book/market),-0.953040809749804,-0.07803069415382223
+market_boost,Long side (vs short),-13.078731088400236,-0.9428099265205809
+market_boost,Market return while held (known only afterwards),-58.83873247407464,-2.403490769625416
+market_boost_max,(baseline: average position),43.42156504152686,2.9557783541327334
+market_boost_max,Smaller company,-7.472642962638595,-0.25783038211788417
+market_boost_max,Thinner trading,24.575913591498324,0.9642221880729009
+market_boost_max,Jumpier stock (stock-specific vol),-12.449317588864531,-1.4260882903691785
+market_boost_max,Higher beta,-17.109175230647587,-1.2920666162858303
+market_boost_max,Longer hold window,37.52453854930481,2.6494159436464533
+market_boost_max,More extreme surprise (|rank - median|),6.825364441389945,0.7311726393439808
+market_boost_max,Value (high book/market),-2.9042894641585684,-0.32066662638319693
+market_boost_max,Long side (vs short),-48.77902974512635,-2.189388684206626
+market_boost_max,Market return while held (known only afterwards),-49.93566725664529,-2.1616596109519
+market_exposed,(baseline: average position),53.063975749670234,2.8952576176800475
+market_exposed,Smaller company,-2.7381162471025635,-0.0885580471521425
+market_exposed,Thinner trading,29.847441584204898,1.1851332447564304
+market_exposed,Jumpier stock (stock-specific vol),-1.7374226606167213,-0.11175674717091993
+market_exposed,Higher beta,-32.67353813343365,-2.1825592367729647
+market_exposed,Longer hold window,52.73268764358763,3.3125181466820335
+market_exposed,More extreme surprise (|rank - median|),7.68225421793514,0.8765722112305353
+market_exposed,Value (high book/market),0.9753882011772731,0.07485086551814865
+market_exposed,Long side (vs short),-16.05292981661882,-1.194908169469448
+market_exposed,Market return while held (known only afterwards),-63.83385681046438,-2.1922892133066947
+market_exposed_max,(baseline: average position),44.93520403300141,2.6336403937951247
+market_exposed_max,Smaller company,-13.038963576873098,-0.42492791709450956
+market_exposed_max,Thinner trading,33.276464734757475,1.301319296209524
+market_exposed_max,Jumpier stock (stock-specific vol),-7.772316029180576,-0.6669739083626811
+market_exposed_max,Higher beta,-20.717122287435274,-1.3223929076960497
+market_exposed_max,Longer hold window,39.5848164962998,2.591032937424235
+market_exposed_max,More extreme surprise (|rank - median|),9.273752310407355,1.1161992920435058
+market_exposed_max,Value (high book/market),-3.3370746566141247,-0.30342087218645103
+market_exposed_max,Long side (vs short),-32.11871406876609,-1.9464629929059252
+market_exposed_max,Market return while held (known only afterwards),-45.79953555772613,-1.6634673412017036
+sector_balanced,(baseline: average position),68.533693436368,3.938371522955501
+sector_balanced,Smaller company,6.0278637863623725,0.20671407850261642
+sector_balanced,Thinner trading,25.654840946430483,1.0969795622266623
+sector_balanced,Jumpier stock (stock-specific vol),3.3824895784833573,0.17139002282418472
+sector_balanced,Higher beta,-44.37673422426371,-3.106353317380332
+sector_balanced,Longer hold window,68.34120052218535,4.137218623202696
+sector_balanced,More extreme surprise (|rank - median|),3.64257921833561,0.3516410905636158
+sector_balanced,Value (high book/market),4.065198063049733,0.2825340378270645
+sector_balanced,Long side (vs short),11.026012943487798,0.7312321373290115
+sector_balanced,Market return while held (known only afterwards),-62.09105529059422,-2.161360811189344
+sector_balanced_max,(baseline: average position),43.42156504152686,2.9557783541327334
+sector_balanced_max,Smaller company,-7.472642962638595,-0.25783038211788417
+sector_balanced_max,Thinner trading,24.575913591498324,0.9642221880729009
+sector_balanced_max,Jumpier stock (stock-specific vol),-12.449317588864531,-1.4260882903691785
+sector_balanced_max,Higher beta,-17.109175230647587,-1.2920666162858303
+sector_balanced_max,Longer hold window,37.52453854930481,2.6494159436464533
+sector_balanced_max,More extreme surprise (|rank - median|),6.825364441389945,0.7311726393439808
+sector_balanced_max,Value (high book/market),-2.9042894641585684,-0.32066662638319693
+sector_balanced_max,Long side (vs short),-48.77902974512635,-2.189388684206626
+sector_balanced_max,Market return while held (known only afterwards),-49.93566725664529,-2.1616596109519
+size_balanced,(baseline: average position),102.04465362021755,4.043040510465634
+size_balanced,Smaller company,-26.752551105536877,-0.622432767057302
+size_balanced,Thinner trading,40.52456486904522,1.1738047695703302
+size_balanced,Jumpier stock (stock-specific vol),8.720243760106987,0.3803830826009268
+size_balanced,Higher beta,-88.56353703955804,-3.478702970347371
+size_balanced,Longer hold window,82.33201407665784,2.5070941093225487
+size_balanced,More extreme surprise (|rank - median|),25.039280597027695,1.582988426775179
+size_balanced,Value (high book/market),34.23051792181041,1.7776974328240545
+size_balanced,Long side (vs short),14.423024104163934,0.9367279226106181
+size_balanced,Market return while held (known only afterwards),-27.71653924179463,-0.6165998604332
+size_balanced_max,(baseline: average position),89.78681077270122,3.5118493666616373
+size_balanced_max,Smaller company,3.704553774251699,0.08336170252638166
+size_balanced_max,Thinner trading,22.88921179266379,0.6103560808166172
+size_balanced_max,Jumpier stock (stock-specific vol),3.293820025014961,0.2010082032253062
+size_balanced_max,Higher beta,-76.07814793795565,-2.8540739638638755
+size_balanced_max,Longer hold window,47.6452050298165,2.0958898929261895
+size_balanced_max,More extreme surprise (|rank - median|),18.659167552926128,1.2624593105901143
+size_balanced_max,Value (high book/market),35.56092816059128,2.151431464523313
+size_balanced_max,Long side (vs short),-21.22173874956488,-1.177525151003601
+size_balanced_max,Market return while held (known only afterwards),-24.997265623701374,-0.5402423649656292
+volatility_filter,(baseline: average position),61.436876816533555,3.739376655923142
+volatility_filter,Smaller company,-0.3094944580862555,-0.01058835867957908
+volatility_filter,Thinner trading,27.51347858709997,1.1503193144240922
+volatility_filter,Jumpier stock (stock-specific vol),1.3573719708945367,0.09096158317814988
+volatility_filter,Higher beta,-40.507225334012674,-3.0187333351005043
+volatility_filter,Longer hold window,56.10791924922312,3.574327563331336
+volatility_filter,More extreme surprise (|rank - median|),7.422356746316827,0.7957063592273841
+volatility_filter,Value (high book/market),-0.10755377987281839,-0.00883995386146887
+volatility_filter,Long side (vs short),-12.06369694895283,-0.8342583797017535
+volatility_filter,Market return while held (known only afterwards),-55.61390389807546,-2.2174192649319546
