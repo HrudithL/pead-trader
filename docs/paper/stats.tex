@@ -4843,6 +4843,8 @@
 \providecommand{\statSentBiggestFix}{\stv{sent.biggest_fix}}
 \expandafter\gdef\csname st:sent.blend_sleeve_in_eras\endcsname{in every era\xspace}
 \providecommand{\statSentBlendSleeveInEras}{\stv{sent.blend_sleeve_in_eras}}
+\expandafter\gdef\csname st:sent.blend_vs_equity\endcsname{a Sharpe ratio of 1.09 against 1.24 for its equity sleeve (lower), and a return of 4.90\% against 5.64\% at a volatility of 4.46\% against 4.51\%\xspace}
+\providecommand{\statSentBlendVsEquity}{\stv{sent.blend_vs_equity}}
 \expandafter\gdef\csname st:sent.blend_vs_sleeves\endcsname{does not exceed the better sleeve's Sharpe ratio\xspace}
 \providecommand{\statSentBlendVsSleeves}{\stv{sent.blend_vs_sleeves}}
 \expandafter\gdef\csname st:sent.bv\endcsname{Holding beta fixed, the calm-minus-jumpy gap shrinks to an average of $-$1 bp per dollar, while holding volatility fixed the low-minus-high-beta gap remains 120 bp\xspace}
@@ -4865,6 +4867,8 @@
 \providecommand{\statSentEqDsr}{\stv{sent.eq_dsr}}
 \expandafter\gdef\csname st:sent.eq_dsr_status\endcsname{exceeds\xspace}
 \providecommand{\statSentEqDsrStatus}{\stv{sent.eq_dsr_status}}
+\expandafter\gdef\csname st:sent.eq_fix_dir\endcsname{lower\xspace}
+\providecommand{\statSentEqFixDir}{\stv{sent.eq_fix_dir}}
 \expandafter\gdef\csname st:sent.expfit\endcsname{fits visibly worse\xspace}
 \providecommand{\statSentExpfit}{\stv{sent.expfit}}
 \expandafter\gdef\csname st:sent.ffvsmkt\endcsname{enlarges\xspace}
@@ -4893,16 +4897,26 @@
 \providecommand{\statSentLeveredRet}{\stv{sent.levered_ret}}
 \expandafter\gdef\csname st:sent.levered_sh\endcsname{lower\xspace}
 \providecommand{\statSentLeveredSh}{\stv{sent.levered_sh}}
+\expandafter\gdef\csname st:sent.mb_clears\endcsname{does not clear\xspace}
+\providecommand{\statSentMbClears}{\stv{sent.mb_clears}}
 \expandafter\gdef\csname st:sent.mb_vs_mkt\endcsname{below\xspace}
 \providecommand{\statSentMbVsMkt}{\stv{sent.mb_vs_mkt}}
+\expandafter\gdef\csname st:sent.mbmax_clears\endcsname{clears\xspace}
+\providecommand{\statSentMbmaxClears}{\stv{sent.mbmax_clears}}
 \expandafter\gdef\csname st:sent.mbmax_vs_mkt\endcsname{above\xspace}
 \providecommand{\statSentMbmaxVsMkt}{\stv{sent.mbmax_vs_mkt}}
 \expandafter\gdef\csname st:sent.monotone\endcsname{Decile means are strictly increasing in surprise at $+1$d; at $+5$d, $+10$d, $+20$d, $+40$d, $+60$d the tails are ordered but the middle deciles are not strictly monotone.\xspace}
 \providecommand{\statSentMonotone}{\stv{sent.monotone}}
+\expandafter\gdef\csname st:sent.opt_cap30_sign\endcsname{negative\xspace}
+\providecommand{\statSentOptCapThreeZeroSign}{\stv{sent.opt_cap30_sign}}
 \expandafter\gdef\csname st:sent.opt_dsr\endcsname{does not clear the 0.95 bar under either measure of trial dispersion\xspace}
 \providecommand{\statSentOptDsr}{\stv{sent.opt_dsr}}
+\expandafter\gdef\csname st:sent.opt_edge\endcsname{has a probabilistic Sharpe ratio against zero of 0.739, so its edge is not statistically distinguishable from none\xspace}
+\providecommand{\statSentOptEdge}{\stv{sent.opt_edge}}
 \expandafter\gdef\csname st:sent.opt_over\endcsname{overstated the return by a factor of 30.4 and the Sharpe ratio by a factor of 24.2\xspace}
 \providecommand{\statSentOptOver}{\stv{sent.opt_over}}
+\expandafter\gdef\csname st:sent.opt_vs_prefix\endcsname{lower\xspace}
+\providecommand{\statSentOptVsPrefix}{\stv{sent.opt_vs_prefix}}
 \expandafter\gdef\csname st:sent.pit_effect\endcsname{lowers\xspace}
 \providecommand{\statSentPitEffect}{\stv{sent.pit_effect}}
 \expandafter\gdef\csname st:sent.rising.ff\endcsname{rises with every step in the horizon\xspace}

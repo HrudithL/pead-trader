@@ -1859,6 +1859,20 @@ def sentences(S, ctx):
     lead = ["equity" if runs["calm_weighted"]["summary"][k] > runs["options_cap20"]["summary"][k] else "options" for k in eras]
     S.put("sent.sleeve_lead", "the equity sleeve has the higher Sharpe ratio in the first era and the options sleeve in the last" if lead[0] == "equity" and lead[-1] == "options"
           else "the sleeves' relative strength does not alternate in the way earlier drafts reported: leaders by era are " + ", ".join(lead))
+    # corrected options book: is there a distinguishable edge at all?
+    p20, c20r, c30r = S.get("options_cap20.psr"), runs["options_cap20"]["summary"]["annualized_return"], runs["options_cap30"]["summary"]["annualized_return"]
+    S.put("sent.opt_edge", ("has a probabilistic Sharpe ratio against zero of %s, so its edge is not statistically distinguishable from none" % S.tex["options_cap20.psr"])
+          if p20 < 0.95 else ("has a probabilistic Sharpe ratio against zero of %s" % S.tex["options_cap20.psr"]))
+    S.put("sent.opt_cap30_sign", "positive" if c30r > 0 else "negative")
+    S.put("sent.opt_vs_prefix", "lower" if c20r < runs["options_cap20_prefix_fix"]["summary"]["annualized_return"] else "higher")
+    eb, ec = runs["hedged_blend"]["summary"], runs["calm_weighted"]["summary"]
+    S.put("sent.blend_vs_equity", f"a Sharpe ratio of {S.tex['hedged_blend.sharpe']} against {S.tex['calm_weighted.sharpe']} for its equity sleeve " +
+          ("(higher)" if eb["sharpe"] > ec["sharpe"] else "(lower)") + f", and a return of {S.tex['hedged_blend.ret']} against {S.tex['calm_weighted.ret']} at a volatility of "
+          f"{S.tex['hedged_blend.vol']} against {S.tex['calm_weighted.vol']}")
+    S.put("sent.mb_clears", "clears" if mb2["annualized_return"] > S.get("market.ret") else "does not clear")
+    S.put("sent.mbmax_clears", "clears" if mb["annualized_return"] > S.get("market.ret") else "does not clear")
+    # legacy-to-current changes of the headline equity books, direction
+    S.put("sent.eq_fix_dir", "lower" if runs["calm_weighted"]["summary"]["annualized_return"] < runs["calm_weighted_legacy"]["summary"]["annualized_return"] else "not lower")
     # beta gap
     S.put("sent.sweep_peak", "peaks at the chosen base unit" if S.get("sweep.peak.is_chosen") == "is" or S.get("sweep.peak.is_chosen") is True else "does not peak at the chosen base unit")
 

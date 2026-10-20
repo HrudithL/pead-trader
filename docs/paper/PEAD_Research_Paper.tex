@@ -70,53 +70,56 @@ Mechanism, Evidence, and a Hedged Equity--Options Strategy}}
 \noindent
 Markets under-react to earnings news: a stock keeps moving in the direction of its earnings
 surprise for weeks after the announcement. We model this as gradual incorporation of
-information by heterogeneously attentive investors and test the model's predictions in a
-\stv{n_events}-event sample (1996--2013): the top-minus-bottom surprise-decile spread is
-$+$\stv{spread.mkt.h60} over 60 trading days ($t=$\stv{spread.mkt.t.h60}, clustered by announcement
-quarter) and $+$\stv{spread.ff.h60} after a size and book-to-market adjustment
-($t=$\stv{spread.ff.t.h60}); the same ordering appears in option premia, amplified
-about \stv{amp_ratio}$\times$. We then ask how much can be traded, and we audit the answer.
-The \emph{validated} market-neutral equity book \sn{calm_weighted} (positions sized by inverse
-volatility) earns \sret{calm_weighted} a year at \svol{calm_weighted} volatility, a Sharpe ratio of
-\ssh{calm_weighted} and a maximum drawdown of \sdd{calm_weighted}; the \emph{research} book
-\sn{calm_rank_tilt}, whose tilt exponent was chosen after seeing the results, earns
-\sret{calm_rank_tilt} at a Sharpe ratio of \ssh{calm_rank_tilt} (drawdown \sdd{calm_rank_tilt}).
-Against the CRSP value-weighted market, \sn{calm_weighted} has an annualized alpha of
-\stv{calm_weighted.alpha} ($t=$\stv{calm_weighted.alpha_t}) and a beta of \stv{calm_weighted.beta}.
-The corrected Kelly options books earn \sret{options_cap20} (\sn{options_cap20}, Sharpe
-\ssh{options_cap20}) and \sret{options_cap30} (\sn{options_cap30}, Sharpe \ssh{options_cap30});
-an earlier convention for marking expired quotes had overstated the first at
-\stv{optchain.legacy.ret} and a Sharpe ratio of \stv{optchain.legacy.sh}. The two sleeves have
-a daily correlation of \stv{corr.eo}; the validated blend \sn{hedged_blend}
-earns \sret{hedged_blend} at \svol{hedged_blend} volatility (Sharpe \ssh{hedged_blend}, drawdown
-\sdd{hedged_blend}) and its research counterpart \sn{calm_blend} earns \sret{calm_blend} (Sharpe
-\ssh{calm_blend}). The single most profitable kind of trade is the same in \stv{best.n_top} of nine books (a long
-position in a thinly traded, low-beta stock held for more than two months); high-beta shorts have alpha
-statistically indistinguishable from zero in \stv{hbs.n_noalpha} of \stv{hbs.n} books; and alpha per dollar in
-1996--2001 was \stv{alpha.ratio.bl} times its 2008--13 level for \sn{balanced_leverage}. Several corrections are identified but not yet applied to these numbers
-(Section~\ref{sec:audit}), and borrow fees, financing, market impact and option spreads beyond a
-one-tick floor are not modelled (Section~\ref{sec:limits}). All figures are hypothetical backtests.
+information by heterogeneously attentive investors and test the model in a
+\stv{n_events}-event sample (1996--2013) using point-in-time surprise deciles: the top-minus-bottom
+decile spread is $+$\stv{spread.mkt.h60} over 60 trading days ($t=$\stv{spread.mkt.t.h60}, clustered by
+announcement quarter) and $+$\stv{spread.ff.h60} after a size and book-to-market adjustment
+($t=$\stv{spread.ff.t.h60}). We then ask how much of this can be traded, and we audit the answer. Four
+methodology defects had overstated earlier results: surprise deciles ranked against firms that had not yet
+reported, a leverage cap that ignored positions still open from earlier quarters, option fills at the mid price,
+and holding periods fitted on the full sample. After correcting them, the validated market-neutral equity book
+\sn{calm_weighted} (positions sized by inverse volatility) earns \sret{calm_weighted} a year at \svol{calm_weighted}
+volatility, a Sharpe ratio of \ssh{calm_weighted} and a maximum drawdown of \sdd{calm_weighted}, against
+\stv{calm_weighted_legacy.ret} and a Sharpe ratio of \stv{calm_weighted_legacy.sharpe} before the corrections; the
+research book \sn{calm_rank_tilt}, whose tilt exponent was chosen after seeing the results, earns \sret{calm_rank_tilt}
+(Sharpe \ssh{calm_rank_tilt}). Its annualized alpha against the CRSP value-weighted market is
+\stv{calm_weighted.alpha} ($t=$\stv{calm_weighted.alpha_t}) with a beta of \stv{calm_weighted.beta}.
+The options result changes most. The Kelly options book \sn{options_cap20} was reported first at
+\stv{optchain.legacy.ret} (Sharpe \stv{optchain.legacy.sh}) and, after a quote-marking correction, at
+\stv{ladder.options_cap20.published.ret} (Sharpe \stv{ladder.options_cap20.published.sharpe}). Bought at the ask and sold
+at the bid, the same strategy earns \sret{options_cap20} (Sharpe \ssh{options_cap20}); it \stv{sent.opt_edge}.
+The 30\% budget variant earns \sret{options_cap30}. The two sleeves have a daily correlation of \stv{corr.eo}, but with the options
+sleeve's edge gone the blend \sn{hedged_blend} earns \sret{hedged_blend} at \svol{hedged_blend} volatility (Sharpe
+\ssh{hedged_blend}; \stv{hedged_blend_prefix_fix.ret} and \stv{hedged_blend_prefix_fix.sharpe} before the corrections), and
+\sn{calm_blend} earns \sret{calm_blend} (Sharpe \ssh{calm_blend}). The single most profitable kind of trade is the same in
+\stv{best.n_top} of nine equity books (a long position in a thinly traded, low-beta stock held for more than two months);
+high-beta shorts have alpha statistically indistinguishable from zero in \stv{hbs.n_noalpha} of \stv{hbs.n} books; and alpha per
+dollar in 2008--13 was between \stv{era.all.CA.min} and \stv{era.all.CA.max} of its 1996--2001 level across the profiled books.
+Remaining in-sample choices, residual look-ahead, and the costs that are not modelled (borrow, financing, market impact) are listed in
+Section~\ref{sec:limits}. All figures are hypothetical backtests.
 \end{abstract}
 
-\begin{tcolorbox}[colback=navy!4,colframe=navy,title=\textbf{Summary of results (backtest, 1996--2013, \$10M initial capital, net of modeled costs)},fonttitle=\small,left=4pt,right=4pt,top=3pt,bottom=3pt]
+\begin{tcolorbox}[colback=navy!4,colframe=navy,title=\textbf{Summary of corrected results (backtest, 1996--2013, \$10M initial capital, net of modeled costs)},fonttitle=\small,left=4pt,right=4pt,top=3pt,bottom=3pt]
 \small
-\begin{tabularx}{\linewidth}{@{}Xrrrrl@{}}
+\begin{tabularx}{\linewidth}{@{}Xrrrrrr@{}}
 \toprule
-Book & Return & Vol & Sharpe & Max DD & Status\\
+Book & Return & Vol & Sharpe & Max DD & Before fixes & Status\\
 \midrule
-\sn{calm_weighted} (equity) & \sret{calm_weighted} & \svol{calm_weighted} & \ssh{calm_weighted} & \sdd{calm_weighted} & validated\\
-\sn{calm_rank_tilt} (equity) & \sret{calm_rank_tilt} & \svol{calm_rank_tilt} & \ssh{calm_rank_tilt} & \sdd{calm_rank_tilt} & research\\
-\sn{balanced_leverage} (equity) & \sret{balanced_leverage} & \svol{balanced_leverage} & \ssh{balanced_leverage} & \sdd{balanced_leverage} & reference\\
-\sn{options_cap20} & \sret{options_cap20} & \svol{options_cap20} & \ssh{options_cap20} & \sdd{options_cap20} & validated\\
-\sn{options_cap30} & \sret{options_cap30} & \svol{options_cap30} & \ssh{options_cap30} & \sdd{options_cap30} & validated\\
-\sn{hedged_blend} & \sret{hedged_blend} & \svol{hedged_blend} & \ssh{hedged_blend} & \sdd{hedged_blend} & validated\\
-\sn{calm_blend} & \sret{calm_blend} & \svol{calm_blend} & \ssh{calm_blend} & \sdd{calm_blend} & research\\
+\sn{calm_weighted} (equity) & \sret{calm_weighted} & \svol{calm_weighted} & \ssh{calm_weighted} & \sdd{calm_weighted} & \stv{calm_weighted_legacy.ret} / \stv{calm_weighted_legacy.sharpe} & \stv{calm_weighted.status}\\
+\sn{calm_rank_tilt} (equity) & \sret{calm_rank_tilt} & \svol{calm_rank_tilt} & \ssh{calm_rank_tilt} & \sdd{calm_rank_tilt} & \stv{calm_rank_tilt_legacy.ret} / \stv{calm_rank_tilt_legacy.sharpe} & \stv{calm_rank_tilt.status}\\
+\sn{balanced_leverage} (equity) & \sret{balanced_leverage} & \svol{balanced_leverage} & \ssh{balanced_leverage} & \sdd{balanced_leverage} & \stv{balanced_leverage_legacy.ret} / \stv{balanced_leverage_legacy.sharpe} & \stv{balanced_leverage.status}\\
+\sn{options_cap20} & \sret{options_cap20} & \svol{options_cap20} & \ssh{options_cap20} & \sdd{options_cap20} & \stv{options_cap20_prefix_fix.ret} / \stv{options_cap20_prefix_fix.sharpe} & \stv{options_cap20.status}\\
+\sn{options_cap30} & \sret{options_cap30} & \svol{options_cap30} & \ssh{options_cap30} & \sdd{options_cap30} & \stv{options_cap30_prefix_fix.ret} / \stv{options_cap30_prefix_fix.sharpe} & \stv{options_cap30.status}\\
+\sn{hedged_blend} & \sret{hedged_blend} & \svol{hedged_blend} & \ssh{hedged_blend} & \sdd{hedged_blend} & \stv{hedged_blend_prefix_fix.ret} / \stv{hedged_blend_prefix_fix.sharpe} & \stv{hedged_blend.status}\\
+\sn{calm_blend} & \sret{calm_blend} & \svol{calm_blend} & \ssh{calm_blend} & \sdd{calm_blend} & \stv{calm_blend_prefix_fix.ret} / \stv{calm_blend_prefix_fix.sharpe} & \stv{calm_blend.status}\\
 \bottomrule
 \end{tabularx}
 \vspace{2pt}
-{\footnotesize Statistics are computed over each book's full calendar, as stored in \texttt{results/leaderboard.md}.
+{\footnotesize Statistics are computed over each book's full calendar, as stored in \texttt{results/leaderboard.md}. ``Before fixes'' is return / Sharpe ratio of the saved
+pre-correction run. ``Status'' is the label in the strategy registry; it records how the construction was chosen, not that the corrected numbers are out of sample.
 Leveraged and market-exposed research variants are in Table~\ref{tab:levered}. All figures are hypothetical backtest results.}
 \end{tcolorbox}
+
 
 \tableofcontents
 \newpage
@@ -135,8 +138,8 @@ capital that could remove it is costly to deploy \citep{ShleiferVishny1997,Mende
 This paper has one thesis: PEAD is a gradual transfer of value from slow to fast investors, and it
 can be harvested in two structurally different ways. It also has a second purpose, which is an
 audit. The strategies were built, rebuilt and renamed over several months, and earlier drafts
-reported numbers that later corrections lowered. The version here reports the corrected numbers,
-labels every in-sample choice, and lists every defect found (Section~\ref{sec:audit}). The paper is
+reported numbers that later corrections lowered; the options edge reported earlier did not survive them. The version here reports the corrected numbers plainly,
+labels every in-sample choice, and lists every defect found together with a fix-by-fix attribution of what each correction cost (Section~\ref{sec:audit}). The paper is
 organized around four questions.
 \begin{enumerate}[label=(\roman*)]
   \item \textbf{Where does the money come from?} Section~\ref{sec:mechanism} gives a model of
@@ -145,7 +148,7 @@ organized around four questions.
   \item \textbf{Does the phenomenon exist in these data?} Sections~\ref{sec:data}
         and~\ref{sec:evidence} describe the sample and test every prediction of the model before any
         strategy is built: clustering-robust significance, size and value controls, cross-sectional
-        heterogeneity, rival hypotheses, and confirmation in a second market.
+        heterogeneity, rival hypotheses, and the signal in option premia.
   \item \textbf{How well does it trade, and where does the return actually come from?}
         Sections~\ref{sec:equity}--\ref{sec:combined} build a linear equity family and a convex
         options book, decompose their returns by leg, by kind of trade and by era, and evaluate
@@ -157,11 +160,11 @@ organized around four questions.
 
 \paragraph{Names and status.}
 Every strategy has a plain name, and a one-line description at its first use. Books are
-labelled \emph{validated} (parameters fixed before the result, no look-ahead we know of),
+labelled \emph{validated} (the construction was fixed before the result and uses no search; this does not mean that the corrected numbers are out of sample, nor that the book has an edge),
 \emph{research} (some parameter or design choice was made after seeing results, or the book is
 leveraged or market-exposed), or \emph{reference} (kept as a comparison, including the
-overstated legacy options books). Earlier drafts and the project history used numbered and prefixed labels; Table~\ref{tab:oldnames} in Appendix~A maps them to the names used here.
-The headline equity result is the validated book \sn{calm_weighted}; the research book
+pre-correction runs, kept as \texttt{*\_legacy} and \texttt{*\_prefix\_fix}). Earlier drafts and the project history used numbered and prefixed labels; Table~\ref{tab:oldnames} in Appendix~A maps them to the names used here.
+The headline equity result is the corrected validated book \sn{calm_weighted}; the research book
 \sn{calm_rank_tilt} is reported beside it and flagged each time; \sn{balanced_leverage} is the
 reference every volatility-sized book is compared with.
 
@@ -271,25 +274,22 @@ analyst-based,
   \mathrm{SUE}_i=\frac{A_i-F_i}{s_i},
 \end{equation}
 with $A_i$ realized earnings per share, $F_i$ the latest consensus forecast, and $s_i>0$ a
-firm-specific scale. Within each announcement quarter the surprise (rounded to $10^{-8}$) is
-ranked with average ranks for ties into a percentile $u_i\in(0,1]$ and assigned to deciles
-$D_i=\min(\lceil10u_i\rceil,10)$. The quarterly ranking avoids multi-year look-ahead in the
-breakpoints but still ranks an early-quarter announcement against announcements that come later
-in the same quarter; this is a look-ahead we have identified and not yet removed
-(Section~\ref{sec:audit}). The signal sample has \stv{n_events} events across $Q=\stv{Q}$
+firm-specific scale. Each surprise (rounded to $10^{-8}$) is ranked, with average ranks for ties, against the expanding pool of events from strictly earlier announcement quarters (a point-in-time ranking) into a percentile $u_i\in(0,1]$ and assigned to deciles
+$D_i=\min(\lceil10u_i\rceil,10)$. Earlier drafts ranked each surprise within its own announcement quarter, i.e.\ against firms that had not yet reported; that look-ahead is removed here
+(Section~\ref{sec:auditlog}), at the price of dropping the first quarter (\stv{pit.dropped} events) and of uneven decile sizes, because a pooled ranking cannot absorb market-wide surprise regimes. The signal sample has \stv{n_events} events across $Q=\stv{Q}$
 announcement quarters; the equity backtests trade the \stv{n_tradeable_events} of them
 that have a complete price path in the daily panel, on \stv{n_firms} firms (Table~\ref{tab:sample}).
 
 \begin{table}[t]\centering\small
 \caption{Sample construction. Counts are read from \texttt{data/ff\_coverage\_stats.csv},
-\texttt{data/option\_coverage\_stats.csv}, the saved options runs and the event panel.}\label{tab:sample}
+\texttt{data/option\_coverage\_stats.csv}, the saved options runs and the corrected event panel. The option-evidence rows use the pre-correction option tables.}\label{tab:sample}
 \begin{tabular}{lr}
 \toprule
-Earnings events in the signal sample (analyst-based surprise), 1996--2013 & \stv{n_events} \\
+Earnings events in the signal sample (analyst-based surprise, point-in-time deciles), 1996--2013 & \stv{n_events} \\
 \quad with book equity (Compustat \texttt{ceq}$>0$, $\ge130$-day reporting lag) & \stv{n_events_bookeq} \\
 \quad with both size and book-to-market (characteristic-adjusted sample) & \stv{n_events_sizebm} \\
 \quad with a complete daily price path (equity backtests) & \stv{n_tradeable_events} \\
-Events with a selected near-the-money call (option evidence) & \stv{n_events_call_atm} \\
+Events with a selected near-the-money call (option evidence, pre-correction) & \stv{n_events_call_atm} \\
 \quad of which priced at $+60$ trading days & \stv{n_events_call_priced60} \\
 Events eligible for the Kelly options book (\sn{options_cap20}) & \stv{options_cap20.nelig} \\
 \quad of which funded & \stv{options_cap20.nsized} \\
@@ -331,7 +331,7 @@ its standard error reflects the fact that both legs are drawn from the same cros
 \includegraphics[width=\linewidth]{figures/fig_decile_drift.pdf}
 \caption{(a) Mean market-adjusted cumulative return by SUE decile and horizon. (b) The extreme deciles
 under the market benchmark (solid) and under the leave-one-out size/book-to-market benchmark
-(dashed). Source: \texttt{data/decile\_horizon\_stats.csv}, \texttt{data/ff\_decile\_horizon\_stats.csv}.}\label{fig:decile}
+(dashed). Point-in-time deciles; recomputed from the corrected event file (Appendix~\ref{app:repro}).}\label{fig:decile}
 \end{figure}
 
 \begin{table}[t]\centering
@@ -345,6 +345,14 @@ The top-minus-bottom spread \stv{sent.rising.mkt}, from \stv{spread.mkt.h1} at o
 $t$-statistic across all horizons and both benchmarks is \stv{tmin_spread}. A one-time reaction that
 merely differed across deciles would produce a flat spread; a rising spread is the signature of
 gradual incorporation.
+
+\paragraph{Effect of the point-in-time deciles on the signal.} Table~\ref{tab:pitcompare} compares the spreads under the earlier within-quarter ranking (\stv{pre.n_events} events, \stv{pre.Q} quarters) with the corrected ranking. The correction \stv{sent.pit_effect} the 60-day market-adjusted spread, from \stv{pre.spread.mkt.h60} to \stv{spread.mkt.h60}
+(a difference of \stv{pit.drop60}); the signal itself survives the correction, and the larger cost of the correction is to the strategies built on the deciles (Section~\ref{sec:auditlog}).
+
+\begin{table}[t]\centering
+\caption{D10$-$D1 spread (\%) and quarter-clustered $t$-statistic under the earlier within-quarter ranking and under the corrected point-in-time ranking. Within-quarter columns: committed \texttt{data/} tables; point-in-time columns: corrected event file and \texttt{docs/paper/cache/pit/}.}\label{tab:pitcompare}
+\input{generated/tab_pit_compare.tex}
+\end{table}
 
 \paragraph{The shape of the drift.}
 Fitting $\Delta(h)=a\,h^{b}$ to the six horizons gives $\Delta(h)\approx\stv{pl.ff.coef}\,h^{\stv{pl.ff.exp}}$
@@ -435,10 +443,10 @@ a given surprise is worth (Section~\ref{sec:calm}). Walk-forward filters that dr
 (Section~\ref{sec:calm}); the negative result is kept as \sn{volatility_filter} and
 \sn{calm_weighted_filter}.
 
-\subsection{Confirmation in a second market}
+\subsection{The signal in option premia (mid prices, pre-correction deciles)}
 
-If PEAD is a real mispricing of the stock, it must appear in the price of a leveraged claim on that
-stock. For each event with listed options we take, on the announcement day, the call (put) with delta
+If PEAD is a real mispricing of the stock, it should appear in the price of a leveraged claim on that
+stock. This section measures the signal in option premia at mid prices and with the earlier within-quarter deciles (the option tables were not rebuilt); it says nothing about what an option trader pays, which Section~\ref{sec:options} measures. For each event with listed options we take, on the announcement day, the call (put) with delta
 nearest $+0.5$ ($-0.5$) and at least 95 calendar days to expiry. We hold it at its mid price to each
 horizon. The call spread is $+$\stv{call60} of premium at 60 days ($t=\stv{call60.t}$) and the put
 spread is \stv{put60} ($t=\stv{put60.t}$), the mirror image (Table~\ref{tab:spreads},
@@ -446,9 +454,7 @@ Figure~\ref{fig:spreads}).
 
 \paragraph{Magnitude check.} The ratio of the 60-day call spread to the stock spread is
 $\stv{call60}/\stv{spread.mkt.h60}\approx\stv{amp_ratio}$. This is \stv{sent.ampband} the
-elasticity band $\Omega\in[\stv{omega_lo},\stv{omega_hi}]$ from equation~\eqref{eq:omega}; part of the gap is
-the option's time decay over 60 days. The options market carries the same directional signal scaled
-by leverage.
+elasticity band $\Omega\in[\stv{omega_lo},\stv{omega_hi}]$ from equation~\eqref{eq:omega}. These are returns on premium between mid prices, before the bid/ask spread.
 
 \paragraph{Direction versus volatility.} A long straddle has roughly zero delta and isolates the
 non-directional component. Its 60-day spread is $+$\stv{str60} ($t=\stv{str60.t}$), a fraction
@@ -485,8 +491,8 @@ A cell with too little history backs off to (decile $\times$ size), then to the 
 \stv{decay.fine} of the \stv{decay.n} estimated cells are the finest cells. Across cells $H_c$ ranges from
 \stv{decay.min} to \stv{decay.max} trading days (median \stv{decay.median}, mean \stv{decay.mean}); the mean is
 \stv{decay.d1} for D1 and \stv{decay.d10} for D10, against \stv{decay.d6} for D6 near the median.
-The windows are fitted to the whole sample, so they use information a live trader would not have; this
-is the third identified defect in Section~\ref{sec:audit}.
+The windows are now estimated on the first \stv{fix.decay.pct} of announcement quarters (\stv{fix.decay.n} of \stv{fix.decay.of}) and applied to every event; earlier drafts fitted them on the whole sample,
+which used information a live trader would not have (Section~\ref{sec:auditlog}). The back-off thresholds for thin cells and the leave-one-out risk benchmark of Section~\ref{sec:riskprem} still see the full sample.
 
 %=====================================================================================
 \section{The equity strategy family}\label{sec:equity}
@@ -535,8 +541,7 @@ vanishes whenever both sides occupy the same groups, and the same holds for size
 One engine runs every equity book. Position $i$ has dollar notional $n_i=w_i\,b\,V_q$, with $V_q$ the
 previous quarter-end NAV (so profits affect sizing only from the next quarter) and $b$ the base-unit
 fraction. The notional is capped at a fraction ($\stv{balanced_leverage.liqfrac}$ of the stock's 21-day average dollar volume), and the
-gross notional entered in a quarter is capped at a multiple of trailing NAV, trimming the
-lowest-conviction positions first. Round-trip costs are $\stv{cost.bps}$ basis points by liquidity
+gross exposure of the whole open book is capped at a multiple of the NAV on which the quarter is sized, with new positions trimmed (lowest conviction first) to fit the room left on every day they will be held. Round-trip costs are $\stv{cost.bps}$ basis points by liquidity
 quintile (thinnest to most liquid), charged at entry and at exit. Because returns are measured against
 the market, each stock position is economically paired with an offsetting index position, and the daily
 P\&L is
@@ -551,15 +556,11 @@ $\E[\Pi]=\lambda bV\sum_i w_i z_i[\phi(H_i)-\phi(0)]-\text{costs}$, the covarian
 drift. Since the book is balanced across industries and size by Proposition~\ref{prop:neutral}, the sum does
 not rely on any industry or size effect, only on the within-group ordering of surprises.
 
-Two features of the engine matter for how the results are read. First, the gross cap applies to each
-quarter's \emph{entry cohort}, not to the whole open book. Positions from earlier quarters are still open, so
-realized gross exposure can exceed the nominal cap: for \sn{calm_weighted}, whose cap is
+Two features of the engine matter for how the results are read. First, the cap holds at sizing time, but positions are fixed in dollars, so gross exposure divided by the \emph{current} NAV can still exceed it when NAV falls: for \sn{calm_weighted}, whose cap is
 \stv{calm_weighted.cap}$\times$, realized gross exposure divided by NAV averages \stv{calm_weighted.gross_avg}$\times$,
-exceeds the cap on \stv{calm_weighted.days_over_cap} of days and peaks at \stv{calm_weighted.gross_max}$\times$. This is the second
-identified defect in Section~\ref{sec:audit}. Second, summary statistics in \texttt{results/} are computed over the full calendar,
+exceeds the cap on \stv{calm_weighted.days_over_cap} of days and peaks at \stv{calm_weighted.gross_max}$\times$ (before the correction, which counted only each quarter's new positions: \stv{calm_weighted_legacy.days_over_cap} of days and a peak of \stv{calm_weighted_legacy.gross_max}$\times$; Section~\ref{sec:auditlog}). Second, summary statistics in \texttt{results/} are computed over the full calendar,
 including the idle period before the first position (the equity books start trading in
-\stv{calm_weighted.active_start}; the options books in \stv{options_cap20.active_start}). Active-period Sharpe ratios are
-within a few hundredths of the stored ones (for example \stv{calm_weighted.sharpe_active} against
+\stv{calm_weighted.active_start}; the options books in \stv{options_cap20.active_start}). Active-period Sharpe ratios differ from the stored ones (for example \stv{calm_weighted.sharpe_active} against
 \ssh{calm_weighted} for \sn{calm_weighted}), and Table~\ref{tab:dsr} uses active-period returns.
 
 \paragraph{Breadth.} The book opens about \stv{calm_weighted.pos_per_year} positions a year. The fundamental law of active management
@@ -573,12 +574,12 @@ few strong ones. Its volatility comes from the residual common factors that neut
 Table~\ref{tab:family} lists the family in lineage order, with each book's plain description from its own metadata. The progression
 follows the diagnoses recorded in the repository: \sn{extreme_picks} is the textbook trade; \sn{graded_bets} and \sn{size_balanced} change the
 weights; \sn{conviction_tilt} trims the middle of the ranking, tilts toward the extremes and drops the lowest-conviction positions first when a cap binds;
-\sn{sector_balanced} adds industry neutrality; \sn{balanced_leverage} lifts the gross cap; \sn{market_boost} and \sn{market_exposed} add market exposure
+\sn{sector_balanced} adds industry neutrality; \sn{balanced_leverage} raises the gross cap; \sn{market_boost} and \sn{market_exposed} add market exposure
 deliberately (the first) or by accident (the second); the \sn{calm_*} books size by volatility.
 
 \begin{table}[t]\centering
 \caption{The equity family in lineage order. ``Unit / cap'' is the base-unit fraction and the gross-exposure cap
-(per entry cohort). Returns, Sharpe ratios and drawdowns are from \texttt{results/<name>/summary.json}.}\label{tab:family}
+(open book, at sizing time). Returns, Sharpe ratios and drawdowns are from \texttt{results/<name>/summary.json}.}\label{tab:family}
 \input{generated/tab_equity_family.tex}
 \end{table}
 
@@ -594,8 +595,8 @@ construction shared with \sn{balanced_leverage}. It earns \sret{calm_weighted} a
 drawdown \sdd{calm_weighted}, Calmar \stv{calm_weighted.calmar}), compared with \sret{balanced_leverage} and a Sharpe ratio of \ssh{balanced_leverage} for
 \sn{balanced_leverage}. It has a higher Sharpe ratio than \sn{balanced_leverage} in \stv{calm_vs_bl.n_better} of the three sub-periods
 (\stv{calm_weighted.shA}, \stv{calm_weighted.shB}, \stv{calm_weighted.shC} against \stv{balanced_leverage.shA}, \stv{balanced_leverage.shB},
-\stv{balanced_leverage.shC}). Its return is \stv{sent.cw_vs_mkt} that of the CRSP market (\stv{market.ret} a year at \stv{market.vol} volatility, Sharpe
-\stv{market.sharpe}, worst drawdown \stv{market.dd}, over 1996--2013): the book is market-neutral, and is not designed to beat the index.
+\stv{balanced_leverage.shC}). Before the corrections it earned \stv{calm_weighted_legacy.ret} at a Sharpe ratio of \stv{calm_weighted_legacy.sharpe}; the corrected return is \stv{sent.eq_fix_dir}. Its return is \stv{sent.cw_vs_mkt} that of the CRSP market (\stv{market.ret} a year at \stv{market.vol} volatility, Sharpe
+\stv{market.sharpe}, worst drawdown \stv{market.dd}, over the same calendar, \stv{market.window}): the book is market-neutral, and is not designed to beat the index.
 
 \paragraph{The research book.} \sn{calm_rank_tilt} weights each event by $(1.02-\pi_i)^k$, which all but switches off the most volatile stocks. Its Sharpe ratio
 \stv{sent.calmprogress} along the lineage \sn{balanced_leverage} ($\ssh{balanced_leverage}$), \sn{calm_weighted} ($\ssh{calm_weighted}$), \sn{calm_rank_tilt}
@@ -603,24 +604,23 @@ drawdown \sdd{calm_weighted}, Calmar \stv{calm_weighted.calmar}), compared with 
 validated one:} the exponent $k=\stv{calm_rank_tilt.power}$ was chosen after seeing \sn{calm_weighted}'s full-sample results, so its Sharpe ratio is
 in-sample. The only out-of-sample evidence is a split-sample check recorded with the strategy: an exponent chosen on \stv{split.train} data alone (best
 $k=\stv{split.k}$) lifts the \stv{split.test} Sharpe ratio from \stv{split.from} to \stv{split.to}, the same as the full-sample best. That is one check on
-one split. It supports the direction of the tilt, not the level of the Sharpe ratio.
+one split, and it predates the corrections and was not re-run. It supports the direction of the tilt, not the level of the Sharpe ratio. Before the corrections the book earned \stv{calm_rank_tilt_legacy.ret} at a Sharpe ratio of \stv{calm_rank_tilt_legacy.sharpe}.
 
 \paragraph{The reference and the cautionary books.} \sn{balanced_leverage} is the pure-alpha reference. \sn{market_exposed} uses raw returns and lets net exposure float;
 its net dollar exposure is only \stv{market_exposed.net_to_gross} of gross yet its beta against the market is \stv{market_exposed.beta} (alpha \stv{market_exposed.alpha}),
 because equal dollars long and short are not equal beta. \sn{market_boost} adds a market position of \stv{market_boost.overlay} times NAV to \sn{balanced_leverage}: return \sret{market_boost},
-volatility \svol{market_boost}, beta \stv{market_boost.beta}. It earns the market's premium on top of the alpha and carries the market's drawdown (\sdd{market_boost}).
+volatility \svol{market_boost}, beta \stv{market_boost.beta}. It earns the market's premium on top of the alpha and carries the market's drawdown (\sdd{market_boost}). Its return \stv{sent.mb_clears} the market's \stv{market.ret} over the same calendar.
 
 \subsection{The leveraged and market-exposed research variants}\label{sec:levered}
 
 Earlier drafts headlined an equity book earning \stv{olddraft.eq.ret} at \stv{olddraft.eq.vol} volatility (Sharpe \stv{olddraft.eq.sharpe},
-drawdown \stv{olddraft.eq.dd}). That book is the pre-correction run of the six-times-cap research variant \stv{olddraft.eq.name}, and \sn{balanced_leverage_max} is \stv{oldhead.same} to \sn{sector_balanced_max}; it is
-not the validated headline. Each \sn{*_max} book keeps its parent's signal and neutralization and changes only two dials, the base unit and a gross cap of
+drawdown \stv{olddraft.eq.dd}). That book is \stv{olddraft.eq.name}, the pre-correction run of the six-times-cap research variant; it was never the validated headline. Corrected, \sn{balanced_leverage_max} earns \sret{balanced_leverage_max} (Sharpe \ssh{balanced_leverage_max}, drawdown \sdd{balanced_leverage_max}), and it is \stv{oldhead.same} to \sn{sector_balanced_max}. Each \sn{*_max} book keeps its parent's signal and neutralization and changes only two dials, the base unit and a gross cap of
 \stv{balanced_leverage_max.cap}$\times$. The base unit was chosen by sweeping the unit and taking the highest return subject to a Sharpe ratio of at least \stv{rule.sharpe} and a drawdown no
-worse than $-$\stv{rule.dd} (Section~\ref{sec:capacity}): an in-sample choice. Table~\ref{tab:levered} reports them with the leverage they actually use. Realized gross
+worse than $-$\stv{rule.dd} (Section~\ref{sec:capacity}): an in-sample choice, not re-made after the corrections, and \stv{max.n_breach} of the \stv{max.n} \sn{*_max} books now breach that drawdown limit (worst: \stv{max.worst_dd}). Table~\ref{tab:levered} reports them with the leverage they actually use. Realized gross
 exposure for \sn{balanced_leverage_max} averages \stv{balanced_leverage_max.gross_avg}$\times$ NAV and peaks at \stv{balanced_leverage_max.gross_max}$\times$, which is
 prime-brokerage-level leverage, and \stv{balanced_leverage_max.liqcap} of its positions sit at the volume cap. Its return is \stv{sent.levered_ret} and its Sharpe ratio is
 \stv{sent.levered_sh} than \sn{calm_weighted}'s, with a \stv{sent.levered_dd} drawdown. \sn{market_boost_max} adds the market overlay to this book: it earns
-\texttt{results/} (\sret{market_boost_max}, which is \stv{sent.mbmax_vs_mkt} the market's \stv{market.ret}), a beta of \stv{market_boost_max.beta} and a drawdown of \sdd{market_boost_max}. The
+\sret{market_boost_max} (Sharpe \ssh{market_boost_max}), which is \stv{sent.mbmax_vs_mkt} the market's \stv{market.ret}, a beta of \stv{market_boost_max.beta} and a drawdown of \sdd{market_boost_max}. The
 extra return is the market's, paid for with the market's drawdown, and it should be read as a leveraged, market-exposed research variant.
 
 \begin{table}[t]\centering
@@ -631,8 +631,7 @@ by NAV are measured on days with positions, from \texttt{daily.csv.gz}; ADV-capp
 
 \begin{figure}[t]\centering
 \includegraphics[width=\linewidth]{figures/fig_leverage.pdf}
-\caption{Realized gross exposure divided by NAV (21-day mean). Dotted lines mark the nominal caps per entry cohort. The open book exceeds its cap because
-earlier cohorts are still held.}\label{fig:leverage}
+\caption{Realized gross exposure divided by NAV (21-day mean). Dotted lines mark the nominal caps. The cap holds at sizing time; gross over current NAV can exceed it when NAV falls.}\label{fig:leverage}
 \end{figure}
 
 %=====================================================================================
@@ -680,8 +679,7 @@ We label every position with a \emph{recipe}: side (long or short) $\times$ how 
 
 \paragraph{The most profitable recipe.} In \stv{best.n_top} of the nine profiled books the single most profitable recipe is a long position in a thinly traded, low-beta stock held more than 60 days
 (Table~\ref{tab:bestrecipe}). It uses \stv{best.money.min}--\stv{best.money.max} of the money, earns \stv{best.share.min}--\stv{best.share.max} of the alpha at \stv{best.bp.min}--\stv{best.bp.max} basis points per dollar, is
-positive in \stv{best.qpos.min}--\stv{best.qpos.max} of quarters, and makes \stv{best.net.min} to \stv{best.net.max} of real profit per book. It is positive in all three eras in
-\stv{best.n_all3} of nine books (the exceptions: \stv{best.neg_books}, which are negative in one era).
+positive in \stv{best.qpos.min}--\stv{best.qpos.max} of quarters, and makes \stv{best.net.min} to \stv{best.net.max} of real profit per book. \stv{sent.best_eras}.
 
 \begin{table}[t]\centering
 \caption{The recipe ``long, thin, low-beta, held over 60 days'' in each book (size-matched alpha). ``Eras +'' is the number of the three eras in which its alpha is positive; ``Top recipe''
@@ -741,7 +739,7 @@ discussed here, and the paired-by-quarter contrasts are:
 \caption{Decay of alpha across eras. (a) Alpha per dollar traded for the nine profiled books. (b) Annualized alpha against the CRSP market for the eight market-neutral books.}\label{fig:era}
 \end{figure}
 
-Across the nine profiled books alpha per dollar was lower in 2008--13 than in 1996--2001 in \stv{era.all.fade.n} of nine, by factors between \stv{era.all.ratio.min} and \stv{era.all.ratio.max}. The mechanism section
+Across the nine profiled books alpha per dollar was lower in 2008--13 than in 1996--2001 in \stv{era.all.fade.n} of nine, to between \stv{era.all.CA.min} and \stv{era.all.CA.max} of its 1996--2001 level. The mechanism section
 predicts such decay if arbitrage capital has grown; the data are consistent with that and do not test it.
 
 \subsection{Is the calm edge a volatility effect or a beta effect?}\label{sec:calm}
@@ -866,54 +864,64 @@ which does not depend on $\lambda$ and grows as $\sqrt N$ in the number of bets.
 
 Part (b) says that the book's Sharpe ratio comes from \emph{breadth}, not from leverage: \sn{options_cap20} funds about \stv{options_cap20.pos_per_year} small bets a year, an implied per-bet information coefficient of
 \stv{options_cap20.implied_ic} (a lower bound on the true value, for the reason given for the equity book). It also predicts that return and volatility scale roughly linearly in the budget, with the Sharpe ratio nearly
-unchanged: raising the cap from 20\% to 30\% moves the return from \sret{options_cap20} to \sret{options_cap30} and the volatility from \svol{options_cap20} to \svol{options_cap30}, while the Sharpe ratio goes from
-\ssh{options_cap20} to \ssh{options_cap30}. The cap is a risk-appetite dial with a hard loss interpretation (part (c); the largest outstanding premium in the \sn{options_cap20} run was \stv{options_cap20.maxprem} of NAV), not a source of
-extra edge. The caps 20\% and 30\% are in-sample choices: they were fixed after the earlier results, and larger caps (40\%) exist only in the legacy runs.
+unchanged, if the per-trade edge is real. In the corrected runs, raising the cap from 20\% to 30\% moves the return from \sret{options_cap20} to \sret{options_cap30}, the volatility from \svol{options_cap20} to \svol{options_cap30} and the Sharpe ratio from
+\ssh{options_cap20} to \ssh{options_cap30}; before the fixes the same change moved them from \stv{options_cap20_prefix_fix.ret} to \stv{options_cap30_prefix_fix.ret} and the Sharpe ratio from \stv{options_cap20_prefix_fix.sharpe} to \stv{options_cap30_prefix_fix.sharpe}. The cap is a risk-appetite dial with a hard loss interpretation (part (c); the largest outstanding premium in the \sn{options_cap20} run was \stv{options_cap20.maxprem} of NAV), not a source of
+extra edge. The caps 20\% and 30\% are in-sample choices: they were fixed after the earlier results and not re-chosen after the corrections, and larger caps (40\%) exist only in the legacy runs.
 
-\subsection{Corrected results}\label{sec:optresults}
+\subsection{Results after bid/ask fills}\label{sec:optresults}
 
 \begin{table}[t]\centering
-\caption{Kelly options books. The top block uses the corrected convention (dead quotes marked at half the ask, or zero in the pessimistic bound, with a one-tick cost floor); the bottom block is the
-\emph{overstated} legacy convention, shown only so the size of the correction is visible. Source: \texttt{results/<name>/summary.json}.}\label{tab:options}
+\caption{Kelly options books under each fill convention. The top block is the current convention (ask in, bid out at the final checkpoint, dead options marked at half the ask, or zero in the pessimistic bound);
+the middle block is the mid-price convention with a tick floor, with and without the point-in-time deciles; the bottom block is the originally reported convention. Source: \texttt{results/<name>/summary.json}.}\label{tab:options}
 \input{generated/tab_options.tex}
 \end{table}
 
-Table~\ref{tab:options} reports the books. The validated headline is \sn{options_cap20}: \sret{options_cap20} a year at \svol{options_cap20} volatility, a Sharpe ratio of \ssh{options_cap20} and a maximum drawdown of
-\sdd{options_cap20}. The 30\% book \sn{options_cap30} returns \sret{options_cap30} at a Sharpe ratio of \ssh{options_cap30}. The pessimistic bound \sn{options_worst_case}, in which a dying option is worth nothing,
-returns \sret{options_worst_case} at \ssh{options_worst_case}. The funded book has \stv{ot.n} trades.
-
-\paragraph{Where the return comes from.} \stv{ot.pct_calls} of funded trades are calls, producing \stv{ot.pct_pnl_calls} of gross profit. The pay-off is convex: the win rate is \stv{ot.win}, the median trade returns \stv{ot.median} of premium, and the premium-weighted mean
-return is \stv{ot.mean_w}; the best 1\% of trades earn \stv{ot.top1} of the net profit, which is \stv{sent.top1}. Profit is concentrated in time: \stv{ot.top2year.names} contribute \stv{ot.top2year} of net profit, and entry years \stv{ot.loss_years} lose (Figure~\ref{fig:optsel}).
-The edge is a convex bet on the upside, harvested across thousands of small positions; with puts so rare among the funded trades it is not a symmetric drift trade.
+Table~\ref{tab:options} reports the books. With the current convention \sn{options_cap20} earns \sret{options_cap20} a year at \svol{options_cap20} volatility, a Sharpe ratio of \ssh{options_cap20} and a maximum
+drawdown of \sdd{options_cap20}. It \stv{sent.opt_edge}. The 30\% book \sn{options_cap30} earns \sret{options_cap30} (a \stv{sent.opt_cap30_sign} return) at a Sharpe ratio of \ssh{options_cap30}, and the pessimistic bound
+\sn{options_worst_case} earns \sret{options_worst_case}. These books were labelled ``validated'' because their construction was fixed before the result; that label does not imply an edge. The funded \sn{options_cap20} book
+has \stv{ot.n} trades, of which \stv{opt.nask} entries were filled at the ask. Net profit over the sample is \stv{ot.net_M} on \stv{ot.prem_M} of premium paid (\stv{ot.net_over_prem}); the win rate is \stv{ot.win} and the median trade returns
+\stv{ot.median} of premium. \stv{ot.pct_calls} of funded trades are calls, producing \stv{ot.pct_pnl_calls} of gross profit, and puts are \stv{ot.put.d1} of D1 selections against \stv{ot.put.d10} of D10 selections
+(Figure~\ref{fig:optsel}). Net profit is small relative to premium at risk, so shares of it (by year, or by the best trades) are unstable and we do not report them; entry years \stv{ot.loss_years} lose.
 
 \begin{figure}[t]\centering
 \includegraphics[width=\linewidth]{figures/fig_options_trades.pdf}
-\caption{Funded \sn{options_cap20} trades. (a) Share of puts among the selector's picks by SUE decile. (b) Share of net profit by entry year.}\label{fig:optsel}
+\caption{Funded \sn{options_cap20} trades. (a) Share of puts among the selector's picks by SUE decile. (b) Share of net profit by entry year (the denominator is small, so the shares are noisy).}\label{fig:optsel}
 \end{figure}
 
-\subsection{The quote-marking error}\label{sec:quoteerror}
+\subsection{Why the earlier numbers were higher}\label{sec:quoteerror}
 
-The original backtest valued each position at days \stv{opt.checkpoints} from the contract's mid quote and, when a quote was missing, \emph{carried the previous quote forward}. \stv{opt.missing60} of picks had no mid quote at 60 days, and re-querying OptionMetrics showed that \stv{opt.zerobid} of those were not
-missing: the bid was zero, so the option had died and nobody would buy it. Carrying its last live price forward never marks a dying option down, which flatters exactly the contracts that die.
-The correction marks a zero-bid checkpoint at half the ask (or zero in the pessimistic bound) and adds a floor of one option tick of round-trip cost per share. For the 20\% book the effect is: \stv{optchain.legacy.ret} and a Sharpe ratio of
-\stv{optchain.legacy.sh} as originally reported; \stv{optchain.mark.ret} and \stv{optchain.mark.sh} with the corrected mark; \stv{optchain.floor.ret} and \stv{optchain.floor.sh} with the cost floor (\sn{options_cap20}); and
-\stv{optchain.zero.ret} and \stv{optchain.zero.sh} if dead options are worth zero (\sn{options_worst_case}). For the 30\% book the legacy figures are \sret{options_cap30_legacy} and a Sharpe ratio of \ssh{options_cap30_legacy}, against
-\sret{options_cap30} and \ssh{options_cap30} after the correction. The legacy convention \stv{sent.opt_over} for the 20\% book. Figure~\ref{fig:optaudit} shows the same trades under the three conventions. The earlier drafts' options headline
-(\sret{options_cap30_legacy} and a Sharpe ratio of \ssh{options_cap30_legacy}, the 30\% legacy book) is therefore an overstated number and appears only here and in the audit log.
+The options result has been revised three times, and each revision lowered it. The original backtest valued each position at days \stv{opt.checkpoints} from the contract's mid quote and, when a quote was missing, \emph{carried the previous quote forward}.
+\stv{opt.missing60} of picks had no mid quote at 60 days, and re-querying OptionMetrics showed that \stv{opt.zerobid} of those were not missing: the bid was zero, so the option had died and nobody would buy it. Carrying its last live price forward never marks a dying
+option down, which flatters exactly the contracts that die. Marking a dead quote at half the ask moved the 20\% book from \stv{optchain.legacy.ret} (Sharpe \stv{optchain.legacy.sh}) to \stv{optchain.mark.ret} (\stv{optchain.mark.sh}), and a floor of one option tick of round-trip cost
+per share moved it to \stv{optchain.floor.ret} (\stv{optchain.floor.sh}); this is the number earlier drafts of this paper reported as corrected (and \stv{optchain.zero.ret}, Sharpe \stv{optchain.zero.sh}, if dead options are worth zero).
+
+The last correction is the fill itself. The book had been charged a flat percentage of the mid price; it actually pays the ask when it buys and receives the bid when it sells. On the same contracts and the same deciles, bid/ask fills alone move the 20\% book
+from \stv{ladder.options_cap20.published.ret} / \stv{ladder.options_cap20.published.sharpe} to \stv{ladder.options_cap20.fix3_only_bidask.ret} / \stv{ladder.options_cap20.fix3_only_bidask.sharpe}, and the 30\% book from
+\stv{ladder.options_cap30.published.ret} / \stv{ladder.options_cap30.published.sharpe} to \stv{ladder.options_cap30.fix3_only_bidask.ret} / \stv{ladder.options_cap30.fix3_only_bidask.sharpe} (Table~\ref{tab:ladderop}). The point-in-time deciles alone,
+with mid fills, change the 20\% book from \stv{ladder.options_cap20.published.ret} to \stv{ladder.options_cap20.fix2_only_midfill.ret}, a difference small enough to be noise. The earlier drafts' options headline
+(\sret{options_cap30_legacy} and a Sharpe ratio of \ssh{options_cap30_legacy}, the 30\% book under the original convention) was therefore an artifact of the fill convention, and \sn{options_cap20} under the original convention overstated the return by a factor of
+\stv{options_cap20.over_ret} against even the pre-fix corrected number. Figure~\ref{fig:optaudit} shows the same book under four conventions.
+
+\begin{table}[t]\centering
+\caption{Options books with each fix applied in turn (return / Sharpe ratio). Source: the attribution ladder in \texttt{docs/paper/cache/ladders/options\_ladder.csv}, produced by the fixes work.}\label{tab:ladderop}
+\input{generated/tab_ladder_options.tex}
+\end{table}
 
 \begin{figure}[t]\centering
 \includegraphics[width=\linewidth]{figures/fig_options_audit.pdf}
-\caption{(a) NAV of the same Kelly trades under the legacy quote convention (carry-forward), the corrected mark and the pessimistic bound. (b) Sharpe ratios by book; red marks the overstated legacy books.}\label{fig:optaudit}
+\caption{(a) NAV of the 20\% book under the original convention, the mid-fill convention with a tick floor (reported before the fixes), the current bid/ask convention and the pessimistic bound. (b) Sharpe ratios by book and convention.}\label{fig:optaudit}
 \end{figure}
 
-\paragraph{Remaining weaknesses, unquantified.} The cost floor is a minimum, not a spread model; contracts with premiums of a few tenths of a dollar (median entry premium \stv{ot.entry_prem} across funded trades) can have quoted spreads far wider than one tick. There is no market impact, although
-the book opens about \stv{options_cap20.pos_per_year} trades a year. The first walk-forward distributions rest on \stv{kelly.warmup} quarters. Profit is concentrated in few years.
+\paragraph{Remaining weaknesses.} The Kelly selector still scores contracts at the mid while the book pays the ask, so selection and execution use different prices (re-scoring at the ask is a documented follow-up, not done). There is no market impact,
+although the book opens about \stv{options_cap20.pos_per_year} trades a year. The first walk-forward distributions rest on \stv{kelly.warmup} quarters. The caps (20\% and 30\%) and the half-Kelly multiplier were fixed before the result and were not re-chosen after
+the corrections. With a near-zero edge these dials mainly scale risk.
+
 
 %=====================================================================================
 \section{The combined strategy}\label{sec:combined}
 %=====================================================================================
 
-\subsection{Why the two books combine}
+\subsection{The diversification argument and what survives of it}
 
 Let the two sleeves have annualized volatilities $\sigma_e,\sigma_o$, correlation $\rho$, and sleeve weights $w_e,w_o$ (multiples of each sleeve's own sizing, which need not sum to one). The blend's volatility is
 \begin{equation}
@@ -921,29 +929,30 @@ Let the two sleeves have annualized volatilities $\sigma_e,\sigma_o$, correlatio
   \label{eq:blendvar}
 \end{equation}
 Over the options book's active window the daily correlation between \sn{calm_weighted} and \sn{options_cap20} is \stv{corr.eo} (monthly: \stv{corr.eo.monthly} over \stv{corr.eo.months} months); the equity sleeve's correlation with the market is \stv{corr.em} and the options
-sleeve's is \stv{corr.om}. The cross term in \eqref{eq:blendvar} is proportional to $\rho$. The correlation is low for an economic reason. Both books earn from the same events, but the equity book's short leg loses in a rally led by low-quality, heavily shorted stocks, the regime that
-produces momentum crashes \citep{DanielMoskowitz2016}, and it has no cap on that loss. A purchased put loses at most its premium, and calls on positive-surprise names participate in the rally.
+sleeve's is \stv{corr.om}. A low correlation lowers the blend's risk, which is useful only if the sleeve that is added earns a return for the risk it carries. Earlier drafts argued that it did: the options sleeve then earned
+\stv{options_cap20_prefix_fix.ret} a year at a Sharpe ratio of \stv{options_cap20_prefix_fix.sharpe}. With bid/ask fills it earns \sret{options_cap20} at \ssh{options_cap20}, so the argument now rests on a sleeve with no measurable edge. The economic reason for the low
+correlation is unchanged (the equity book's short leg loses in a rally led by low-quality, heavily shorted stocks, the regime that produces momentum crashes \citep{DanielMoskowitz2016}, while a purchased option loses at most its premium), but it is a
+reason for \emph{hedging}, not evidence of a premium.
 
 \subsection{The blends}
 
-The blends are $\sn{hedged_blend}=\stv{hedged_blend.w_calm_weighted}\times\sn{calm_weighted}+\stv{hedged_blend.w_options_cap20}\times\sn{options_cap20}$ on one NAV rebalanced daily (the validated blend; the multiples give each sleeve about equal stand-alone volatility), and
-$\sn{calm_blend}=\stv{calm_blend.w_calm_rank_tilt}\times\sn{calm_rank_tilt}+\stv{calm_blend.w_options_cap20}\times\sn{options_cap20}$ (the research blend, inheriting the in-sample status of its equity sleeve). \sn{legacy_blend} uses the overstated options sleeve and is an upper bound, not a result.
-The blend multiples are chosen so that each sleeve contributes about equal risk, which is an in-sample choice; the weights are multiples of each sleeve's own sizing, not shares of capital, because the options sleeve spends only its premium budget and the equity sleeve is margin-financed long/short.
+The blends are $\sn{hedged_blend}=\stv{hedged_blend.w_calm_weighted}\times\sn{calm_weighted}+\stv{hedged_blend.w_options_cap20}\times\sn{options_cap20}$ on one NAV rebalanced daily, and
+$\sn{calm_blend}=\stv{calm_blend.w_calm_rank_tilt}\times\sn{calm_rank_tilt}+\stv{calm_blend.w_options_cap20}\times\sn{options_cap20}$ (inheriting the in-sample status of its equity sleeve). The multiples were chosen to give each sleeve about equal stand-alone
+volatility when the options sleeve looked far stronger, and they were not re-optimised after the corrections. \sn{legacy_blend} uses the options sleeve under the original convention and is an overstated upper bound, not a result.
 
 \begin{table}[t]\centering
-\caption{The two sleeves and the three blends, with Sharpe ratios by era. Source: \texttt{results/<name>/summary.json}.}\label{tab:blend}
+\caption{The two sleeves and the blends, with Sharpe ratios by era. The blocks marked ``before the fixes'' are the saved pre-correction runs. Source: \texttt{results/<name>/summary.json}.}\label{tab:blend}
 \input{generated/tab_blend.tex}
 \end{table}
 
-\paragraph{Results.} \sn{hedged_blend} earns \sret{hedged_blend} a year at \svol{hedged_blend} volatility with a Sharpe ratio of \ssh{hedged_blend} and a maximum drawdown of \sdd{hedged_blend}; its Sharpe ratio \stv{sent.blend_vs_sleeves}
-(\ssh{calm_weighted} and \ssh{options_cap20}), and it is above the weaker sleeve's Sharpe ratio \stv{sent.blend_sleeve_in_eras}. The sleeves' era Sharpe ratios are \stv{calm_weighted.shA}, \stv{calm_weighted.shB}, \stv{calm_weighted.shC} (equity) and
-\stv{options_cap20.shA}, \stv{options_cap20.shB}, \stv{options_cap20.shC} (options): \stv{sent.sleeve_lead}. The blend's worst era has a Sharpe ratio of \stv{hedged_blend.minera}, against \stv{calm_weighted.minera} and \stv{options_cap20.minera} for the sleeves.
-The blend's beta against the market is \stv{hedged_blend.beta_mkt}, so a market hedge would add cost without removing exposure. \sn{calm_blend} earns \sret{calm_blend} at \svol{calm_blend} volatility (Sharpe \ssh{calm_blend}, drawdown \sdd{calm_blend}).
-\sn{legacy_blend}'s Sharpe ratio is \stv{blend.vs_legacy.ratio} times \sn{hedged_blend}'s; that gap is the effect of the quote-marking error on the blend.
+\paragraph{Results.} \sn{hedged_blend} has \stv{sent.blend_vs_equity}. Its Sharpe ratio \stv{sent.blend_vs_sleeves}, and it is above the weaker sleeve's \stv{sent.blend_sleeve_in_eras}. Before the corrections it earned \stv{hedged_blend_prefix_fix.ret} with a Sharpe ratio of
+\stv{hedged_blend_prefix_fix.sharpe}. The sleeves' Sharpe ratios by era are \stv{calm_weighted.shA}, \stv{calm_weighted.shB}, \stv{calm_weighted.shC} (equity) and \stv{options_cap20.shA}, \stv{options_cap20.shB}, \stv{options_cap20.shC} (options): \stv{sent.sleeve_lead}.
+The blend's beta against the market is \stv{hedged_blend.beta_mkt}. \sn{calm_blend} earns \sret{calm_blend} at \svol{calm_blend} volatility (Sharpe \ssh{calm_blend}, drawdown \sdd{calm_blend}); before the corrections \stv{calm_blend_prefix_fix.ret} and \stv{calm_blend_prefix_fix.sharpe}.
+Comparing each blend with its equity sleeve (Table~\ref{tab:blend}) is the right test of whether the options sleeve adds anything; we do not claim that it does.
 
 \begin{figure}[t]\centering
 \includegraphics[width=\linewidth]{figures/fig_nav_drawdown.pdf}
-\caption{NAV (log scale, \$10M start) and drawdowns of the validated equity book, the research equity book, the corrected options book, the validated blend and the CRSP value-weighted market, 1996 to August 2013.}\label{fig:nav}
+\caption{NAV (log scale, \$10M start) and drawdowns of the validated equity book, the research equity book, the options book, the validated blend and the CRSP value-weighted market, 1996 to August 2013.}\label{fig:nav}
 \end{figure}
 
 \subsection{Calendar years}
@@ -954,13 +963,14 @@ January to August; dashes mark years without trades.}\label{tab:calendar}
 \input{generated/tab_calendar.tex}
 \end{table}
 
-The equity book has \stv{cal.n_eq_loss_years} losing calendar year(s) in 1996--2013 (\stv{cal.eq.loss_years}); the worst was \stv{cal.eq.worst} in \stv{cal.eq.worst.year}, when the options book returned \stv{cal.op.in.eqworst}; in 2008 the equity book returned \stv{cal.eq.2008} and the options book \stv{cal.op.2008}
-(Table~\ref{tab:calendar}, Figure~\ref{fig:cal}). Two years are thin evidence of diversification: the 2009 rebound was a rally in low-quality, heavily shorted names, the regime the equity short leg is exposed to.
+The equity book has \stv{cal.n_eq_loss_years} losing calendar year(s) in 1996--2013 (\stv{cal.eq.loss_years}); the worst was \stv{cal.eq.worst} in \stv{cal.eq.worst.year}, when the options book returned \stv{cal.op.in.eqworst}; in 2008 the equity book returned \stv{cal.eq.2008} and the options book
+\stv{cal.op.2008} (Table~\ref{tab:calendar}, Figure~\ref{fig:cal}). Two years are thin evidence either way.
 
 \begin{figure}[t]\centering
 \includegraphics[width=\linewidth]{figures/fig_calendar_returns.pdf}
 \caption{Calendar-year returns of the equity book, the options book and the CRSP value-weighted market.}\label{fig:cal}
 \end{figure}
+
 
 %=====================================================================================
 \section{Capacity and the risk-budget dial}\label{sec:capacity}
@@ -972,7 +982,7 @@ Holding the volatility cost fixed, expected arithmetic return is concave in $b$,
 \end{proposition}
 
 Economically, as capital grows, the stocks with the highest drift saturate their liquidity limits first. Additional capital flows to larger, lower-drift names, while risk rises in proportion to gross exposure. The return of
-the \sn{balanced_leverage} construction at a six-times cap, swept over the base unit $b$ (Table~\ref{tab:frontier}, Figure~\ref{fig:frontiers}a), \stv{sent.sweep_peak}: it peaks at $b=\stv{sweep.peak.b}\times10^{-3}$ with a return of
+the \sn{balanced_leverage} construction at a six-times cap, swept over the base unit $b$ (Table~\ref{tab:frontier}, Figure~\ref{fig:frontiers}a; a pre-correction sweep file), \stv{sent.sweep_peak}: it peaks at $b=\stv{sweep.peak.b}\times10^{-3}$ with a return of
 \stv{sweep.peak.ret}, where \stv{sweep.peak.cap} of positions are volume-capped, and falls to \stv{sweep.last.ret} at $b=\stv{sweep.last.b}\times10^{-3}$ with \stv{sweep.last.cap} capped. The rule used to choose $b$ for the \sn{*_max}
 books (highest return subject to a Sharpe ratio of at least \stv{rule.sharpe} and a drawdown no worse than $-$\stv{rule.dd}) selects $b=\stv{sweep.rule.b}\times10^{-3}$ from this grid, in sample. \stv{sent.sweepnote}
 
@@ -988,7 +998,7 @@ books (highest return subject to a Sharpe ratio of at least \stv{rule.sharpe} an
 (green: corrected; red: overstated legacy). (c) Capital-split frontier of the equity and options sleeves from \texttt{results/portfolio/frontier.csv} (\stv{frontier.equity} with \sn{options_cap20}).}\label{fig:frontiers}
 \end{figure}
 
-Equity return is capacity-bound; options return is budget-bound. For options, to first order return and volatility scale with the premium cap $c$, which is a risk-appetite dial (Figure~\ref{fig:frontiers}b). The practical limits on the options book lie outside the backtest: quoted width, depth and market impact in single-name options.
+Equity return is capacity-bound. For options, the premium cap $c$ is a risk-appetite dial that scales risk; with the corrected fills it scales a near-zero return (Figure~\ref{fig:frontiers}b). The practical limits on the options book lie outside the backtest: quoted width, depth and market impact in single-name options.
 Among capital-split blends (sleeve weights summing to one; panel c), the Sharpe ratio runs from \stv{frontier.sh.min} to \stv{frontier.sh.max} and peaks at \stv{frontier.best.w} equity (return \stv{frontier.best.ret}, volatility \stv{frontier.best.vol}), to be compared with \sn{hedged_blend}, which uses sleeve multiples above one (return \sret{hedged_blend}, volatility \svol{hedged_blend}).
 
 %=====================================================================================
@@ -1008,10 +1018,10 @@ kurtosis $\hat\gamma_4$ of the returns:
 \end{equation}
 with Sharpe ratios in per-period units and $T$ the number of active days.
 
-\paragraph{How the trials were counted.} Every count is a count of entries in a committed file. For equity, $N=\stv{trials.eq}$: the \stv{trials.eq.runs} equity runs in \texttt{results/} (of \stv{n_registered_equity} registered equity strategies) plus the
+\paragraph{How the trials were counted.} Every count is a count of entries in a committed file. For equity, $N=\stv{trials.eq}$: the \stv{trials.eq.runs} equity runs in \texttt{results/} (the \stv{n_registered_equity} registered strategies, with their pre-correction \texttt{*\_legacy} twins, which were trials too) plus the
 \stv{trials.eq.sweeprows} rows in the \stv{trials.eq.sweepfiles} sweep files \texttt{data/sweep\_*.csv} (base unit, liquidity cap, leverage and trim sweeps for the numbered designs). The standard deviation of their Sharpe ratios is
 \stv{trials.eq.sd}. For options, $N=\stv{trials.op}$: the \stv{trials.op.runs} options runs in \texttt{results/} plus the \stv{trials.op.oldrows} rows of the \stv{trials.op.oldfiles} horizon-by-budget comparison files from before the correction (four constructions $\times$ six
-holding horizons); the standard deviation of their Sharpe ratios is \stv{trials.op.sd}, but across only the \stv{trials.op.n_corr} corrected runs it is \stv{trials.op.sd_corr}. These counts are lower bounds. The experiment tables recorded in \texttt{docs/STRATEGIES.md}
+holding horizons); the standard deviation of their Sharpe ratios is \stv{trials.op.sd}, but across only the \stv{trials.op.n_corr} runs not under the original convention it is \stv{trials.op.sd_corr}. These counts are lower bounds. The experiment tables recorded in \texttt{docs/STRATEGIES.md}
 (\stv{trials.volrows} rows of several parameter values each) are not files with Sharpe ratios and are not counted, nor are discarded designs that left no file. Table~\ref{tab:dsrsens} therefore shows how the answer moves with $N$.
 
 \begin{table}[t]\centering
@@ -1023,7 +1033,7 @@ $N^\ast$ is the number of trials at which the DSR would fall below 0.95 (same di
 \paragraph{Results.} The validated equity book \sn{calm_weighted} \stv{sent.eq_dsr} (DSR \stv{calm_weighted.dsr}); its break-even is about \stv{calm_weighted.dsr_Nstar} independent trials, against the \stv{trials.eq} counted.
 The research book \sn{calm_rank_tilt} \stv{sent.crt_dsr} the bar at the counted $N$ (DSR \stv{calm_rank_tilt.dsr}). The six-times-leveraged \sn{balanced_leverage_max} has a DSR of \stv{balanced_leverage_max.dsr} and a break-even of
 \stv{balanced_leverage_max.dsr_Nstar} trials. The options book \sn{options_cap20} \stv{sent.opt_dsr}: its DSR is \stv{options_cap20.dsr} with the dispersion of all counted trials and \stv{options_cap20.dsr_corr} with the dispersion of the corrected runs only
-(\stv{options_cap30.dsr} and \stv{options_cap30.dsr_corr} for \sn{options_cap30}). The result depends on how much dispersion across trials is assumed, and the legacy runs inflate it.
+(\stv{options_cap30.dsr} and \stv{options_cap30.dsr_corr} for \sn{options_cap30}); with a probabilistic Sharpe ratio against zero of only \stv{options_cap20.psr}, the options book does not clear a zero benchmark either, so the deflation is moot.
 The deflation does not cover choices that left no trial record: the decay-day windows, the trim and tilt, the volatility-sizing family and the exponent of \sn{calm_rank_tilt}, the options caps, and the blend multiples are all in-sample selections.
 
 \begin{table}[t]\centering
@@ -1038,25 +1048,28 @@ The deflation does not cover choices that left no trial record: the decay-day wi
 
 \subsection{Audit log: defects found}\label{sec:auditlog}
 
-Table~\ref{tab:audit} lists every defect found, with the number before and after where the saved results allow it. We report them because the \emph{direction} of each correction shows how fragile each headline number is: every correction applied here lowered or left unchanged the reported return, except that the correction to the Sharpe denominator raised Sharpe ratios.
+Table~\ref{tab:audit} lists every defect found, with before and after numbers where the saved results allow it, and Table~\ref{tab:ladder} and Figure~\ref{fig:ladder} attribute the correction of the four most recent defects fix by fix. The \emph{direction} of each correction shows how
+fragile each headline number was: every correction applied to the saved runs lowered the reported return of most books, except that the corrected hold-period estimation raised returns for \stv{ladder.n_fix4_raise} of \stv{ladder.n_books} books (a noise-level effect: the search-window estimate was not worse) and that the
+correction to the Sharpe denominator raised Sharpe ratios.
 
 \begin{table}[t]\centering
-\caption{Defects found. ``Before $\to$ after'' is return / Sharpe ratio where \texttt{results/} contains both runs; rows marked \emph{identified} are not yet applied to the numbers reported here.}\label{tab:audit}
+\caption{Defects found. ``Before $\to$ after'' is return / Sharpe ratio where \texttt{results/} (or the ladder) contains both runs.}\label{tab:audit}
 \small
-\begin{tabularx}{\linewidth}{@{}p{2.6cm}X p{4.6cm}@{}}
+\begin{tabularx}{\linewidth}{@{}p{2.6cm}X p{4.8cm}@{}}
 \toprule
 Defect & What exposed it & Effect (before $\to$ after)\\
 \midrule
-Options quotes carried forward & Dead options (zero bid) were marked at their last live mid, so a dying contract was never marked down & 20\% book: \stv{optchain.legacy.ret} / \stv{optchain.legacy.sh} $\to$ \stv{optchain.floor.ret} / \stv{optchain.floor.sh}; 30\% book: \sret{options_cap30_legacy} / \ssh{options_cap30_legacy} $\to$ \sret{options_cap30} / \ssh{options_cap30}\\
+Look-ahead in the surprise deciles & Each surprise was ranked within its announcement quarter, i.e.\ against firms that had not reported yet; now ranked against the expanding pool of strictly earlier quarters, so the first quarter (\stv{pit.dropped} events) is dropped & \sn{calm_weighted}: \stv{ladder.calm_weighted.fix1.ret} / \stv{ladder.calm_weighted.fix1.sharpe} $\to$ \stv{ladder.calm_weighted.fix12.ret} / \stv{ladder.calm_weighted.fix12.sharpe}; median over \stv{ladder.n_books} equity books \stv{ladder.med.fix2} a year; 60-day signal spread \stv{pre.spread.mkt.h60} $\to$ \stv{spread.mkt.h60}\\
+Leverage cap ignored open positions & The cap bounded only each quarter's new positions, so realized gross exposure ran above the stated cap; the cap now bounds the whole open book at sizing time & \sn{balanced_leverage_max}: \stv{ladder.balanced_leverage_max.published.ret} / \stv{ladder.balanced_leverage_max.published.sharpe} $\to$ \stv{ladder.balanced_leverage_max.fix1.ret} / \stv{ladder.balanced_leverage_max.fix1.sharpe}; median \stv{ladder.med.fix1}; days over the cap \stv{balanced_leverage_max_legacy.days_over_cap} $\to$ \stv{balanced_leverage_max.days_over_cap}\\
+Mid-price option fills & Options were bought and sold at the mid with a flat percentage cost; the book pays the ask and receives the bid & 20\% book: \stv{ladder.options_cap20.published.ret} / \stv{ladder.options_cap20.published.sharpe} $\to$ \stv{ladder.options_cap20.fix3_only_bidask.ret} / \stv{ladder.options_cap20.fix3_only_bidask.sharpe} (bid/ask fills only)\\
+Full-sample hold-period fitting & Decay days were estimated on the same history they were tested on; now estimated on the first \stv{fix.decay.pct} of announcement quarters (\stv{fix.decay.n} of \stv{fix.decay.of}) & \sn{calm_weighted}: \stv{ladder.calm_weighted.fix12.ret} $\to$ \stv{ladder.calm_weighted.all.ret}; median \stv{ladder.med.fix4} a year\\
+Options quotes carried forward & Dead options (zero bid) were marked at their last live mid & 20\% book: \stv{optchain.legacy.ret} / \stv{optchain.legacy.sh} $\to$ \stv{optchain.floor.ret} / \stv{optchain.floor.sh} (before the fill fix)\\
 Benchmark sensitivity of the long/short split & The all-announcer benchmark is biased when side and size are mixed, and it made the short leg look as good as the long leg & Long-to-short ratio \stv{sent.legs_all} (all-announcer) $\to$ \stv{ls.ratio.min} to \stv{ls.ratio.max} (size-matched)\\
-Leverage cap not binding on carried-over positions & The cap applies to each entry cohort, so open-book gross exceeds the nominal cap & \stv{audit.lev}\\
-Decile look-ahead & Deciles are ranked on the full announcement quarter's cross-section, so an early announcer is ranked against later ones & \emph{Identified}: \stv{sent.fixes_short}\\
-Full-sample hold-period fitting & Decay-day windows are estimated on the same history they are tested on & \emph{Identified}: \stv{sent.fixes_short}\\
-Sharpe denominator & Daily P\&L was once divided by initial capital instead of prior-day NAV, overstating volatility as the NAV compounded & \sn{calm_weighted}: \stv{calm_weighted.sharpe_fixed} (fixed capital) $\to$ \ssh{calm_weighted}; \sn{options_cap20}: \stv{options_cap20.sharpe_fixed} $\to$ \ssh{options_cap20}\\
+Sharpe denominator & Daily P\&L was once divided by initial capital instead of prior-day NAV, overstating volatility as the NAV compounded & \sn{calm_weighted}: \stv{calm_weighted.sharpe_fixed} (fixed capital) $\to$ \ssh{calm_weighted}\\
 EAR leakage & The day-0-to-day-1 return overlaps the first day of held P\&L; the Sharpe ratio rose with the weight on it & Sharpe ratio flat once removed; EAR not adopted (project history)\\
 Ambient beta in the return law & The selector chose calls even in D1, since 1996--2013 was a net up market & Return law built from market-adjusted returns, recentered on a trailing drift (project history)\\
 Strike units & OptionMetrics strikes were stored $\times1000$, so puts dominated even D10 at near-full Kelly fractions & Strikes divided by 1000 at source (project history)\\
-Full-sample return law & Early trades were priced with later data & Walk-forward law after an eight-quarter warm-up (project history)\\
+Full-sample return law & Early trades were priced with later data & Walk-forward law after a \stv{kelly.warmup}-quarter warm-up\\
 Independent Kelly sizing & The premium budget was exhausted by a few bets, which funded only a handful of positions & Kelly-proportional allocation of a shared budget (project history)\\
 Per-cohort premium cap & Open premium could exceed the cap across overlapping 60-day cohorts & Cap on total outstanding premium (project history)\\
 Data drift on a staged copy & Decay-day cells changed with no code change when a staged data copy was used & Results restored to the canonical data; checksum manifest and a pre-commit hook; the build pins pandas 3\\
@@ -1064,11 +1077,35 @@ Data drift on a staged copy & Decay-day cells changed with no code change when a
 \end{tabularx}
 \end{table}
 
-The first six rows can be traced to files in this repository. The remaining rows were found and fixed before the saved runs; their before/after numbers predate \texttt{results/} (and in two cases rest on the project history in \texttt{docs/HISTORY.md}),
-so we state the direction of the effect and not a number. The three rows marked \emph{identified} are the open items: \stv{sent.fixes_pending}. \input{generated/sent_equity_twins.tex}
+The first seven rows trace to files in this repository (the saved runs, their legacy twins, and the ladder). The remaining rows were found and fixed before the saved runs; their before/after numbers predate \texttt{results/}, so we state the direction of the effect and not a number.
+
+\begin{table}[t]\centering
+\caption{Attribution ladder for selected equity books: annualized return as each fix is applied in turn (open-book cap, then point-in-time deciles, then search-window decay days), with the Sharpe ratio and maximum drawdown before and after all fixes. The full list is in Table~\ref{tab:ladderall}. ``Published'' is reproduced exactly by the saved \texttt{*\_legacy} runs.
+Source: \texttt{docs/paper/cache/ladders/equity\_ladder.csv} (copied from the fixes work; see \texttt{docs/FIXES.md}).}\label{tab:ladder}
+\input{generated/tab_ladder_equity.tex}
+\end{table}
+
+\begin{figure}[t]\centering
+\includegraphics[width=\linewidth]{figures/fig_ladder.pdf}
+\caption{The fix-attribution ladder. (a) Equity: annualized return as each fix is applied in turn. (b) Options: published (mid fills), bid/ask fills only, and all fixes.}\label{fig:ladder}
+\end{figure}
+
+Across the \stv{ladder.n_books} equity books, \stv{sent.biggest_fix}. The point-in-time deciles are the largest step for \stv{ladder.n_fix2_largest} books; the open-book cap matters mainly for the six-times books (median step \stv{ladder.med.fix1}, range \stv{ladder.min.fix1} to \stv{ladder.max.fix1} percentage points); the corrected
+hold periods raise returns for \stv{ladder.n_fix4_raise} books (median \stv{ladder.med.fix4}). Taken together the corrections lower return by a median of \stv{ladder.med.total} a year, and lower the Sharpe ratio for \stv{ladder.n_sharpe_lower} of \stv{ladder.n_books} books. The corrected caps hold at sizing time but gross exposure over the current NAV can still
+exceed the cap when NAV falls (for \sn{balanced_leverage_max}, a peak of \stv{balanced_leverage_max.gross_max}$\times$ against a cap of \stv{balanced_leverage_max.cap}$\times$). \stv{sent.sweepnote}
+
+\paragraph{What the corrections did not address.} \texttt{docs/FIXES.md} records the residual issues, which this paper inherits. The constants chosen on the full sample (the \sn{conviction_tilt} trim and tilt, the \sn{*_max} base-unit multipliers, the \sn{calm_weighted} unit, the \sn{calm_rank_tilt} exponent,
+the blend weights) were deliberately not re-selected, so the corrected numbers remain partly in-sample and would most likely fall further if they were. The back-off thresholds of the hold-period cells and the leave-one-out risk benchmark still see the full sample; the weight normalisation uses quarter-wide
+group totals that include later reporters; about a quarter of positions overlap the same stock's next event and the volume cap is not aggregated across overlapping positions; the Kelly selector scores at the mid but pays the ask; survivorship and delisting handling are unknown; and the expanding-pool ranking cannot absorb
+market-wide surprise regimes, so decile sizes are uneven by quarter.
+
+\begin{table}[t]\centering
+\caption{Attribution ladder, all equity books (return as each fix is applied; Sharpe and drawdown before and after).}\label{tab:ladderall}
+\input{generated/tab_ladder_equity_all.tex}
+\end{table}
+\input{generated/sent_equity_twins.tex}
 \input{generated/tab_equity_twins.tex}
 
-For reference, the three worst days of \sn{options_cap20} are \stv{opt.worstdays} (the worst loses \stv{opt.worstday.min} of NAV in a day); we have not matched them to market events.
 
 %=====================================================================================
 \section{Limitations and what is not modelled}\label{sec:limits}
@@ -1076,41 +1113,45 @@ For reference, the three worst days of \sn{options_cap20} are \stv{opt.worstdays
 
 We list these without softening. Each is either a reason realized performance would be lower or a test still to be run.
 \begin{enumerate}
-\item \textbf{Sample period and decay.} All results are for 1996--2013, and alpha per dollar was lower in the last era in \stv{era.all.fade.n} of nine profiled books (by factors between \stv{era.all.ratio.min} and \stv{era.all.ratio.max}). A data extension and a post-publication
+\item \textbf{The corrections lowered every headline, and the numbers are still partly in-sample.} The corrected returns are in Table~\ref{tab:ladder}. The constants chosen on the full sample before the corrections (trim, tilt, base units and the six-times ceiling, the
+      \sn{calm_rank_tilt} exponent, option caps, blend multiples) were not re-selected. Re-selecting them on a search window is an open task and would most likely lower the figures further. The split-sample check of Section~\ref{sec:eqresults} predates the corrections and was not re-run.
+\item \textbf{Sample period and decay.} All results are for 1996--2013, and alpha per dollar was lower in the last era in \stv{era.all.fade.n} of nine profiled books (to between \stv{era.all.CA.min} and \stv{era.all.CA.max} of its first-era level). A data extension and a post-publication
       decay adjustment \citep{McLeanPontiff2016} are required before any capital is allocated.
-\item \textbf{Look-ahead we have identified but not removed.} Intra-quarter decile ranking and full-sample holding windows (Section~\ref{sec:auditlog}). Both flatter the reported numbers by an unknown amount.
-\item \textbf{In-sample selection.} The exponent of \sn{calm_rank_tilt}, the volatility-sizing family, the trim and tilt, the base unit and the six-times cap of the \sn{*_max} books, the options premium caps, the blend multiples, and the holding windows were chosen on the
-      sample they are reported on. The split-sample check in Section~\ref{sec:eqresults} is the only out-of-sample evidence, and the deflated Sharpe ratio of Section~\ref{sec:multiple} covers only the counted trials.
+\item \textbf{Residual look-ahead.} The corrections remove the decile look-ahead and the full-sample decay-day fit, not every use of future information: the hold-period back-off thresholds, the leave-one-out risk benchmark and the weight normalisation still see the full sample, and the
+      signal tables of Sections~\ref{sec:data}--\ref{sec:evidence} that depend on the option chain or on volatility terciles (option spreads, the volatility diagnostic) were not rebuilt on point-in-time deciles.
 \item \textbf{Borrow fees and financing (equity).} Neither is modelled, and the short leg is small-cap-heavy. The short side averages \stv{calm_weighted.short_avg}$\times$ NAV for \sn{calm_weighted}, so each 1\% a year of borrow cost removes \stv{calm_weighted.borrow_1pct} of
-      return; a fee of \stv{calm_weighted.borrow_breakeven} would remove all of it, and a uniform 5\% would leave \stv{calm_weighted.ret_at5} (the same arithmetic for \sn{balanced_leverage}: \stv{balanced_leverage.ret_at5}). Hard-to-borrow names cost more, and the model of
+      return; a fee of \stv{calm_weighted.borrow_breakeven} would remove all of it, and a uniform 5\% would leave \stv{calm_weighted.ret_at5} (for \sn{balanced_leverage}: \stv{balanced_leverage.ret_at5}). Hard-to-borrow names cost more, and the model of
       Section~\ref{sec:mechanism} predicts they are the names with the most drift. Gross exposure above NAV and the stacked blend multiples also need financing.
-\item \textbf{Market impact and capacity (equity).} The \stv{balanced_leverage.liqfrac} volume cap is a participation limit, not an impact model. \stv{calm_weighted.liqcap} of \sn{calm_weighted}'s positions and \stv{balanced_leverage_max.liqcap} of \sn{balanced_leverage_max}'s sit at the cap
+\item \textbf{Market impact and capacity (equity).} The \stv{balanced_leverage_max.liqfrac} volume cap is a participation limit, not an impact model. \stv{calm_weighted.liqcap} of \sn{calm_weighted}'s positions and \stv{balanced_leverage_max.liqcap} of \sn{balanced_leverage_max}'s sit at the cap
       \citep{FrazziniIsraelMoskowitz2018,NovyMarxVelikov2016}. Costs are \stv{cost.min}--\stv{cost.max} basis points per side by liquidity quintile.
-\item \textbf{Leverage.} The gross cap applies per entry cohort; realized open-book leverage is higher than the cap (Section~\ref{sec:engine}), and the \sn{*_max} books run at several times NAV.
-\item \textbf{Option execution.} Entries use the ask and dead quotes a half-ask mark or zero, with a flat \stv{opt.cost_pct} charge and a one-tick floor. Quoted spreads on out-of-the-money contracts are often wider, and the book opens about
-      \stv{options_cap20.pos_per_year} positions a year; capacity and impact have not been modelled. Replacing the floor with quoted bid/ask on the selected contracts at entry and exit is the most important outstanding robustness test.
+\item \textbf{Leverage and the drawdown screen.} The cap now bounds the open book at sizing time, but gross exposure over current NAV can exceed it, and the \sn{*_max} books run at several times NAV. \stv{max.n_breach} of the \stv{max.n} \sn{*_max} books now breach the
+      drawdown limit (\stv{rule.dd}) that was used to choose their size, with a worst drawdown of \stv{max.worst_dd}; they are research variants and are not presented as achievable results.
+\item \textbf{Option execution.} The book now pays the quoted ask and receives the quoted bid, which removed the measured edge; the selector still scores at the mid, there is no market impact, and the book opens about \stv{options_cap20.pos_per_year} positions a year.
 \item \textbf{Options data coverage.} 2011 is missing because its source file is structurally corrupt, so the trading-day calendar compresses across the gap, and 2013 ends in August. The matched sample is tilted toward names with liquid, longer-dated chains.
 \item \textbf{Return-law pooling.} One distribution per (decile, quarter) is shared by every stock in the decile, regardless of its own volatility.
 \item \textbf{Live universe.} The backtest trades the full CRSP event universe. A live book restricted to large stocks earns much less per dollar: for \sn{balanced_leverage}, \stv{sit.small.b} basis points in the largest company-size quintile against \stv{sit.small.a} in the smallest.
 \item \textbf{Reporting convention.} Stored summary statistics cover each book's full calendar, including idle periods before the first position; the active-period figures differ slightly (Section~\ref{sec:engine}). The equity daily series runs to \stv{calendar_end}
       while events end in 2013.
-\item \textbf{What the earlier drafts claimed that is not repeated.} The earlier drafts quoted an equity book at \stv{olddraft.eq.ret} as the strategy, an options book at \sret{options_cap30_legacy} and a Sharpe ratio of \ssh{options_cap30_legacy}, and described forward-filled missing quotes as a caveat rather than the
-      error it was. None of these is a headline here.
+\item \textbf{What the earlier drafts claimed that is not repeated.} The earlier drafts quoted an equity book at \stv{olddraft.eq.ret} as the strategy, an options book at \sret{options_cap30_legacy} and a Sharpe ratio of \ssh{options_cap30_legacy}, and a blend at
+      \stv{hedged_blend_prefix_fix.ret}. None of these is a result here.
 \end{enumerate}
+
 
 %=====================================================================================
 \section{Conclusion}\label{sec:conclusion}
 %=====================================================================================
 
-Post-earnings-announcement drift in this sample passes the tests an allocator should require. It is significant under earnings-season clustering. It survives a size/value characteristic benchmark, which \stv{sent.ffvsmkt} the spread. It is graded by firm size as limits to arbitrage predicts, and it
-appears in a second, independently priced market at roughly the magnitude implied by option elasticity. We harvest it two ways. The linear book neutralizes the unpriced exposures we could measure and earns \sret{calm_weighted} a year in its validated form
-(\sn{calm_weighted}, Sharpe \ssh{calm_weighted}) with no market beta; its research counterpart \sn{calm_rank_tilt} earns \sret{calm_rank_tilt} (Sharpe \ssh{calm_rank_tilt}), but with an exponent chosen in sample. The convex book chooses, event by event, the contract with the
-highest expected log growth and earns \sret{options_cap20} (Sharpe \ssh{options_cap20}) after the quote-marking correction, not the \stv{optchain.legacy.ret} first reported. The two have a daily correlation of \stv{corr.eo}; the validated blend earns
-\sret{hedged_blend} at a Sharpe ratio of \ssh{hedged_blend}.
+Post-earnings-announcement drift is present in this sample, and it survives the corrections: the 60-day top-minus-bottom spread with point-in-time deciles is \stv{spread.mkt.h60} (\stv{pre.spread.mkt.h60} with the within-quarter ranking), it is significant under earnings-season clustering, it survives
+a size/value characteristic benchmark (which \stv{sent.ffvsmkt} the spread), it is graded by firm size as limits to arbitrage predicts, and it appears in option premia measured at mid prices.
 
-The decomposition adds cautions that the headline numbers hide. The most profitable recipe is the same in \stv{best.n_top} of nine books (a long position in a thinly traded, low-beta stock held more than two months). \stv{sent.hbs}. In the beta-by-volatility cut the larger margin is \stv{sent.bv.larger}. Against a size-matched benchmark \stv{sent.legs}; alpha per dollar was \stv{eraA.bp} basis points in 1996--2001 and \stv{eraC.bp} in 2008--13 for \sn{balanced_leverage}. These are separate statements; the
-mechanism of Section~\ref{sec:mechanism} adds that the places where the drift is largest are the places where the costs we do not model are largest. Three corrections are identified and not yet applied, and the multiple-testing adjustment
-covers only the trials that left files. The work that remains before deployment is concrete: a walk-forward re-estimation of the holding windows, trailing-breakpoint ranking, borrow and financing costs, quote-level option execution costs, and data after 2013.
+What it is worth as a strategy is smaller than earlier drafts reported. The market-neutral equity books earn \sret{calm_weighted} (\sn{calm_weighted}, Sharpe \ssh{calm_weighted}) and, for the research book with an in-sample exponent, \sret{calm_rank_tilt} (\sn{calm_rank_tilt}, Sharpe \ssh{calm_rank_tilt}), against
+\stv{calm_weighted_legacy.ret} and \stv{calm_rank_tilt_legacy.ret} before the corrections; \stv{sent.biggest_fix}. The options book, which earlier drafts credited with an edge and a diversifying role, earns \sret{options_cap20} at a Sharpe ratio of \ssh{options_cap20} when it is filled at the ask and the bid; it \stv{sent.opt_edge}, and the previously reported edge
+was largely an artifact of mid-price fills. The blends fall accordingly: \sn{hedged_blend} earns \sret{hedged_blend} (Sharpe \ssh{hedged_blend}) and has \stv{sent.blend_vs_equity}. The levered \sn{*_max} books and the market-exposed variants earn more only by taking more risk, and
+\stv{max.n_breach} of \stv{max.n} \sn{*_max} books now breach the drawdown screen used to size them; \sn{market_boost} \stv{sent.mb_clears} the market's \stv{market.ret} over the same calendar.
+
+The decomposition adds cautions that the headline numbers hide. The most profitable recipe is the same in \stv{best.n_top} of nine books (a long position in a thinly traded, low-beta stock held more than two months). \stv{sent.hbs}. In the beta-by-volatility cut the larger margin is \stv{sent.bv.larger}. Against a size-matched benchmark
+\stv{sent.legs}; alpha per dollar was \stv{eraA.bp} basis points in 1996--2001 and \stv{eraC.bp} in 2008--13 for \sn{balanced_leverage}. The mechanism of Section~\ref{sec:mechanism} adds that the places where the drift is largest are the places where the costs we do not model are largest.
+The work that remains before deployment is concrete: re-select the in-sample constants on a search window, remove the residual look-ahead listed in Section~\ref{sec:auditlog}, add borrow, financing and impact costs, score options at the price they will pay, and extend the data beyond 2013.
 
 \vspace{1em}
 \noindent\fbox{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{\footnotesize
@@ -1142,14 +1183,16 @@ model design, and the modeling assumptions in Section~\ref{sec:limits} omit cost
 
 \paragraph{Weights.} Trim $\tau=\stv{balanced_leverage.trim}$ and tilt $\gamma=\stv{balanced_leverage.tilt}$; groups are (side, size quintile, Fama--French industry) within each announcement quarter; the weights are rescaled to a mean absolute value of $0.5$.
 \paragraph{Holding windows.} Per-cell decay days (Section~\ref{sec:decay}), from \stv{decay.min} to \stv{decay.max} trading days.
-\paragraph{Runs.} The \stv{n_runs} saved runs in \texttt{results/} were produced between \stv{runs.first} and \stv{runs.last} at git revision(s) \stv{runs.revs} under pandas \stv{runs.pandas}; results reproduce only under the pinned pandas 3 (see \texttt{requirements.txt}).
+\paragraph{Runs.} The \stv{n_runs} saved runs in \texttt{results/} were produced between \stv{runs.first} and \stv{runs.last} at git revision(s) \stv{runs.revs} under pandas \stv{runs.pandas}; results reproduce only under the pinned pandas 3 (see \texttt{requirements.txt}). \texttt{results/<name>} holds the run with all four corrections of \texttt{docs/FIXES.md}; \texttt{*\_legacy} (equity) and \texttt{*\_prefix\_fix} (options, blends) keep the pre-correction numbers, and \texttt{*\_midfill} the mid-fill options references.
+
+\paragraph{Data vintages.} The committed \texttt{data/} tables are the pre-correction vintage (within-quarter deciles). The corrected vintage was built in an isolated directory (\texttt{PEAD\_FIXED\_DATA}, default \texttt{../vintage\_fixed/data} beside the worktree) and is not committed. From it the builder recomputes the point-in-time decile tables and subsample spreads (Fama--MacBeth means, validated by reproducing the committed tables exactly from the old event file) and copies the size/book-to-market tables and the decay-day table into \texttt{docs/paper/cache/pit/}. The attribution ladders are copied from the fixes work into \texttt{docs/paper/cache/ladders/} with a provenance note. The option-spread tables, the volatility diagnostic and the SUE-reversal summary exist only in the pre-correction vintage and are labelled as such.
 
 \paragraph{Where every number comes from.}\begin{sloppypar}
 Per-book statistics: \texttt{results/<name>/summary.json} and \texttt{daily.csv.gz} (realized leverage, active-period Sharpe, calendar returns, correlations, deflated Sharpe ratios). Leaderboard checks: \texttt{results/leaderboard.json} and \texttt{leaderboard.md}.
 Alpha against the market: \texttt{results/alpha\_benchmark.csv}. Situations: \texttt{results/situations\_*.csv}. Recipes, leg and beta splits, timing and tails: \texttt{results/profiles\_*.csv}. Capital-split frontier: \texttt{results/portfolio/frontier.csv}.
 Signal evidence (Sections~\ref{sec:data}--\ref{sec:evidence}): the committed tables under \texttt{data/} (\texttt{decile\_horizon\_stats}, \texttt{spread\_horizon\_stats}, the \texttt{ff\_*} and \texttt{option\_*} versions, \texttt{subsample\_*}, \texttt{sue\_reversal\_summary.json}, \texttt{cell\_decay\_days.csv},
 \texttt{vol\_decile\_diagnostic\_summary.json}), plus \texttt{data/sweep\_*.csv} and the options comparison files for the trial count and the capacity table. Construction constants (trim, tilt, exponent, costs, grids) are read from the strategy classes and engine modules.
-Three groups of numbers need files that are not committed: the $3\times3$ beta-by-volatility cut and the per-trade options statistics (from \texttt{results/*/positions.parquet}, git-ignored) and the CRSP market series (licensed). They are recomputed whenever the main repository's data is reachable (environment variable
+Four groups of numbers need files that are not committed: the $3\times3$ beta-by-volatility cut and the per-trade options statistics (from \texttt{results/*/positions.parquet}, git-ignored), the point-in-time signal tables (corrected event file) and the CRSP market series (licensed). They are recomputed whenever the main repository's data is reachable (environment variable
 \texttt{PEAD\_MAIN\_REPO}) and the run it holds is the run in \texttt{results/}; otherwise the committed cache in \texttt{docs/paper/cache/} is used, and the build warns when the cache is stale.
 
 \end{sloppypar}
