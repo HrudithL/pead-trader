@@ -12,17 +12,17 @@ Post-earnings-announcement drift (PEAD) research: stocks keep moving in the dire
 (for example the reference book `balanced_leverage` went 6.49% -> 5.38%, Sharpe 1.30 -> 1.09, and the options books lost essentially their whole edge once filled at real bid/ask).
 Current numbers are in `results/leaderboard.md`. Old numbers are kept as `*_legacy` / `*_prefix_fix`.
 
-## 2. How the consolidation was merged (pull requests, in order)
+## 2. How the consolidation was merged (all done, 2026-10-20)
 
-| Order | PR | What | Status when this was written |
-|---|---|---|---|
-| 1 | #7 | The restructured framework (`pead/`), plain strategy names, analysis docs. Contains the former live-paper-trading and volatility branches. | open, mergeable, awaiting the owner's merge |
-| 2 | #9 | The four methodology fixes + the corrected results + `docs/FIXES.md` + refreshed docs. Stacked on #7. | open |
-| 3 | #10 | One research paper (`docs/paper/`, 46 pages), rebuilt from the corrected results; replaces #5. Stacked on #9. | open |
-| 4 | #8 | Archive of the 2026-08 optimization line + this map. Stacked on #7. | open |
-| - | #5 | Old plain-language paper PR. Superseded by #10; closed (reopenable), tag `archive/pr5-strategies-explained` keeps its commit. | closed |
-
-Stacked PRs are based on the branch below them, so each shows only its own changes. After #7 merges, GitHub retargets the next one to `main`; merge in the order above.
+| PR | What | Status |
+|---|---|---|
+| #7 | The restructured framework (`pead/`), plain strategy names, analysis docs. Contains the former live-paper-trading and volatility branches. | merged |
+| #9 | The four methodology fixes + the corrected results + `docs/FIXES.md` + refreshed docs and reports. | merged |
+| #10 | One research paper (`docs/paper/`), rebuilt from the corrected results; replaces #5. | merged |
+| #8 | Archive of the 2026-08 optimization line + this map. | merged |
+| #11 | `options_cap20/30` and `hedged_blend` relabelled `research`; what `validated` means made explicit. | merged |
+| #12 | Paper rebuilt on corrected deciles: SUE reversal, volatility sweeps, capacity sweep. The option-spread tables are still pre-correction (see section 8). | merged |
+| #5 | Old plain-language paper PR. Superseded by #10; closed, tag `archive/pr5-strategies-explained` keeps its commit. | closed |
 
 ## 3. Layout
 
@@ -79,13 +79,16 @@ tests/                   test_framework.py (engine reproduces the original scrip
 - Use the default Python 3.12 / pandas 3. pandas 2 silently produces different deciles.
 - **The committed `data/` is the PRE-fix vintage.** The corrected data vintage was built in an isolated folder; to rebuild see `docs/FIXES.md` (`python -m pead prep ... --force` with the options chain, selector on CPU takes about 90 s).
 - Switches back to the old behavior: `<name>_legacy`, `PEAD_DECILE_RANKING=within_quarter`, `PEAD_DECAY_SEARCH_FRAC=1.0`.
-- A full byte-for-byte backup of every old worktree plus a git bundle of all branches exists at `D:\PEAD_repo_backup_2026-10-18\` (outside the repo).
+- Backups (outside the repo): `D:\PEAD_repo_backup_2026-10-18\` holds a byte-for-byte copy of every old worktree and a bundle of all branches. **On 2026-10-20 the `D:` drive was not mounted** (Windows listed only `C:`), so that backup AND the raw-data masters above are unreachable until it is reattached; nothing on it was deleted. A second bundle of every branch and tag is on `C:` at `C:\Users\hrudi\Documents\BEI\_pead_backups\all_refs_2026-10-20.bundle`, and the old worktree folders themselves are on `C:` at `C:\Users\hrudi\Documents\BEI\_pead_archived_worktrees\`.
+- The corrected data vintage (git-ignored parquet) lives outside the repo at `C:\Users\hrudi\Documents\BEI\_pead_consolidation\vintage_fixed\` (plus `vintage_old`, `vintage_fix2only`, `vintage_fix3only`, `vintage_paper`, used for the attribution ladder and the paper). The repo's own `data/` is still the pre-fix vintage.
 - The live paper-trading workflow (`.github/workflows/live_paper_trading.yml`) has its schedule commented out: no `ALPACA_*` / `FINNHUB_API_KEY` repository secrets exist. To go live add the three secrets and uncomment the two cron lines.
 - The pre-commit hook blocks any staged symlink (single git call; the old per-file version deadlocked on big commits).
 
 ## 7. Where every old branch and worktree went
 
-**State on 2026-10-20:** eight old worktrees (`equity-strategies-overview-b81011`, `fund-leverage-backtest-assumptions-3d4dc8`, `gpu-equity-trading-strategy-a87ac6`, `gpu-options-master-script-888a09`, `live-paper-trading-earnings-acf39f`, `paper-strategy-mechanics-29026a`, `pead-strategy-optimization-634f65`, `scripts-reorganize-refactor-4ab9db`) were **moved, not deleted**, to `C:\Users\hrudi\Documents\BEI\_pead_archived_worktrees\` (file-for-file identical to the `D:` backup) and git's registrations were pruned. Their git-ignored derived data (for example the 25 MB of `data/event_options` files in the `scripts-reorganize-refactor` folder) is still in those folders. Delete them only when you are sure nothing in them is needed. Branch labels are left in place until the PRs merge.
+**State at the end of 2026-10-20.** Worktrees: `main`, `strategy-analysis-backtest-481b86` (now on a short-lived branch; kept because its git-ignored `results/*/positions.parquet` are the corrected position files the paper builder reads), and `strategy-evaluation-roi-74c7dd` (the owner's, protected).
+Ten former worktrees (the eight old ones plus the two temporary `consolidation-paper` / `consolidation-archive` checkouts) were **moved, not deleted**, to `C:\Users\hrudi\Documents\BEI\_pead_archived_worktrees\` and git's registrations were pruned; their git-ignored derived data is still in those folders.
+Eighteen merged local branch labels were deleted with `git branch -d`. Still present locally: `rescue/*` (4, same commits as the `archive/*` tags), `claude/options-strategy` and `claude/trading-strategies-research-a9f3ee` (unmerged, tagged), the short-lived working branch, and the ROI branch. **No remote branch has been deleted** (that needs the owner's approval).
 
 | Old branch / worktree | Content | Fate |
 |---|---|---|
@@ -105,8 +108,10 @@ tests/                   test_framework.py (engine reproduces the original scrip
 
 ## 8. Open decisions
 
-1. Merge #7, then #9, #10 and #8 (the owner's call; the automation's permission check refused to merge without review).
-2. Re-select strategy constants and blend weights on a search window (expected to lower numbers).
-3. Paper: confirm the author line, the date line and the audience (see the paper PR).
-4. Port the vol-targeted overlay / dispersion filter as registered strategies after re-testing on the corrected data.
-5. Turn the live workflow back on only after adding the three secrets.
+1. **Re-select the strategy constants and blend weights on a search window** (pick the dials on early history, test on later history). Expected to lower the numbers further.
+2. **Option-spread and option-coverage tables in the paper are still pre-correction.** Rebuilding them needs the raw OptionMetrics files (`D:\OptionMetrics\parquet`): reattach `D:` (or set `OPTIONMETRICS_DIR`), run `select_entry_contracts` and `forward_option_prices` into a new data folder, then `pead/research/options_evidence/37_decile_summary_options.py`, and add the outputs to `docs/paper/cache/`.
+3. **Make the corrected data vintage the repo's default `data/`** (moving the pre-fix one aside), so a fresh `python -m pead run all` is self-consistent. Today `data/` is pre-fix and the new options defaults cannot run on it.
+4. **Delete remote branches** that are merged or tagged (`claude/*` from the old PRs, `consolidation/*`, `claude/options-strategy`, `claude/trading-strategies-research-a9f3ee`). Push the `archive/*` tags first if you want them off this machine.
+5. Port the vol-targeted overlay / dispersion filter as registered strategies after re-testing on the corrected data.
+6. Turn the live workflow back on only after adding the three secrets (`ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `FINNHUB_API_KEY`).
+7. Delete `C:\Users\hrudi\Documents\BEI\_pead_archived_worktrees\` only when sure nothing in it is needed.
