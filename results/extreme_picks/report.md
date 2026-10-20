@@ -43,9 +43,9 @@ The textbook PEAD trade: long the best earnings-surprise decile (D10), short the
 
 Correlation of daily returns with the market: **-0.03**.
 
-- best Sharpe among equity: `calm_rank_tilt` (1.81); this one: 0.648
-- best return among equity: `market_boost_max` (0.15); this one: 0.0331
-- best Calmar among equity: `calm_rank_tilt` (0.614); this one: 0.132
+- best Sharpe among equity: `calm_rank_tilt` (1.47); this one: 0.648
+- best return among equity: `market_boost_max` (0.116); this one: 0.0331
+- best Calmar among equity: `calm_rank_tilt` (0.442); this one: 0.132
 
 ![NAV (log scale)](figures/nav.png)
 

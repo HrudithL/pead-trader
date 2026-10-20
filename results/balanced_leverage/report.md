@@ -12,7 +12,7 @@ Sector Balanced, allowed to hold up to 2.5x the account in positions
 
 Balanced Leverage -- Sector Balanced, but allowed to hold bigger positions (2.5x the account).
 
-Sector Balanced's weights, but with the 1.5x cap lifted to 2.5x (the point where it stops binding) and sizing retuned. Because sector+size neutralization already prevents concentration, the cap was protecting nothing: return rises 4.1% -> 6.5% with the Sharpe holding at ~1.3. The pure-alpha reference strategy for the repo.
+Sector Balanced's weights, but with the 1.5x cap lifted to 2.5x (the point where it stops binding) and sizing retuned. Because sector+size neutralization already prevents concentration, the cap was protecting nothing: return rises with the Sharpe holding about level (corrected run: 3.1% -> 5.4%, Sharpe 1.08 -> 1.09; the earlier 4.1% -> 6.5% / 1.3 was pre-fix). The pure-alpha reference strategy for the repo.
 
 | parameter | value |
 |---|---|
@@ -43,9 +43,9 @@ Sector Balanced's weights, but with the 1.5x cap lifted to 2.5x (the point where
 
 Correlation of daily returns with the market: **-0.02**.
 
-- best Sharpe among equity: `calm_rank_tilt` (1.81); this one: 1.09
-- best return among equity: `market_boost_max` (0.15); this one: 0.0538
-- best Calmar among equity: `calm_rank_tilt` (0.614); this one: 0.29
+- best Sharpe among equity: `calm_rank_tilt` (1.47); this one: 1.09
+- best return among equity: `market_boost_max` (0.116); this one: 0.0538
+- best Calmar among equity: `calm_rank_tilt` (0.442); this one: 0.29
 
 ![NAV (log scale)](figures/nav.png)
 

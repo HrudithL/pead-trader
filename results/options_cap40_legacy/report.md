@@ -12,17 +12,17 @@ Kelly picks, 40% cap, ORIGINAL convention: dead quotes carried forward, flat 3% 
 
 Options strategies -- Kelly-optimal contract selection around earnings.
 
-WHAT IT DOES. For every earnings announcement, look at the whole option chain (every strike, calls AND puts, ~13 contracts/event on average, up to 60) on the announcement day and buy the single contract with the highest expected LOG growth under an empirical, walk-forward distribution of the stock's 60-day return conditional on its SUE decile. The direction is never hard-coded: the math picks puts for bad surprises and calls for good ones on its own (32% puts in D1 vs 5% in D10).
+WHAT IT DOES. For every earnings announcement, look at the whole option chain (every strike, calls AND puts, ~13 contracts/event on average, up to 60) on the announcement day and buy the single contract with the highest expected LOG growth under an empirical, walk-forward distribution of the stock's 60-day return conditional on its SUE decile. The direction is never hard-coded: the math picks puts for bad surprises and calls for good ones on its own (in practice, on the corrected run, about 97% of funded trades are calls).
 
 WHY KELLY AND NOT EXPECTED VALUE. A naive "maximize E[return]" selector loves deep-OTM lottery tickets (huge payoff x tiny probability = big mean) that lose money on almost every draw. Scoring each contract by max over f of E[log(1 + f*R)] penalizes ruin: a lottery ticket is still scored, it just earns a tiny optimal fraction f* and negligible growth. The selector therefore prefers contracts whose payoff is large exactly in the scenarios the SUE decile makes likely.
 
 HOW IT IS SIZED. Only events whose best contract has positive expected log growth are traded. Each such event's size is HALF its own Kelly fraction (full Kelly over-bets when the distribution is itself an estimate), then the quarter's candidates share a premium budget (`max_premium_frac` of trailing NAV minus premium still outstanding from earlier quarters) in proportion to those fractions.
 
-WHERE THE RETURN COMES FROM (see the generated report): OTM calls on low-volatility, high-SUE stocks -- the post-announcement upside tail is under-priced relative to the drift -- diversified across ~1,200 mostly independent single-stock bets per quarter (Grinold's breadth), which is what turns a modest per-trade edge into a Sharpe of 3+.
+WHERE THE RETURN COMES FROM, AND HOW MUCH THERE IS. Filled at the quoted ask and sold at the quoted bid (the default since the 2026-10 fixes), the 20%-cap book earns about 0.3% a year at Sharpe 0.16: no measurable edge (see docs/FIXES.md and the generated report for the breakdown by moneyness, volatility and year). The pre-fix picture -- OTM calls on low-volatility, high-SUE stocks, ~1,200 single-stock bets per quarter, Sharpe above 3 -- came from the mid-fill and dead-quote conventions below, not from a real premium.
 
-THE BACKTEST CONVENTION THAT WAS WRONG, AND THE FIX. The original backtest valued a position at each checkpoint (+1, 5, 10, 20, 40, 60 trading days) from the contract's mid quote and, when the quote was missing, CARRIED THE PREVIOUS QUOTE FORWARD. 22% of picks have no quote at 60 days, and 93% of those are not missing at all: the bid is ZERO (best_offer ~ $0.10) -- the option has died and nobody will buy it. Carrying its last live price forward never marks a dying option down. The strategies below value a zero-bid checkpoint at half the ask (or at zero, for the conservative bound) using the quotes now kept by the forward-price prep stage. Effect on the 20%-premium-cap book: 8.58% / Sharpe 3.78 as originally reported -> 5.87% / 2.50 with the corrected mark -> 4.12% / 1.77 once each contract also pays at least one $0.05 tick round trip -> 2.34% / 0.99 if dead options are worth nothing.
+THE BACKTEST CONVENTIONS THAT WERE WRONG, AND THE FIXES. The original backtest valued a position at each checkpoint (+1, 5, 10, 20, 40, 60 trading days) from the contract's mid quote and, when the quote was missing, CARRIED THE PREVIOUS QUOTE FORWARD. 22% of picks have no quote at 60 days, and 93% of those (a one-year pre-fix check, not repeated) are not missing at all: the bid is ZERO (best_offer ~ $0.10) -- the option has died and nobody will buy it. Carrying its last live price forward never marks a dying option down. The strategies below value a zero-bid checkpoint at half the ask (or at zero, for the conservative bound) using the quotes now kept by the forward-price prep stage. Effect on the 20%-premium-cap book: 8.58% / Sharpe 3.78 as originally reported -> 5.87% / 2.50 with the corrected mark -> 4.12% / 1.77 once each contract also pays at least one $0.05 tick round trip -> 2.34% / 0.99 if dead options are worth nothing (all four figures pre-fix). Buying at the real ask and selling at the real bid then takes the book to 0.28% / 0.16 (corrected run).
 
-REMAINING CAVEATS: no market impact; the early walk-forward distributions rest on only 8 quarters of history; ~4,600 trades a year would meet real capacity limits; most of the profit comes from 2003 and 2013.
+REMAINING CAVEATS: no market impact; the early walk-forward distributions rest on only 8 quarters of history; ~4,000 trades a year would meet real capacity limits; what little profit there is comes from 2003 and 2013.
 
 | parameter | value |
 |---|---|
@@ -53,9 +53,9 @@ REMAINING CAVEATS: no market impact; the early walk-forward distributions rest o
 
 Correlation of daily returns with the market: **0.19**.
 
-- best Sharpe among options: `options_cap20` (1.77); this one: 3.28
-- best return among options: `options_cap30` (0.0569); this one: 0.158
-- best Calmar among options: `options_cap20` (0.298); this one: 0.662
+- best Sharpe among options: `options_cap20` (0.156); this one: 3.28
+- best return among options: `options_cap20` (0.00282); this one: 0.158
+- best Calmar among options: `options_cap20` (0.015); this one: 0.662
 
 ![NAV (log scale)](figures/nav.png)
 
@@ -193,13 +193,13 @@ Correlation of daily returns with the market: **0.19**.
 
 | case | annualized_return | annualized_vol | sharpe | max_drawdown | trades |
 |---|---|---|---|---|---|
-| as registered | 15.79% | 4.50% | 3.28 | -23.9% | 76,825 |
-| ORIGINAL convention: dead quotes carried forward, flat 3% cost | 15.79% | 4.50% | 3.28 | -23.9% | 76,825 |
-| dead quotes at half-ask, flat 3% cost (no tick floor) | 15.79% | 4.50% | 3.28 | -23.9% | 76,825 |
-| dead quotes worth zero (pessimistic bound) | 6.90% | 5.12% | 1.33 | -31.7% | 70,209 |
-| + $0.10/share minimum cost | 8.29% | 4.99% | 1.62 | -28.6% | 68,708 |
-| skip contracts under $0.25 | 9.93% | 4.11% | 2.32 | -25.9% | 61,357 |
-| skip contracts under $0.50 | 6.38% | 3.78% | 1.66 | -26.1% | 50,486 |
-| flat 10% round-trip cost | 11.08% | 4.73% | 2.24 | -29.4% | 72,823 |
+| as registered | 17.08% | 4.53% | 3.50 | -23.5% | 76,726 |
+| ORIGINAL convention: dead quotes carried forward, flat 3% cost | 17.08% | 4.53% | 3.50 | -23.5% | 76,726 |
+| dead quotes at half-ask, flat 3% cost (no tick floor) | 17.08% | 4.53% | 3.50 | -23.5% | 76,726 |
+| dead quotes worth zero (pessimistic bound) | 7.60% | 5.21% | 1.43 | -32.1% | 69,926 |
+| + $0.10/share minimum cost | 9.06% | 5.05% | 1.74 | -28.7% | 68,714 |
+| skip contracts under $0.25 | 10.85% | 4.17% | 2.49 | -26.2% | 61,078 |
+| skip contracts under $0.50 | 6.85% | 3.84% | 1.74 | -26.3% | 49,569 |
+| flat 10% round-trip cost | 12.20% | 4.77% | 2.44 | -29.1% | 73,291 |
 
 Each row re-runs the identical picks and quote history with a harsher cost of getting into the contract. A flat percentage understates the cost of $0.10-$0.50 contracts, whose bid/ask spread is often a multiple of the 3% assumed.

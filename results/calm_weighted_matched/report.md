@@ -4,7 +4,7 @@ _equity strategy | family: equity-volatility | status: validated | derived from 
 
 ## What this strategy does
 
-Calm Weighted resized so its ups and downs match Balanced Leverage exactly (4.94% a year)
+Calm Weighted resized so its ups and downs match Balanced Leverage closely (sized on the pre-fix book; same volatility to within 0.1 point after the fixes)
 
 **Why it should work.** PEAD is a stronger, cleaner signal in low-vol stocks; size positions by inverse risk.
 
@@ -12,9 +12,9 @@ Calm Weighted resized so its ups and downs match Balanced Leverage exactly (4.94
 
 Calm Weighted -- Balanced Leverage, with bigger bets on calmer stocks (sized by inverse idiosyncratic volatility).
 
-Within every (quarter, side, sector, size) cell, each event's weight is scaled by 1/ivol, so calm stocks get more capital than wild ones. Rationale: the earnings drift is worth more per unit of risk in low-vol names (the SUE x vol interaction is t = -2.4 to -2.7 in Fama-MacBeth), and the engine's cost/liquidity model charges the same bps regardless of vol. Raises Sharpe 1.30 -> 1.47 with no fitted parameter, in all three sub-eras.
+Within every (quarter, side, sector, size) cell, each event's weight is scaled by 1/ivol, so calm stocks get more capital than wild ones. Rationale: the earnings drift is worth more per unit of risk in low-vol names (the SUE x vol interaction is t = -2.4 to -2.7 in Fama-MacBeth), and the engine's cost/liquidity model charges the same bps regardless of vol. Raises Sharpe with no fitted parameter, in all three sub-eras (corrected run: Balanced Leverage 1.09 -> Calm Weighted 1.24; pre-fix 1.30 -> 1.47).
 
-`CalmWeightedMatched` re-sizes it to Balanced Leverage's exact volatility to answer "at the SAME risk, how much more return": 7.31% vs 6.49%.
+`CalmWeightedMatched` re-sizes it to Balanced Leverage's exact volatility to answer "at the SAME risk, how much more return" (corrected run: 5.83% vs 5.38%; pre-fix 7.31% vs 6.49%).
 
 | parameter | value |
 |---|---|
@@ -45,9 +45,9 @@ Within every (quarter, side, sector, size) cell, each event's weight is scaled b
 
 Correlation of daily returns with the market: **-0.05**.
 
-- best Sharpe among equity: `calm_rank_tilt` (1.81); this one: 1.18
-- best return among equity: `market_boost_max` (0.15); this one: 0.0583
-- best Calmar among equity: `calm_rank_tilt` (0.614); this one: 0.312
+- best Sharpe among equity: `calm_rank_tilt` (1.47); this one: 1.18
+- best return among equity: `market_boost_max` (0.116); this one: 0.0583
+- best Calmar among equity: `calm_rank_tilt` (0.442); this one: 0.312
 
 ![NAV (log scale)](figures/nav.png)
 

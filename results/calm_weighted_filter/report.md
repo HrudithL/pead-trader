@@ -12,7 +12,7 @@ Calm Weighted plus the Volatility Filter
 
 Volatility Filter (and Calm Weighted Filter) -- skip stock groups that have not paid, judged only on past data.
 
-Drops a (side, idio-vol tercile) cell from new entries when its own history says it has not earned its keep, judged ONLY on quarters whose positions had fully exited. Result: filtering does not help on its own (Sharpe 1.23 vs 1.30 baseline-equivalent run; the effect is a smooth gradient, not one broken cell) and adds nothing once inverse-vol sizing is on (Calm Weighted Filter 1.41 < Calm Weighted 1.47). Kept as a documented negative result: size by vol, do not filter by it.
+Drops a (side, idio-vol tercile) cell from new entries when its own history says it has not earned its keep, judged ONLY on quarters whose positions had fully exited. Result: filtering does not help on its own (corrected run: Sharpe 0.89 vs 1.09 for Balanced Leverage; pre-fix 1.23 vs 1.30; the effect is a smooth gradient, not one broken cell) and adds nothing once inverse-vol sizing is on (corrected: Calm Weighted Filter 1.08 < Calm Weighted 1.24; pre-fix 1.41 < 1.47). Kept as a documented negative result: size by vol, do not filter by it.
 
 | parameter | value |
 |---|---|
@@ -43,9 +43,9 @@ Drops a (side, idio-vol tercile) cell from new entries when its own history says
 
 Correlation of daily returns with the market: **-0.01**.
 
-- best Sharpe among equity: `calm_rank_tilt` (1.81); this one: 1.08
-- best return among equity: `market_boost_max` (0.15); this one: 0.0506
-- best Calmar among equity: `calm_rank_tilt` (0.614); this one: 0.287
+- best Sharpe among equity: `calm_rank_tilt` (1.47); this one: 1.08
+- best return among equity: `market_boost_max` (0.116); this one: 0.0506
+- best Calmar among equity: `calm_rank_tilt` (0.442); this one: 0.287
 
 ![NAV (log scale)](figures/nav.png)
 

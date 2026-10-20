@@ -43,9 +43,9 @@ Keeps Balanced Leverage's book completely untouched and holds a separate synthet
 
 Correlation of daily returns with the market: **0.94**.
 
-- best Sharpe among equity: `calm_rank_tilt` (1.81); this one: 0.895
-- best return among equity: `market_boost_max` (0.15); this one: 0.0915
-- best Calmar among equity: `calm_rank_tilt` (0.614); this one: 0.365
+- best Sharpe among equity: `calm_rank_tilt` (1.47); this one: 0.895
+- best return among equity: `market_boost_max` (0.116); this one: 0.0915
+- best Calmar among equity: `calm_rank_tilt` (0.442); this one: 0.365
 
 ![NAV (log scale)](figures/nav.png)
 

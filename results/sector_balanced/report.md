@@ -43,9 +43,9 @@ A diagnostic found Conviction Tilt's book putting up to 29% of gross weight in o
 
 Correlation of daily returns with the market: **-0.00**.
 
-- best Sharpe among equity: `calm_rank_tilt` (1.81); this one: 1.08
-- best return among equity: `market_boost_max` (0.15); this one: 0.0314
-- best Calmar among equity: `calm_rank_tilt` (0.614); this one: 0.275
+- best Sharpe among equity: `calm_rank_tilt` (1.47); this one: 1.08
+- best return among equity: `market_boost_max` (0.116); this one: 0.0314
+- best Calmar among equity: `calm_rank_tilt` (0.442); this one: 0.275
 
 ![NAV (log scale)](figures/nav.png)
 

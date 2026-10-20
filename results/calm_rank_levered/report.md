@@ -12,9 +12,9 @@ Calm Rank Tilt with its lower risk spent on larger bets (about 1.7x) and a 4x bo
 
 Calm Rank Tilt -- Balanced Leverage, tilted hard toward the calmest stocks by volatility RANK (research).
 
-Calm Weighted sized each event by 1/idiosyncratic-vol (Sharpe 1.30 -> 1.47). The attribution work showed that PEAD alpha per dollar is concentrated in low-volatility names and almost absent in the wildest tercile, and that the 1/vol weight, being linear in the vol LEVEL, only mildly demotes the high-vol tail. Weighting by (1.02 - vol percentile)^2 -- where the percentile is measured against the previous quarter's cross-section within the stock's size quintile -- demotes it hard while staying smooth:
+Calm Weighted sized each event by 1/idiosyncratic-vol (pre-fix Sharpe 1.30 -> 1.47; corrected run 1.09 -> 1.24). The attribution work showed that PEAD alpha per dollar is concentrated in low-volatility names and almost absent in the wildest tercile, and that the 1/vol weight, being linear in the vol LEVEL, only mildly demotes the high-vol tail. Weighting by (1.02 - vol percentile)^2 -- where the percentile is measured against the previous quarter's cross-section within the stock's size quintile -- demotes it hard while staying smooth:
 
-Sharpe 1.30 (Balanced Leverage) -> 1.47 (Calm Weighted) -> 1.81; max drawdown -16.6% -> -11.6%; every era improves split-sample check: exponent picked on 1996-2004 data alone (best k ~ 3) lifts 2005-2013 Sharpe 0.93 -> 1.10, the same as the full-sample best, so the gain is not an artifact of one period.
+Corrected run: Sharpe 1.09 (Balanced Leverage) -> 1.24 (Calm Weighted) -> 1.47; max drawdown -18.6% -> -17.5% -> -13.6%; every era improves (pre-fix: 1.30 -> 1.47 -> 1.81, -16.6% -> -11.6%) split-sample check: exponent picked on 1996-2004 data alone (best k ~ 3) lifts 2005-2013 Sharpe 0.93 -> 1.10 (pre-fix, not re-run), the same as the full-sample best, so the gain is not an artifact of one period.
 
 Lower volatility buys room: `calm_rank_levered` spends it on 1.7x the base unit and a 4x gross cap for ~9% a year at ~5% vol (a market-neutral book clearing the S&P 500's return in this sample). More sizing than that stops paying: the 5%-of-ADV liquidity cap starts to bind and 2008-13 Sharpe decays.
 
@@ -49,9 +49,9 @@ STATUS research: the exponent and sizing were chosen after seeing Calm Weighted'
 
 Correlation of daily returns with the market: **-0.10**.
 
-- best Sharpe among equity: `calm_rank_tilt` (1.81); this one: 1.39
-- best return among equity: `market_boost_max` (0.15); this one: 0.0807
-- best Calmar among equity: `calm_rank_tilt` (0.614); this one: 0.412
+- best Sharpe among equity: `calm_rank_tilt` (1.47); this one: 1.39
+- best return among equity: `market_boost_max` (0.116); this one: 0.0807
+- best Calmar among equity: `calm_rank_tilt` (0.442); this one: 0.412
 
 ![NAV (log scale)](figures/nav.png)
 

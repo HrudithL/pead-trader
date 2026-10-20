@@ -43,9 +43,9 @@ Extreme Picks' trade, but each leg's budget is spread evenly over the size quint
 
 Correlation of daily returns with the market: **0.01**.
 
-- best Sharpe among equity: `calm_rank_tilt` (1.81); this one: 0.81
-- best return among equity: `market_boost_max` (0.15); this one: 0.0382
-- best Calmar among equity: `calm_rank_tilt` (0.614); this one: 0.212
+- best Sharpe among equity: `calm_rank_tilt` (1.47); this one: 0.81
+- best return among equity: `market_boost_max` (0.116); this one: 0.0382
+- best Calmar among equity: `calm_rank_tilt` (0.442); this one: 0.212
 
 ![NAV (log scale)](figures/nav.png)
 

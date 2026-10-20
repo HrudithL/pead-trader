@@ -43,9 +43,9 @@ Built after diagnosing why rank-weighting had the better Sharpe but the worse re
 
 Correlation of daily returns with the market: **0.05**.
 
-- best Sharpe among equity: `calm_rank_tilt` (1.81); this one: 0.968
-- best return among equity: `market_boost_max` (0.15); this one: 0.0384
-- best Calmar among equity: `calm_rank_tilt` (0.614); this one: 0.265
+- best Sharpe among equity: `calm_rank_tilt` (1.47); this one: 0.968
+- best return among equity: `market_boost_max` (0.116); this one: 0.0384
+- best Calmar among equity: `calm_rank_tilt` (0.442); this one: 0.265
 
 ![NAV (log scale)](figures/nav.png)
 

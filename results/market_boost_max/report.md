@@ -45,9 +45,9 @@ These are generated from the base strategy classes, so a change to a base strate
 
 Correlation of daily returns with the market: **0.68**.
 
-- best Sharpe among equity: `calm_rank_tilt` (1.81); this one: 0.857
+- best Sharpe among equity: `calm_rank_tilt` (1.47); this one: 0.857
 - best return among equity: this strategy; this one: 0.116
-- best Calmar among equity: `calm_rank_tilt` (0.614); this one: 0.26
+- best Calmar among equity: `calm_rank_tilt` (0.442); this one: 0.26
 
 ![NAV (log scale)](figures/nav.png)
 

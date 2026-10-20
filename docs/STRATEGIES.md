@@ -218,7 +218,7 @@ ends in August. The earlier observation that **restricting the book to OTM calls
 
 ## 5. The hedged equity + options strategy
 
-**What the blend was meant to do.** Daily-return correlation equity-options is **-0.05** (`results/hedged_blend/report.md`; -0.06 in the comprehensive report); the options book's correlation to the market is 0.19 and the market-neutral equity book's about 0. The options book is 97% calls --
+**What the blend was meant to do.** Daily-return correlation equity-options is **-0.06** (`results/hedged_blend/summary.json`; `results/comprehensive/report.md` agrees); the options book's correlation to the market is 0.19 and the market-neutral equity book's about 0. The options book is 97% calls --
 a long-convexity, mildly bullish position -- and the equity book is market-neutral. The offset in stress years is visible but it does not rescue the blend: in 2008 `calm_weighted` made **+9.7%** while `options_cap20` lost **10.3%**, and the blend lost 9.5%; in 2009 the signs flipped (equity -11.8%, options +2.0%, blend -6.6%). Equity's return was front-loaded (`calm_weighted` averaged 12.7% a year in 1996-2000); options earned in 2003 (+11.3%) and 2013 (+15.9%) and lost in 2002, 2008 and 2012.
 
 **The blend** (`hedged_blend`): `0.8 x calm_weighted + 1.6 x options_cap20` on one NAV, daily rebalanced. The multiples were chosen (before the fixes) so each sleeve contributes
@@ -236,7 +236,7 @@ premium budget and the equity sleeve is margin-financed long/short, so both fit 
 **The corrected result: the blend is essentially its equity sleeve plus extra volatility.** `hedged_blend` earns 0.7 points less than `calm_weighted` at the same volatility, with a deeper drawdown (-21.8% vs -17.5%) and a lower Sharpe (1.09 vs 1.24). In `results/hedged_blend/report.md` the options sleeve is 63% of the blend's P&L, but that is a statement about a 0.3%-a-year book run at 1.6x on top of a 0.8x equity sleeve.
 Capital-split blends (weights summing to 1; `results/comprehensive/capital_split_frontier.csv`) tell the same story: the best in-sample split (69% equity / 31% options) has Sharpe 1.26 against 1.24 for the equity sleeve alone, and the walk-forward (out-of-sample) weights (63% / 37%) give Sharpe 1.09; the 50/50 split has a shallower drawdown (-9.0%) only because it holds half as much equity risk (2.9% return). The 3%, 5% and 8% volatility-target stacks all have Sharpe 1.01.
 
-The blend's market beta is 0.033, so **a market hedge would only add cost**; the equity sleeve is already the hedge.
+The blend's market beta is 0.018 (`results/hedged_blend/summary.json`), so **a market hedge would only add cost**; the equity sleeve is already the hedge.
 
 If the goal is to beat the S&P rather than to minimize risk, the equity side is the only lever: `market_boost` (9.2%/yr, Sharpe 0.90, DD -25%) or its aggressive variant (11.6%, Sharpe 0.86, DD -45%). The options sleeve adds nothing measurable. **We do not recommend an options sleeve or the 0.8x / 1.6x weights**; `hedged_blend` stays registered as a reference, and the sections of the generated comparison report (`results/comprehensive/report.md`) that still recommend an options sleeve predate this conclusion.
 
@@ -247,6 +247,6 @@ If the goal is to beat the S&P rather than to minimize risk, the equity side is 
 * **Market impact and capacity.** 5%-of-ADV is a participation cap, not an impact model; the options book trades ~4,000 contracts a year.
 * **Option execution beyond the quoted bid/ask**: the book now pays the real quoted spread, but at one contract-size per pick with no depth or impact model, no early exercise and no assignment.
 * **Survivorship in the live universe:** the backtest trades the full CRSP universe; live paper trading uses the S&P 500, where alpha per dollar is much lower
-  (largest size quintile: 29 bp/$ against 125 bp for the second-smallest, Balanced Leverage, section 2.2).
+  Balanced Leverage, alpha per $ by company size, both benchmarks (`results/profiles_benchmark_compare.csv`): largest quintile **29 bp** against all announcers / **31 bp** size-matched; second-smallest quintile 125 / 126 bp; smallest quintile 28 / 81 bp. The claim "large companies earn much less than the middle of the size range" holds under both benchmarks; any claim about the *smallest* companies depends on the benchmark (all-announcer 28 bp, size-matched 81 bp, real P&L only 4 bp per $).
 * **2011** (the OptionMetrics file is structurally corrupt) and the truncated **2013** in all options results.
 * **In-sample choices not re-selected after the fixes (decision D6):** Calm Weighted and Calm Rank Tilt parameters, the `_max` multipliers, the options caps and the blend weights were chosen on the same 1996-2013 sample they are reported on, with the pre-fix data. Re-selecting them on a search window is open work and would most likely lower the figures further.

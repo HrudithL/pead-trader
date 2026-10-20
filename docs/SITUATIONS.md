@@ -2,7 +2,8 @@
 
 Generated tables: `results/situations_all.csv` (every situation, every strategy), `situations_contrasts.csv` (is situation A really better than B?),
 `situations_drivers.csv` (what matters once everything is held fixed at once). Code: `pead/reporting/situations.py`; rebuild with
-`python scripts/situations_report.py && python scripts/build_situations_doc.py`. Sample 1996-2013, 72 announcement quarters.
+`python scripts/situations_report.py && python scripts/situations_facts.py && python scripts/build_situations_doc.py`. Sample 1996-2013, 71 announcement quarters.
+Every number in the prose of this document is filled in from those CSVs (and `results/situations_facts.json`, `results/profiles_benchmark_compare.csv`) by `scripts/build_situations_doc.py`; the text itself lives in `scripts/situations_intro.md`.
 
 ## How to read the tables
 
@@ -13,36 +14,35 @@ how jumpy it is, how long it was held, what the market did meanwhile, and so on.
 * **Share of alpha** -- how much of the strategy's earnings come from it. Compare with the share of money: a situation with 10% of the money and 40% of the alpha is doing four times its share.
 * **Alpha per $ traded (bp)** -- the return the earnings signal produced per dollar put to work, after trading costs, in hundredths of a percent. "Alpha" here is the return
   beyond the average company that announced that quarter, i.e. the part the surprise ranking is supposed to predict.
-* **Sure? (t)** -- how confident we can be that the real figure is above zero, computed across the 72 quarters (positions in the same quarter share the same market weather, so they are not counted as separate
+* **Sure? (t)** -- how confident we can be that the real figure is above zero, computed across the 71 quarters (positions in the same quarter share the same market weather, so they are not counted as separate
   evidence). Roughly: 2 means "probably real", 3+ means "very likely real", under 2 means "could be luck".
 * **Verdict** -- ENGINE (t >= 2.5, positive in at least 2 of 3 time periods, and earns more per dollar than the strategy's average), WORKS (t >= 2, positive in at least 2 of 3 periods),
   UNPROVEN (could be luck), LEAKS (reliably loses money). About 60 situations are tested per strategy, so a few will look good or bad by pure chance; the three-period rule is the guard against that.
 
-## What every equity strategy has in common (numbers are Balanced Leverage; the other strategies match in direction, see the cards)
+## What every equity strategy has in common (numbers are Balanced Leverage; the other strategies match in direction unless a card says otherwise)
+
+These figures come from the corrected data and use the average-announcer benchmark; see "Benchmark sensitivity" at the end for what changes under a size-matched benchmark.
 
 | Finding | The numbers | Confidence |
 |---|---|---|
-| **The money is in the hard-to-trade names.** | The largest and most heavily traded companies (size and liquidity groups 4-5) are 49% of the money but 24% and 23% of the alpha. The smallest companies are 9% of the money and 25% of the alpha (203 bp per $ against 28 bp for the largest). The thinnest-trading group is 7% of the money and 23% of the alpha (249 bp vs 22 bp). | Real: thin vs heavily traded differs by 238 bp per $ (t = 5.0), small vs large by 180 bp (t = 2.8). We cannot tell small from thin: company size and trading volume rank almost the same way (correlation 0.84). |
-| **Long holds do the work.** | Holds over 90 days are 10% of the money and 42% of the alpha (303 bp per $); holds up to 40 days are 38% of the money and 19% of the alpha (37 bp). | Real in the data (t = 4.6), **but flattered**: each cell's hold length was chosen by looking at the same 1996-2013 history. Part of this is look-ahead. |
-| **Low-beta stocks pay, high-beta stocks do not.** | Low-beta stocks: 31% of the money, 56% of the alpha (129 bp). High-beta stocks: 33% of the money, 9% of the alpha (20 bp, not distinguishable from zero). Same ordering in all three periods (low beta 192 / 142 / 40 bp, high beta -28 / 24 / 27 bp). | Strong: with everything else held fixed, one standard deviation more beta costs about 40 bp per $ (t = -3.0). |
-| **Big beats are the best single situation; bad news on the short side is spread out.** | Long D10 (biggest beats): 18% of the money, 36% of the alpha (142 bp, t = 5.3). Shorts D02-D03 earn 80-83 bp each. The weakest long groups, D07 and D09, take 20% of the money and earn 4% of the alpha. | Strong for D10. Long D07/D09 not distinguishable from zero. |
-| **Earnings season matters.** | Companies reporting in Apr-Jun and Jul-Sep: 50% of the money, 83% of the alpha (130 and 113 bp). Oct-Dec reports: 26% of the money, 14% of the alpha (40 bp). Jan-Mar reports: 25% of the money, 3% of the alpha (8 bp), but most of that is one quarter: 2009Q1 alone lost $2.85M; without 2009 the Jan-Mar figure is 64 bp. | Oct-Dec is weaker in all three periods (74 / 34 / 29 bp); Jan-Mar is weak mainly in 2008-13. But the t-stats (1.0-1.6) do not prove Oct-Mar is worse than Apr-Sep. |
-| **The edge has faded.** | 1996-2001: 136 bp per $; 2002-2007: 89 bp; 2008-2013: 33 bp. The latest period carries 46% of the money and only 21% of the alpha. | Real (early vs late differ by 110 bp, t = 3.0). |
-| **The market's direction does not matter.** | Quarter by quarter, alpha per $ is 61 bp when the market rose over 5% during the hold and 43 bp when it fell over 5% (difference t = 0.03). Quarterly alpha is uncorrelated with the market's quarterly return (-0.03). (Pooled by dollars the fall figure is higher, 130 vs 54 bp, but that rests on few quarters and is not statistically distinguishable.) | This is the market-neutral design working. |
-| **Steady, except for a few bad quarters.** | 72% of quarters make money. The best 10 of 72 quarters supply 52% of the alpha; the worst quarter (2009Q1) lost $2.85M, more than the next five worst combined. | Descriptive. |
-
-**A pattern worth knowing about, with only four examples:** in the four sharp rebound quarters after a crash (2001Q4, 2003Q2, 2009Q2, 2009Q3) the book made -28 bp against +94 bp in all other quarters.
-The damage came from the long leg (-133 bp), not from short squeezes. Four episodes are too few to call it a rule.
+| **The money is in the less-traded names, and it is trading volume more than size.** | The most heavily traded companies (liquidity groups 4-5) are 49% of the money but 28% of the alpha. The thinnest-trading group is 7% of the money and 15% of the alpha (133 bp per $ against 24 bp for the most traded). By company size the pattern is NOT steady: the smallest companies are 9% of the money and 4% of the alpha (28 bp), the second-smallest group is 19% of the money and 38% of the alpha (125 bp), and the largest group earns 29 bp. | Thin vs heavily traded differs by 129 bp per $ (t = 2.9); small vs large by only 22 bp (t = 0.3, not distinguishable from zero). Company size and trading volume rank almost the same way (correlation 0.83), so the two are hard to separate. |
+| **Long holds do the work.** | Holds over 90 days are 8% of the money and 23% of the alpha (185 bp per $); holds up to 40 days are 34% of the money and 32% of the alpha (59 bp). | Real in the data (t = 2.2), **but partly flattered**: since the fixes each cell's hold length is estimated on the first 70% of the quarters (see FIXES.md), which removes part of the look-ahead, but the back-off thresholds between cells still see the full sample. |
+| **Low-beta stocks pay, high-beta stocks do not.** | Low-beta stocks: 32% of the money, 62% of the alpha (121 bp). High-beta stocks: 33% of the money, 3% of the alpha (5 bp, t = -0.4, not distinguishable from zero). By period (1996-01 / 2002-07 / 2008-13): low beta 183 / 125 / 33 bp, high beta -90 / 30 / 9 bp. | With everything else held fixed, one standard deviation more beta costs about 47 bp per $ (t = -2.8). |
+| **Big beats are the best single situation; bad news on the short side is spread out.** | Long D10 (biggest beats): 20% of the money, 35% of the alpha (109 bp, t = 4.3). Long D09 earns 72 bp. Shorts D01-D03 earn 56, 57 and 48 bp. The weakest long groups, D07 and D08, take 14% of the money and earn 4% of the alpha (D07: -17 bp, t = -0.8). | Strong for D10. D10 beats the biggest misses (short D01) by 76 bp per $ but only at t = 1.7. Long D07/D08 are not distinguishable from zero. |
+| **Earnings season matters.** | Companies reporting in Apr-Jun and Jul-Sep: 49% of the money, 78% of the alpha (119 and 84 bp). Oct-Dec reports: 26% of the money, 17% of the alpha (40 bp). Jan-Mar reports: 25% of the money, 5% of the alpha (12 bp), but much of that is one quarter: 2009Q1 alone lost $2.84M; without 2009 the Jan-Mar figure is 55 bp. | Oct-Dec is positive in all three periods (71 / 53 / 14 bp); Jan-Mar is negative in 2008-13 (89 / 99 / -82 bp). But the t-stats of the two weak seasons (0.8 and 1.6) do not prove them worse than Apr-Sep. |
+| **The edge has faded.** | 1996-2001: 120 bp per $; 2002-2007: 82 bp; 2008-2013: 19 bp. The latest period carries 44% of the money and only 13% of the alpha. | Real (early vs late differ by 104 bp, t = 2.6); the latest period on its own has t = 0.9. |
+| **The market's direction does not clearly matter.** | Pooled by dollars, alpha per $ is 23 bp when the market rose over 5% during the hold and 97 bp when it fell over 5%. Quarter by quarter the difference (rose minus fell) is -34 bp with t = -0.17. Quarterly alpha per $ has correlation -0.11 with the market's return over the holding windows. | This is the market-neutral design working: no statistically distinguishable dependence. |
+| **Steady, except for a few bad quarters.** | 79% of quarters make money. The best 10 of 71 quarters supply 56% of the alpha; the worst quarter (2009Q1) lost $2.84M, more than the next five worst combined ($2.53M). | Descriptive. (Dollar figures here use the average-announcer alpha; `docs/STRATEGY_PROFILES.md` quotes the size-matched figure for the same quarter.) |
 
 ## Why do these situations exist?
 
 What the data supports, and what it only suggests:
 
-* **Hard-to-trade names: a plausible cause, not tested here.** The usual explanation is that small, thinly traded companies have fewer analysts and fewer professional investors watching, and trading costs deter the people who would otherwise
-  correct the mispricing, so the slow reaction to earnings lasts longer. The data matches this (alpha per dollar falls steadily from the smallest to the largest group) but cannot test the cause.
-* **Long holds: partly a measurement artifact.** In the cells where holds are long, the drift keeps building for months. But the hold length of each cell comes from the same history we then test on.
-* **Calm stocks vs jumpy stocks: the data does not cleanly say.** Calm stocks earn 88 bp per $ against 49 bp for jumpy ones when pooled by dollars (105 vs 46 bp quarter by quarter, t = 1.9, borderline). But once beta, size, liquidity and hold length are held fixed, jumpiness has no independent effect (+2 bp, t = 0.1).
-  The calm-stock advantage may really be a beta advantage: 56% of the jumpiest third of stocks are high-beta, against 13% of the calmest third (correlation 0.47). This is the most important open question for the Calm strategies.
+* **Hard-to-trade names: a plausible cause, not tested here.** The usual explanation is that thinly traded companies have fewer analysts and fewer professional investors watching, and trading costs deter the people who would otherwise
+  correct the mispricing, so the slow reaction to earnings lasts longer. The data matches this for trading volume (alpha per dollar falls steadily from the thinnest to the most heavily traded group: 133 / 81 / 80 / 47 / 24 bp) but not for company size alone (by size group: 28 / 125 / 74 / 49 / 29 bp), and it cannot test the cause.
+* **Long holds: partly a measurement artifact.** In the cells where holds are long, the drift keeps building for months. But the hold length of each cell is still estimated from history that overlaps the test period; the fixes moved the estimate to the first 70% of quarters, which helps but does not remove the problem.
+* **Calm stocks vs jumpy stocks: the data does not cleanly say.** Calm stocks earn 83 bp per $ against 29 bp for jumpy ones when pooled by dollars (95 vs 30 bp quarter by quarter, t = 2.1, borderline). But once beta, size, liquidity and hold length are held fixed, jumpiness has no independent effect (+4 bp, t = 0.2).
+  The calm-stock advantage may really be a beta advantage: 56% of the jumpiest third of stocks are high-beta, against 13% of the calmest third (correlation 0.47). `docs/STRATEGY_PROFILES.md` splits Balanced Leverage by both labels at once (`results/profiles_beta_vol_grid.csv`) and finds the same thing. This remains the most important open question for the Calm strategies.
 * **High beta being worse: unexplained.** Nothing in the data says why. One candidate is that market-adjusted returns assume a beta of 1, so a high-beta stock's relative return is full of market noise that has nothing to do with the earnings news.
 * **The seasons and the post-2008 fade: unexplained.** The fade fits the idea that more investors now trade this drift away, but the data does not test that.
 
@@ -50,16 +50,32 @@ What the data supports, and what it only suggests:
 
 1. **Frequency and weight:** how much money is in the situation, and how often does it occur (positions per year). A great situation that is 1% of the money cannot move the total.
 2. **Return per dollar and share of alpha:** compare the share of alpha with the share of money.
-3. **Sureness:** the t-stat across quarters, not across positions. A situation that made money in 55 of 72 quarters is more believable than one carried by three huge quarters.
+3. **Sureness:** the t-stat across quarters, not across positions. A situation that made money in most quarters is more believable than one carried by three huge quarters.
 4. **Consistency:** the same sign in all three time periods. A situation that only worked in 1996-2001 is probably decayed.
 5. **Is it really that situation?** Many situations are the same stocks seen from different angles (small, thin, jumpy, high-beta). The "what matters once everything is held fixed" line on each card is a regression that separates them. Where it disagrees with the simple table, trust the regression for which feature matters, and neither for causes.
-6. **Is the measurement itself clean?** The hold-length finding fails this test (look-ahead); fixing it needs the cell hold lengths re-estimated using only past data.
+6. **Is the measurement itself clean?** The hold-length finding only partly passes this test (see above); the cell hold lengths are estimated on the first 70% of quarters, not strictly out of sample.
 7. **Is it one of many comparisons?** Each strategy is cut about 60 ways. Anything that only just clears t = 2 deserves suspicion.
 
-## Benchmark sensitivity (read before relying on any by-side number)
+## Benchmark sensitivity (read before relying on any by-side or size-based number)
 
-The tables here measure alpha against the average of *all* companies that announced in the same quarter. Against that benchmark, big stocks look like losers on the long side and winners on the short side (they lag a small-cap-dominated average). A *size-matched* benchmark (average of same-size companies, same quarter) fixes this; `docs/STRATEGY_PROFILES.md` uses it.
-Single-dimension findings here survive it (thin 153 vs 136 bp, low-beta 137 vs 129, smallest companies 260 vs 203). By-side conclusions do not: against the size-matched benchmark the long leg earns about twice the short leg in every strategy, not the same.
+The tables here measure alpha against the average of *all* companies that announced in the same quarter ("all-announcer"). Against that benchmark, big stocks look like losers on the long side and winners on the short side (they lag a small-cap-dominated average). A *size-matched* benchmark (average of same-size companies, same quarter) fixes this; `docs/STRATEGY_PROFILES.md` uses it. Both, for Balanced Leverage (`results/profiles_benchmark_compare.csv`):
+
+| Cut | Share of money | Real P&L per $ (bp) | Size-matched alpha (bp) | All-announcer alpha (bp) |
+|---|---|---|---|---|
+| Whole book | 100% | 60 | 68 | 62 |
+| Long leg | 49% | 233 | 103 | 72 |
+| Short leg | 51% | -109 | 34 | 53 |
+| Smallest companies (size 1) | 9% | 4 | 81 | 28 |
+| Size 2 | 19% | 119 | 126 | 125 |
+| Size 3 | 23% | 74 | 75 | 74 |
+| Size 4 | 24% | 52 | 50 | 49 |
+| Largest companies (size 5) | 24% | 32 | 31 | 29 |
+| Thin trading | 27% | 79 | 110 | 94 |
+| Low-beta stocks | 32% | 124 | 128 | 121 |
+
+* Single-dimension findings on trading volume and beta survive the change of benchmark (thin 110 vs 94 bp; low-beta 128 vs 121 bp). **The size findings do not**: the smallest companies earn 81 bp size-matched but 28 bp against all announcers; the largest 31 vs 29 bp.
+* By-side conclusions depend on the benchmark: against all announcers the long leg earns 72 bp per $ and the short leg 53 bp; size-matched, 103 vs 34 bp. Across the nine core books the size-matched long leg earns 1.8 to 3.0 times the short leg per dollar.
+* Any argument about **capacity or the live S&P 500 universe** (where only large companies trade) therefore depends on the benchmark: use the largest-size line of the table (all-announcer 29 bp, size-matched 31 bp) and say which one is meant.
 
 ## Strategy by strategy
 
@@ -327,6 +343,6 @@ Balanced Leverage's signal with raw returns and no forced long/short match, so m
 ### Variants that share a book with the above
 
 * **Market Boost** trades exactly Balanced Leverage's positions (same table); its extra return comes from a separate half-size market position, not from any situation.
-* **Sector Balanced Max, Balanced Leverage Max and Market Boost Max** hold an identical book (same positions, same 36 bp per $); only the overlay differs.
-* **Max versions of every strategy** keep the same situations but earn roughly half the alpha per dollar (31-58 bp vs 60-97 bp), consistent with the 5%-of-volume trading limit binding about four times as often at that size and pushing money out of the thinnest stocks.
+* **Sector Balanced Max, Balanced Leverage Max and Market Boost Max** hold an identical book (same positions, same 28 bp per $); only the overlay differs.
+* **Max versions of every strategy** keep the same situations but earn less alpha per dollar (28-60 bp vs 47-81 bp for the base books), consistent with the 5%-of-volume trading limit binding more often at that size (Balanced Leverage Max: 49% of positions liquidity-capped vs 15% for Balanced Leverage; `pct_liquidity_capped` in each `summary.json`). That is an association, not a tested cause.
 * **Calm Weighted Filter, Volatility Filter, Calm Weighted Matched and Calm Rank Levered** look like their parents in every table; see `results/situations_all.csv`.
