@@ -10,9 +10,14 @@ processes (see script 35's docstring / lib.hw for the default and why it's cappe
 checkpoint parquet per year (skipped on restart if already written, same resume convention as
 scripts 35/36/41/47) plus the final combined file.
 
+Horizon 0 is the pick's OWN day-0 quote (kelly_fwd_{mid,bid,ask}_0d): the selector scored and sized the
+contract at the day-0 MID, but a long option is bought at the ASK, so the options engine needs the real
+day-0 ask (and the final checkpoint's bid) to fill honestly (OptionsSizing.fill_mode="bid_ask").
+kelly_fwd_mid_0d should equal kelly_premium -- printed as a consistency check.
+
 Output: data/event_options/optimal_forward_prices_<year>.parquet (one per year touched)
         data/event_options/optimal_forward_prices.parquet -- one row per event with entry +
-        forward mid prices for both the kelly pick and the naive pick.
+        forward mid/bid/ask prices for both the kelly pick and the naive pick (horizons 0,1,5,...,60).
 """
 import argparse
 import sys
@@ -29,6 +34,7 @@ from lib.options import scan_year_for_keys
 from pead.common.hardware import add_jobs_arg, add_force_arg
 
 HORIZONS = [1, 5, 10, 20, 40, 60]
+FETCH_HORIZONS = [0] + HORIZONS      # 0 = the pick's own day-0 quote (entry bid/ask)
 OUT_DIR = DATA_DIR / "event_options"
 
 
@@ -99,7 +105,7 @@ def main():
         oid_col = f"{which}_optionid"
         sub = picks[picks[oid_col] > 0][["event_id", "secid", "day0_date", oid_col]].copy()
         sub = sub.rename(columns={oid_col: "optionid"})
-        for h in HORIZONS:
+        for h in FETCH_HORIZONS:
             sub_h = sub.copy()
             sub_h["horizon"] = h
             sub_h["target_date"] = sub_h["day0_date"].map(lambda d: forward_date(d, h))
@@ -152,6 +158,10 @@ def main():
             if fwd_col in panel.columns:
                 panel[f"{which}_ret_fwd_{h}d"] = panel[fwd_col] / panel[entry_col] - 1.0
 
+    if "kelly_fwd_mid_0d" in panel.columns:
+        both = panel[["kelly_premium", "kelly_fwd_mid_0d"]].dropna()
+        print(f"entry-quote check: day-0 mid within 1% of kelly_premium for "
+              f"{((both.kelly_fwd_mid_0d / both.kelly_premium - 1).abs() < 0.01).mean():.1%} of {len(both):,} picks")
     out_path = OUT_DIR / f"optimal_forward_prices{tag}.parquet"
     panel.to_parquet(out_path, index=False)
     print(f"\nwrote {out_path} ({len(panel):,} rows)")

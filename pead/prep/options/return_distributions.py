@@ -83,6 +83,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from pead.common.paths import DATA_DIR, METADATA_DIR, EVENTS_DIR, RAW_EQUITY_DIR
+from pead.common.pit_rank import rank_pct
 from pead.common.volatility import event_total_vol
 
 DATA = DATA_DIR
@@ -93,20 +94,16 @@ MIN_OBS_PER_CELL_MULT = 5  # need >= n_states * this many observations in a (dec
 
 
 def build_decile(events: pd.DataFrame) -> pd.Series:
-    """Same construction as script 34/01: rank sue_analyst within announcement quarter. (This
-    within-quarter ranking convention has its own small, standard, already-project-wide
-    simplification -- a firm's precise percentile rank technically isn't knowable until every
-    same-quarter earnings report is in -- but that's a pre-existing, much milder convention used
-    everywhere else in this project, not something this script introduces; what this script fixes
-    is the much larger, multi-YEAR look-ahead of fitting the return distribution on future
-    quarters entirely, addressed below.)"""
+    """Same construction as prep/equity/build_deciles.py (shared pead.common.pit_rank): rank sue_analyst
+    against strictly earlier quarters only. Warmup-quarter events get decile 0, which no distribution
+    cell ever selects (cells are deciles 1-10)."""
     ev = events.copy()
     ev["anndats"] = pd.to_datetime(ev["anndats"])
     ev["ann_quarter"] = ev["anndats"].dt.to_period("Q")
     ev["sue_analyst_r"] = ev["sue_analyst"].round(8)
-    rank_pct = ev.groupby("ann_quarter")["sue_analyst_r"].rank(pct=True, method="average")
-    decile = np.minimum(np.ceil(rank_pct * 10), 10).astype(int)
-    decile[rank_pct <= 0] = 1
+    pct = rank_pct(ev["sue_analyst_r"], ev["ann_quarter"])
+    decile = pd.Series(np.minimum(np.ceil(pct.fillna(0.0) * 10), 10).astype(int), index=ev.index)
+    decile[(pct <= 0) & pct.notna()] = 1
     return decile
 
 

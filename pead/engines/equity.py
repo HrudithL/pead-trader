@@ -8,9 +8,17 @@ and a `Sizing` spec; the engine owns everything mechanical:
     same-day NAV, so profits can only affect sizing from the next quarter -- real compounding with no
     same-day feedback loop. A position's dollar notional is fixed for its whole life once entered.
   * Liquidity cap: no position larger than `liquidity_cap_frac` x its 21-day average dollar volume.
-  * Leverage cap: gross notional entered in a quarter is limited to `max_gross_leverage` x trailing
-    NAV, trimmed by PRIORITY (largest-conviction positions kept, smallest dropped first) instead of
-    shaving every position equally.
+  * Leverage cap: gross notional is limited to `max_gross_leverage` x trailing NAV, trimmed by PRIORITY
+    (largest-conviction positions kept, smallest dropped first) instead of shaving every position
+    equally. What the cap is measured against is `Sizing.exposure_cap`:
+      'open_book'        (default) the cap bounds the DAILY gross of the whole book: a quarter's new
+                         positions may only use the room left under the cap by positions still open
+                         from earlier quarters, on every day they will be held.
+      'open_book_qstart' like open_book but carryover is taken at its quarter-start value and the new
+                         cohort is treated as entering all at once (simpler, noticeably tighter).
+      'entry_cohort'     LEGACY: only the quarter's own new positions are compared with the cap, so
+                         overlapping holding periods let realized gross run past it (balanced_leverage_max:
+                         6x cap, 7.6x peak). Reproduces every number published before the fix.
   * Costs: per-position round-trip bps by liquidity quintile, charged at entry and again at exit.
   * P&L accrues daily on the position's own return path (market-adjusted for market-neutral books,
     raw for books that deliberately carry beta).
@@ -41,6 +49,8 @@ class Sizing:
     cap_mode: str = "priority"            # leverage-cap trimming: 'priority' (drop lowest conviction
                                           # first) | 'proportional' (shave every new position equally;
                                           # how Strategies 1-3 were originally built)
+    exposure_cap: str = "open_book"       # what the cap bounds: 'open_book' | 'open_book_qstart' | 'entry_cohort'
+                                          # (legacy: new positions only). See the module docstring.
 
 
 @dataclass
@@ -84,6 +94,49 @@ def cap_notionals(target, liq_cap, max_gross, mode="priority"):
     return out, "priority_capped", n_drop
 
 
+def cap_open_book(target, liq_cap, budget, mode, carry, ent, ext):
+    """Leverage cap for one quarter's NEW positions that respects the book already open.
+
+    carry   length-L array: gross dollars of earlier-quarter positions open on each day of the quarter
+    ent/ext each new position's first and last-held day offset inside the quarter (ext clipped to L)
+    budget  max_gross_leverage x trailing NAV
+
+    A new position is admitted only up to the smallest headroom (budget - carry - already admitted new
+    gross) over every day it will be held in the quarter, so the book's daily gross never exceeds the
+    budget at the trailing NAV the quarter was sized on. (Positions that outlive the quarter are charged
+    again as `carry` in later quarters.) 'priority' admits largest-|target| first, 'proportional' scales
+    every new position by one common factor. Returns (notional, status, n_dropped)."""
+    target, _, _ = cap_notionals(target, liq_cap, np.inf, mode)        # liquidity cap only
+    L = len(carry)
+    head = budget - carry
+    if mode == "proportional":
+        prof = np.zeros(L + 1)
+        np.add.at(prof, ent, np.abs(target))
+        np.add.at(prof, ext, -np.abs(target))
+        prof = np.cumsum(prof)[:L]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = np.where(prof > 0, head / prof, np.inf)
+        s = float(np.clip(ratio.min() if L else 1.0, 0.0, 1.0))
+        return target * s, ("ok" if s >= 1.0 else "priority_capped"), 0
+    used = np.zeros(L)                                                  # new gross admitted so far, per day
+    out = np.zeros_like(target)
+    n_drop, trimmed = 0, False
+    for j in np.argsort(-np.abs(target), kind="stable"):
+        want = abs(target[j])
+        if want == 0:
+            continue
+        room = (head[ent[j]:ext[j]] - used[ent[j]:ext[j]]).min() if ext[j] > ent[j] else want
+        give = min(want, max(room, 0.0))
+        if give < want:
+            trimmed = True
+        if give <= 0:
+            n_drop += 1
+            continue
+        out[j] = np.sign(target[j]) * give
+        used[ent[j]:ext[j]] += give
+    return out, ("priority_capped" if trimmed else "ok"), n_drop
+
+
 def run_equity_backtest(uni: EquityUniverse, weight: np.ndarray, sizing: Sizing) -> EquityRun:
     full = uni.events
     assert len(weight) == len(full), "weight must align with universe.events"
@@ -101,6 +154,9 @@ def run_equity_backtest(uni: EquityUniverse, weight: np.ndarray, sizing: Sizing)
     n_q = len(uq)
     qmap = {q: i for i, q in enumerate(uq)}
     qcode_of_day = np.array([qmap[q] for q in quarter_of])
+    q_first = np.searchsorted(qcode_of_day, np.arange(n_q + 1))        # first calendar-day index of each quarter
+    if sizing.exposure_cap not in ("open_book", "open_book_qstart", "entry_cohort"):
+        raise ValueError(f"unknown exposure_cap {sizing.exposure_cap!r}")
 
     entry_q = pos["day0_date"].dt.to_period("Q").map(qmap).to_numpy()
     exit_q = pos["exit_date"].dt.to_period("Q").map(qmap).to_numpy()
@@ -134,8 +190,22 @@ def run_equity_backtest(uni: EquityUniverse, weight: np.ndarray, sizing: Sizing)
         note, n_drop = "ok", 0
         if q_mask.any():
             idx = np.flatnonzero(q_mask)
-            q_not, note, n_drop = cap_notionals(weight[idx] * base_unit, liq_cap[idx],
-                                                sizing.max_gross_leverage * trailing_nav, sizing.cap_mode)
+            budget = sizing.max_gross_leverage * trailing_nav
+            tgt = weight[idx] * base_unit
+            if sizing.exposure_cap == "entry_cohort":                    # legacy: ignores what is already open
+                q_not, note, n_drop = cap_notionals(tgt, liq_cap[idx], budget, sizing.cap_mode)
+            elif sizing.exposure_cap == "open_book_qstart":
+                carry = float(np.abs(notional[(entry_q < qi) & (exit_q >= qi)]).sum())
+                q_not, note, n_drop = cap_notionals(tgt, liq_cap[idx], max(budget - carry, 0.0), sizing.cap_mode)
+            else:
+                d0, L = q_first[qi], q_first[qi + 1] - q_first[qi]
+                held = (notional != 0) & (entry_cal < d0) & (exit_cal > d0)
+                diff = np.zeros(L + 1)
+                diff[0] = np.abs(notional[held]).sum()
+                np.add.at(diff, np.minimum(exit_cal[held] - d0, L), -np.abs(notional[held]))
+                q_not, note, n_drop = cap_open_book(
+                    tgt, liq_cap[idx], budget, sizing.cap_mode, np.cumsum(diff)[:L],
+                    np.clip(entry_cal[idx] - d0, 0, L), np.clip(exit_cal[idx] - d0, 0, L))
             notional[idx] = q_not
             base_at_entry[idx] = base_unit
         s, e = bounds[qi], bounds[qi + 1]
@@ -192,6 +262,9 @@ def run_equity_backtest(uni: EquityUniverse, weight: np.ndarray, sizing: Sizing)
     liquidity_capped = (np.abs(weight * base_at_entry) > np.abs(notional) + 1e-6) & (base_at_entry > 0)
     summary.update(
         base_unit_fraction=sizing.base_unit_fraction, max_gross_leverage=sizing.max_gross_leverage,
+        exposure_cap=sizing.exposure_cap,
+        max_gross_over_nav=float(np.nanmax(gross_exp / nav)),             # realized, vs the stated cap
+        pct_days_over_cap=float(np.mean(gross_exp / nav > sizing.max_gross_leverage + 1e-9)),
         n_positions=int((notional != 0).sum()), n_long=int((notional > 0).sum()), n_short=int((notional < 0).sum()),
         avg_gross_exposure=float(gross_exp.mean()), avg_leverage_vs_initial_capital=float(gross_exp.mean() / cap0),
         avg_net_exposure_frac_of_gross=float(np.nanmean(net_exp / np.where(gross_exp == 0, np.nan, gross_exp))),

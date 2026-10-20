@@ -40,9 +40,9 @@ Sleeve results come from the strategy registry itself (re-run in-process, ~secon
 
 Correlation of daily returns with the market: **0.10**.
 
-- best Sharpe among portfolio: `calm_blend` (2.5); this one: 3.21
-- best return among portfolio: `calm_blend` (0.124); this one: 0.142
-- best Calmar among portfolio: `calm_blend` (0.802); this one: 1.44
+- best Sharpe among portfolio: `calm_blend` (1.28); this one: 3.21
+- best return among portfolio: `calm_blend` (0.058); this one: 0.142
+- best Calmar among portfolio: `calm_blend` (0.288); this one: 1.44
 
 ![NAV (log scale)](figures/nav.png)
 

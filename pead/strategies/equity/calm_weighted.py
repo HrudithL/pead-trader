@@ -3,11 +3,11 @@
 Within every (quarter, side, sector, size) cell, each event's weight is scaled by 1/ivol, so calm
 stocks get more capital than wild ones. Rationale: the earnings drift is worth more per unit of risk
 in low-vol names (the SUE x vol interaction is t = -2.4 to -2.7 in Fama-MacBeth), and the engine's
-cost/liquidity model charges the same bps regardless of vol. Raises Sharpe 1.30 -> 1.47 with no fitted
-parameter, in all three sub-eras.
+cost/liquidity model charges the same bps regardless of vol. Raises Sharpe with no fitted
+parameter, in all three sub-eras (corrected run: Balanced Leverage 1.09 -> Calm Weighted 1.24; pre-fix 1.30 -> 1.47).
 
 `CalmWeightedMatched` re-sizes it to Balanced Leverage's exact volatility to answer "at the SAME risk, how
-much more return": 7.31% vs 6.49%."""
+much more return" (corrected run: 5.83% vs 5.38%; pre-fix 7.31% vs 6.49%)."""
 import numpy as np
 
 from pead.engines.equity import Sizing
@@ -38,5 +38,5 @@ class CalmWeighted(EquityStrategy):
 class CalmWeightedMatched(CalmWeighted):
     name = "calm_weighted_matched"
     parent = "calm_weighted"
-    description = "Calm Weighted resized so its ups and downs match Balanced Leverage exactly (4.94% a year)"
+    description = "Calm Weighted resized so its ups and downs match Balanced Leverage closely (sized on the pre-fix book; same volatility to within 0.1 point after the fixes)"
     sizing = Sizing(base_unit_fraction=0.003468808347716693, max_gross_leverage=2.5)

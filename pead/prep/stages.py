@@ -114,6 +114,18 @@ def closure(names):
     return order
 
 
+def resolve_device(device):
+    """'auto' -> 'cuda' only if cupy imports AND a CUDA device exists, else 'cpu'. Resolved ONCE per run so
+    every GPU-tiered stage gets a concrete value (the scripts' own argparse accepts only cpu|cuda)."""
+    if device != "auto":
+        return device
+    try:
+        import cupy as cp
+        return "cuda" if cp.cuda.runtime.getDeviceCount() > 0 else "cpu"
+    except Exception:
+        return "cpu"
+
+
 def _cmd(stage, device, jobs, force):
     cmd = [sys.executable, str(HERE / stage.script)]
     if "device" in stage.flags:
@@ -126,6 +138,7 @@ def _cmd(stage, device, jobs, force):
 
 
 def run(selected, with_deps=False, force=False, device="auto", jobs=4, io_parallel=2, max_workers=None):
+    device = resolve_device(device)
     order = closure(selected) if with_deps else list(selected)
     todo = [n for n in order if force or not is_done(BY_NAME[n])]
     skipped = [n for n in order if n not in todo]

@@ -66,7 +66,12 @@ def load_result(name):
     d = RUNS_DIR / name
     payload = json.loads((d / "summary.json").read_text())
     daily = pd.read_csv(d / "daily.csv.gz", parse_dates=["date"])
-    q = pd.read_csv(d / "quarterlog.csv") if (d / "quarterlog.csv").exists() else pd.DataFrame()
+    q = pd.DataFrame()                       # portfolio blends write an empty quarterlog.csv: tolerate empty or missing
+    if (d / "quarterlog.csv").exists():
+        try:
+            q = pd.read_csv(d / "quarterlog.csv")
+        except pd.errors.EmptyDataError:
+            pass
     pos = pd.read_parquet(d / "positions.parquet") if (d / "positions.parquet").exists() else None
     summary = payload.pop("summary")
     payload.pop("run", None)

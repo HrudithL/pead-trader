@@ -2,8 +2,8 @@
 
 Drops a (side, idio-vol tercile) cell from new entries when its own history says it has not earned its
 keep, judged ONLY on quarters whose positions had fully exited. Result: filtering does not help on its
-own (Sharpe 1.23 vs 1.30 baseline-equivalent run; the effect is a smooth gradient, not one broken
-cell) and adds nothing once inverse-vol sizing is on (Calm Weighted Filter 1.41 < Calm Weighted 1.47). Kept as a documented
+own (corrected run: Sharpe 0.89 vs 1.09 for Balanced Leverage; pre-fix 1.23 vs 1.30; the effect is a smooth gradient, not one broken
+cell) and adds nothing once inverse-vol sizing is on (corrected: Calm Weighted Filter 1.08 < Calm Weighted 1.24; pre-fix 1.41 < 1.47). Kept as a documented
 negative result: size by vol, do not filter by it."""
 import numpy as np
 

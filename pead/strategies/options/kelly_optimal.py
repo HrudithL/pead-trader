@@ -4,7 +4,7 @@ WHAT IT DOES. For every earnings announcement, look at the whole option chain (e
 puts, ~13 contracts/event on average, up to 60) on the announcement day and buy the single contract
 with the highest expected LOG growth under an empirical, walk-forward distribution of the stock's
 60-day return conditional on its SUE decile. The direction is never hard-coded: the math picks puts
-for bad surprises and calls for good ones on its own (32% puts in D1 vs 5% in D10).
+for bad surprises and calls for good ones on its own (in practice, on the corrected run, about 97% of funded trades are calls).
 
 WHY KELLY AND NOT EXPECTED VALUE. A naive "maximize E[return]" selector loves deep-OTM lottery
 tickets (huge payoff x tiny probability = big mean) that lose money on almost every draw. Scoring
@@ -17,23 +17,25 @@ Each such event's size is HALF its own Kelly fraction (full Kelly over-bets when
 itself an estimate), then the quarter's candidates share a premium budget (`max_premium_frac` of
 trailing NAV minus premium still outstanding from earlier quarters) in proportion to those fractions.
 
-WHERE THE RETURN COMES FROM (see the generated report): OTM calls on low-volatility, high-SUE stocks
--- the post-announcement upside tail is under-priced relative to the drift -- diversified across
-~1,200 mostly independent single-stock bets per quarter (Grinold's breadth), which is what turns a
-modest per-trade edge into a Sharpe of 3+.
+WHERE THE RETURN COMES FROM, AND HOW MUCH THERE IS. Filled at the quoted ask and sold at the quoted bid (the default
+since the 2026-10 fixes), the 20%-cap book earns about 0.3% a year at Sharpe 0.16: no measurable edge (see docs/FIXES.md
+and the generated report for the breakdown by moneyness, volatility and year). The pre-fix picture -- OTM calls on
+low-volatility, high-SUE stocks, ~1,200 single-stock bets per quarter, Sharpe above 3 -- came from the mid-fill and
+dead-quote conventions below, not from a real premium.
 
-THE BACKTEST CONVENTION THAT WAS WRONG, AND THE FIX. The original backtest valued a position at each
+THE BACKTEST CONVENTIONS THAT WERE WRONG, AND THE FIXES. The original backtest valued a position at each
 checkpoint (+1, 5, 10, 20, 40, 60 trading days) from the contract's mid quote and, when the quote was
-missing, CARRIED THE PREVIOUS QUOTE FORWARD. 22% of picks have no quote at 60 days, and 93% of those are not
+missing, CARRIED THE PREVIOUS QUOTE FORWARD. 22% of picks have no quote at 60 days, and 93% of those (a one-year pre-fix check, not repeated) are not
 missing at all: the bid is ZERO (best_offer ~ $0.10) -- the option has died and nobody will buy it. Carrying
 its last live price forward never marks a dying option down. The strategies below value a zero-bid checkpoint
 at half the ask (or at zero, for the conservative bound) using the quotes now kept by the forward-price prep
 stage. Effect on the 20%-premium-cap book: 8.58% / Sharpe 3.78 as originally reported -> 5.87% / 2.50 with
 the corrected mark -> 4.12% / 1.77 once each contract also pays at least one $0.05 tick round trip ->
-2.34% / 0.99 if dead options are worth nothing.
+2.34% / 0.99 if dead options are worth nothing (all four figures pre-fix). Buying at the real ask and selling at the
+real bid then takes the book to 0.28% / 0.16 (corrected run).
 
 REMAINING CAVEATS: no market impact; the early walk-forward distributions rest on only 8 quarters of
-history; ~4,600 trades a year would meet real capacity limits; most of the profit comes from 2003 and 2013.
+history; ~4,000 trades a year would meet real capacity limits; what little profit there is comes from 2003 and 2013.
 """
 import numpy as np
 
@@ -58,7 +60,7 @@ class KellyOptimal(OptionsStrategy):
     def params(self):
         s = self.sizing
         return dict(hold_horizon=s.hold_horizon, half_kelly=s.half_kelly, max_premium_frac=s.max_premium_frac,
-                    roundtrip_cost_pct=s.roundtrip_cost_pct, dead_quote_mark=s.dead_quote_mark,
+                    roundtrip_cost_pct=s.roundtrip_cost_pct, dead_quote_mark=s.dead_quote_mark, fill_mode=s.fill_mode,
                     min_roundtrip_cost_per_share=s.min_roundtrip_cost_per_share, min_premium=s.min_premium)
 
     def eligible(self, uni):
@@ -72,19 +74,27 @@ class KellyOptimal(OptionsStrategy):
         return BacktestResult(self.name, "options", daily, summary, qlog, positions, self.meta())
 
 
-# Realistic costing: the corrected zero-bid mark (engine default) plus at least one $0.05 option tick of round-trip
-# cost per share on top of the 3% -- cheap contracts cannot be traded for 3% of a $0.10 premium.
-register_instance(KellyOptimal("options_cap20", 0.20, min_roundtrip_cost_per_share=0.05,
-                               description="Kelly picks, 20% premium cap, dead quotes marked at half-ask, >= $0.05/share cost"))
-register_instance(KellyOptimal("options_cap30", 0.30, parent="options_cap20", min_roundtrip_cost_per_share=0.05,
-                               description="Kelly picks, 30% premium cap, dead quotes marked at half-ask, >= $0.05/share cost"))
+# Real fills: buy at the day-0 ask, sell at the final checkpoint's bid, dead quotes at half-ask. The quoted spread IS the
+# cost, so the flat 3% and the $0.05 tick floor are off (set either > 0 to charge extra friction on top).
+register_instance(KellyOptimal("options_cap20", 0.20, roundtrip_cost_pct=0.0,
+                               description="Kelly picks, 20% premium cap, bought at the ask / sold at the bid, dead quotes at half-ask"))
+register_instance(KellyOptimal("options_cap30", 0.30, parent="options_cap20", roundtrip_cost_pct=0.0,
+                               description="Kelly picks, 30% premium cap, bought at the ask / sold at the bid, dead quotes at half-ask"))
 # The conservative bound: a dying option is worth nothing (liquidating means hitting the zero bid).
 register_instance(KellyOptimal("options_worst_case", 0.20, parent="options_cap20", status="research",
-                               min_roundtrip_cost_per_share=0.05, dead_quote_mark="zero_bid_zero",
+                               roundtrip_cost_pct=0.0, dead_quote_mark="zero_bid_zero",
                                description="options_cap20 with dead quotes worth zero -- the pessimistic bound"))
+# MID-FILL reference: the previous headline convention (mid in / mid out, 3% + >= $0.05/share flat cost, dead quotes at
+# half-ask: 4.12% / Sharpe 1.77). Kept so that number stays reproducible and the size of the fill fix stays visible.
+register_instance(KellyOptimal("options_cap20_midfill", 0.20, parent="options_cap20", status="reference", fill_mode="mid",
+                               min_roundtrip_cost_per_share=0.05,
+                               description="options_cap20 with the previous convention: mid fills, flat 3% + >= $0.05/share cost"))
+register_instance(KellyOptimal("options_cap30_midfill", 0.30, parent="options_cap20_midfill", status="reference", fill_mode="mid",
+                               min_roundtrip_cost_per_share=0.05,
+                               description="options_cap30 with the previous convention: mid fills, flat 3% + >= $0.05/share cost"))
 # As ORIGINALLY reported (dead quotes carried forward at their last live price, flat 3% cost). Kept so the old
 # headline numbers stay reproducible and so the size of the convention's effect stays visible -- not for use.
 for _cap, _par in ((0.20, None), (0.30, "options_cap20_legacy"), (0.40, "options_cap20_legacy")):
     register_instance(KellyOptimal(f"options_cap{int(_cap * 100)}_legacy", _cap, parent=_par, status="reference",
-                                   dead_quote_mark="carry_last",
+                                   dead_quote_mark="carry_last", fill_mode="mid",
                                    description=f"Kelly picks, {int(_cap * 100)}% cap, ORIGINAL convention: dead quotes carried forward, flat 3% cost"))

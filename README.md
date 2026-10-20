@@ -33,12 +33,14 @@ python -m pytest tests -q
 
 | Strategy | Return | Vol | Sharpe | Max DD | Note |
 |---|---|---|---|---|---|
-| `balanced_leverage` | 6.5% | 4.9% | 1.30 | -16.6% | the equity reference |
-| `calm_weighted` | 6.7% | 4.5% | 1.47 | -15.6% | validated equity alpha sleeve |
-| `calm_rank_tilt` | 7.1% | 3.8% | 1.81 | -11.6% | research |
-| `market_boost` | 10.1% | 10.5% | 0.97 | -23.2% | alpha + 0.5x market: clears the S&P |
-| `options_cap20` | 4.1% | 2.3% | 1.77 | -13.8% | corrected options book (was reported as 8.6% / 3.8) |
-| `hedged_blend` | 11.3% | 4.8% | 2.25 | -16.7% | 0.8x `calm_weighted` + 1.6x `options_cap20`, one NAV |
+| `balanced_leverage` | 5.4% | 4.9% | 1.09 | -18.6% | the equity reference (was reported as 6.5% / 1.30) |
+| `calm_weighted` | 5.6% | 4.5% | 1.24 | -17.5% | validated equity alpha sleeve (was 6.7% / 1.47) |
+| `calm_rank_tilt` | 6.0% | 4.0% | 1.47 | -13.6% | research (was 7.1% / 1.81) |
+| `market_boost` | 9.2% | 10.4% | 0.90 | -25.1% | alpha + 0.5x market: no longer clears the S&P (9.9%) (was 10.1% / 0.97) |
+| `options_cap20` | 0.3% | 1.9% | 0.16 | -18.9% | options bought at the ask / sold at the bid: the edge is gone (mid-fill reference `options_cap20_midfill`: 4.4% / 1.85; originally reported 8.6% / 3.8) |
+| `hedged_blend` | 4.9% | 4.5% | 1.09 | -21.8% | 0.8x `calm_weighted` + 1.6x `options_cap20`, one NAV (was 11.3% / 2.25; weights not re-optimised) |
+
+**The numbers above are the corrected ones.** Four methodology defects (leverage cap, decile look-ahead, option fills at mid, holding periods fitted on the full sample) overstated every earlier headline; see [`docs/FIXES.md`](docs/FIXES.md) for what changed, the per-fix ladder, and how to reproduce the old numbers (`<name>_legacy`). Strategy constants were not re-selected, so these are still partly in-sample.
 
 Short-borrow fees, financing and market impact are not modeled; see STRATEGIES.md section 6.
 

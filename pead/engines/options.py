@@ -10,7 +10,14 @@ change, not a model. Sizing mirrors the equity engine's discipline:
     candidates and collapses the book to ~46 funded trades).
   * The budget is `max_premium_frac` x trailing NAV MINUS premium still outstanding from positions
     carried over from earlier quarters, so the cap holds across overlapping holding periods.
-  * Contracts are whole lots of 100; a flat round-trip cost (% of premium) is charged at entry.
+  * Contracts are whole lots of 100. Fills (OptionsSizing.fill_mode):
+      'bid_ask' (default) buy at the day-0 ASK, sell at the BID of the final checkpoint (a zero bid is
+                handled by dead_quote_mark); the spread is the cost, so the flat round-trip % and tick
+                floor below are normally set to 0 (any value given is charged on top as extra friction).
+      'mid'     LEGACY: buy and sell at the mid and charge a flat round-trip cost (% of premium, with an
+                optional per-share floor) at entry -- every result published before the fill fix.
+    Interim checkpoints are never transacted, so they stay at mid (they only drive the daily P&L path;
+    entry-fill -> mids -> exit-fill telescopes exactly to the realized trade P&L).
 
 Returns the NAV series, the per-position P&L (which side, which decile, which strike), and a daily
 call-leg / put-leg P&L split for attribution.
@@ -34,6 +41,7 @@ class OptionsSizing:
     roundtrip_cost_pct: float = 0.03
     min_roundtrip_cost_per_share: float = 0.0   # absolute floor (e.g. one $0.05 tick) under the % cost
     min_premium: float = 0.0                    # skip contracts whose mid is below this (penny options)
+    fill_mode: str = "bid_ask"                  # 'bid_ask' (ask in, bid out) | 'mid' (legacy: mid fills + flat cost)
     dead_quote_mark: str = "zero_bid_half_ask"  # how to value a checkpoint where the bid is ZERO (nobody will buy):
                                                 # 'zero_bid_half_ask' -> half the ask (a few cents, ~0); 'zero_bid_zero' -> 0 (liquidating means hitting the zero bid); 'carry_last' ->
                                                 # the previous live quote (the ORIGINAL backtest convention, which
@@ -49,7 +57,16 @@ def run_options_backtest(panel: pd.DataFrame, calendar: np.ndarray, sizing: Opti
     active = panel["kelly_growth"].to_numpy() > 0
     if eligible is not None:
         active = active & eligible
-    entry_mid = panel["kelly_premium"].to_numpy()
+    entry_mid = panel["kelly_premium"].to_numpy()                 # day-0 mid: what the selector scored and filters use
+    ask0, bid0 = "kelly_fwd_ask_0d", "kelly_fwd_bid_0d"
+    use_quotes = sizing.fill_mode == "bid_ask"
+    if use_quotes and ask0 not in panel.columns:
+        raise ValueError("fill_mode='bid_ask' needs kelly_fwd_ask_0d / kelly_fwd_bid_0d: rebuild with "
+                         "`python -m pead prep forward_prices_optimal --force`, or use fill_mode='mid'")
+    entry_px = entry_mid.copy()                                   # price actually paid per share
+    if use_quotes:
+        a = panel[ask0].to_numpy()
+        entry_px = np.where(np.isfinite(a) & (a > 0), a, entry_mid)
     kelly_frac = panel["kelly_fraction"].to_numpy() * sizing.half_kelly
     day0 = pd.to_datetime(panel["day0_date"]).to_numpy().astype("datetime64[D]")
     entry_cal = np.searchsorted(cal_d, day0)
@@ -60,15 +77,20 @@ def run_options_backtest(panel: pd.DataFrame, calendar: np.ndarray, sizing: Opti
     idx_all = np.flatnonzero(valid)
     n_pos = len(idx_all)
 
-    cols = [entry_mid[idx_all]]
+    cols = [entry_px[idx_all]]
     for h in checkpoints:
         c = f"kelly_fwd_mid_{h}d"
         mid = panel[c].to_numpy()[idx_all] if c in panel.columns else np.full(n_pos, np.nan)
         bc, ac = f"kelly_fwd_bid_{h}d", f"kelly_fwd_ask_{h}d"
-        if sizing.dead_quote_mark in ("zero_bid_half_ask", "zero_bid_zero") and bc in panel.columns and ac in panel.columns:
+        if bc in panel.columns and ac in panel.columns:
             bid, ask = panel[bc].to_numpy()[idx_all], panel[ac].to_numpy()[idx_all]
-            dead = np.isnan(mid) & (bid == 0) & (ask > 0)
-            mid = np.where(dead, ask / 2.0 if sizing.dead_quote_mark == "zero_bid_half_ask" else 0.0, mid)
+            if sizing.dead_quote_mark in ("zero_bid_half_ask", "zero_bid_zero"):
+                dead = np.isnan(mid) & (bid == 0) & (ask > 0)
+                mid = np.where(dead, ask / 2.0 if sizing.dead_quote_mark == "zero_bid_half_ask" else 0.0, mid)
+            if use_quotes and h == checkpoints[-1]:
+                # the position is SOLD here: it fills at the bid, not the mid. A zero bid keeps the dead-quote
+                # mark above (half-ask / zero / carry_last); a missing quote keeps the last mark.
+                mid = np.where(np.isfinite(bid) & (bid > 0), bid, mid)
         cols.append(mid)
     price = pd.DataFrame(np.column_stack(cols)).ffill(axis=1).to_numpy()
     deltas = np.diff(price, axis=1)
@@ -102,16 +124,16 @@ def run_options_backtest(panel: pd.DataFrame, calendar: np.ndarray, sizing: Opti
         qstart = np.flatnonzero(qcode_of_day == qi)[0]
         still_open = (entry_q < qi) & (exit_cal >= qstart)
         outstanding = float(np.sum(contracts_all[idx_all[still_open]] * CONTRACT_MULTIPLIER
-                                   * entry_mid[idx_all[still_open]]))
+                                   * entry_px[idx_all[still_open]]))
         if len(q_glob):
             qk = kelly_frac[q_glob]
             budget = max(0.0, sizing.max_premium_frac * trailing_nav - outstanding)
             target = (qk / qk.sum()) * budget if qk.sum() > 0 else np.zeros_like(qk)
-            lots = np.floor(target / (CONTRACT_MULTIPLIER * entry_mid[q_glob]))
+            lots = np.floor(target / (CONTRACT_MULTIPLIER * entry_px[q_glob]))
             contracts_all[q_glob] = lots
-            per_share = np.maximum(entry_mid[q_glob] * sizing.roundtrip_cost_pct, sizing.min_roundtrip_cost_per_share)
+            per_share = np.maximum(entry_px[q_glob] * sizing.roundtrip_cost_pct, sizing.min_roundtrip_cost_per_share)
             entry_cost[q_glob] = lots * CONTRACT_MULTIPLIER * per_share
-        added = float(np.sum(contracts_all[q_glob] * CONTRACT_MULTIPLIER * entry_mid[q_glob])) if len(q_glob) else 0.0
+        added = float(np.sum(contracts_all[q_glob] * CONTRACT_MULTIPLIER * entry_px[q_glob])) if len(q_glob) else 0.0
         outstanding_after = outstanding + added
         max_outstanding_frac = max(max_outstanding_frac, outstanding_after / trailing_nav if trailing_nav > 0 else 0.0)
         s, e = bounds[qi], bounds[qi + 1]
@@ -138,7 +160,7 @@ def run_options_backtest(panel: pd.DataFrame, calendar: np.ndarray, sizing: Opti
                           "pnl_call": pnl_call, "pnl_put": pnl_put})
 
     funded = contracts_all[idx_all] > 0
-    prem = contracts_all[idx_all] * CONTRACT_MULTIPLIER * entry_mid[idx_all]
+    prem = contracts_all[idx_all] * CONTRACT_MULTIPLIER * entry_px[idx_all]
     gross = np.bincount(rep_local, weights=flat_pnl, minlength=n_pos)
     positions = panel.iloc[idx_all].assign(
         contracts=contracts_all[idx_all], premium_paid=prem, cost=entry_cost[idx_all], gross_pnl=gross,
@@ -148,7 +170,8 @@ def run_options_backtest(panel: pd.DataFrame, calendar: np.ndarray, sizing: Opti
 
     summary = summarize(daily, initial_capital)
     have_quotes = f"kelly_fwd_bid_{checkpoints[-1]}d" in panel.columns
-    summary.update(dead_quote_mark=sizing.dead_quote_mark if have_quotes else "carry_last (no bid/ask columns in input)",
+    n_ask = int((np.isfinite(panel[ask0].to_numpy()[idx_all]) & (panel[ask0].to_numpy()[idx_all] > 0)).sum()) if use_quotes else 0
+    summary.update(fill_mode=sizing.fill_mode, n_entries_filled_at_ask=n_ask, dead_quote_mark=sizing.dead_quote_mark if have_quotes else "carry_last (no bid/ask columns in input)",
                    hold_horizon_days=sizing.hold_horizon, n_positions_eligible=int(n_pos),
                    n_positions_sized=int(funded.sum()), half_kelly_multiplier=sizing.half_kelly,
                    assumed_roundtrip_cost_pct=sizing.roundtrip_cost_pct, max_premium_frac=sizing.max_premium_frac,

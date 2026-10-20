@@ -55,15 +55,15 @@ register_instance(PortfolioStrategy(
     "hedged_blend",
     {"calm_weighted": 0.8, "options_cap20": 1.6},
     "Market-neutral inverse-vol equity book (0.8x) + corrected-quote Kelly options book (1.6x), on one NAV",
-    "The sleeves are uncorrelated with each other (about -0.05) and with the market (~0 / 0.18): equity alpha earned most "
-    "of its return in 1996-2003 and made +10% in 2008 when the options book lost; options earned most after 2003. "
-    "Weights set so each sleeve contributes equal stand-alone risk, scaled to ~5% portfolio volatility.",
+    "The sleeves are nearly uncorrelated with each other and with the market, so a blend can diversify. After the fixes the options "
+    "sleeve earns about nothing, so the blend is essentially its equity sleeve (see docs/STRATEGIES.md section 5). "
+    "Weights (set before the fixes, not re-optimised) gave each sleeve equal stand-alone risk at ~5% portfolio volatility.",
     parent="calm_weighted"))
 
 register_instance(PortfolioStrategy(
     "calm_blend",
     {"calm_rank_tilt": 0.9, "options_cap20": 1.6},
-    "The same blend with the stronger research equity sleeve (calm_rank_tilt: Sharpe 1.8)",
+    "The same blend with the stronger research equity sleeve (calm_rank_tilt)",
     "As hedged_blend, with the volatility-rank equity book as the alpha sleeve.",
     parent="hedged_blend", status="research"))
 
