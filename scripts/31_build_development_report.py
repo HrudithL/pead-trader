@@ -226,12 +226,13 @@ this in practice: blend the alpha into a multi-factor book and add market exposu
 <i>separate</i> position on top of an untouched alpha book (a "130/30"-style structure), rather
 than distorting the alpha signal itself to let beta leak in.""")
 
-h3("6a. Strategy 6 + 0.5x market beta overlay -- the recommended way")
+h3("6a. Strategy 6 + 0.5x market beta overlay -- the institutional way to add exposure")
 body("""Strategy 6's alpha book is left completely untouched. A separate, synthetic market-index
 position sized to 0.5x the strategy's own trailing NAV is held alongside it, rebalanced on the
 same quarterly cadence with its own small transaction cost. Result: <b>10.08% return</b>, squarely
 inside a 10-15% equity-like target band, with a meaningfully shallower drawdown and better Sharpe
-than simply holding the market outright over the same period.""")
+than simply holding the market outright over the same period. (This static-sizing design is later
+superseded by a vol-targeted version of the same idea -- see Stage 7.)""")
 
 h3("6b. Strategy 7 -- the other way, and why it's a cautionary result")
 body("""The alternative way to let some market exposure through is to stop forcing the long leg's
@@ -287,6 +288,124 @@ history.""")
 
 story.append(PageBreak())
 
+# ============================== STAGE 7: VOL-TARGETED RISK MANAGEMENT ==============================
+h2("Stage 7: pushing return further -- why leverage doesn't work, and what does")
+body("""With Strategy 6+beta established as the return-focused recommendation, the natural next
+question was whether its 10.08% return could be pushed meaningfully higher while keeping Sharpe
+and drawdown in a similar range. Two of the obvious levers were tested first, precisely because
+they're the ones people reach for first, and both turned out to already be accounted for or to not
+be free:""")
+body("""&bull; <b>Raising the alpha book's own leverage further</b> was already tested in Stage 4:
+the cap sweep showed return and Sharpe both flatten out completely by about 2.0-2.5x, because the
+book's own diversification (not the cap) is what's actually limiting it. Re-running a
+base_unit_fraction sizing sweep directly on Strategy 6's own sector+size-neutral book (rather than
+the pre-neutralization signal the original sizing sweep used) confirmed this holds here too: a
+modest elbow exists around base_unit_fraction=0.004 (+0.8pp return over the current 0.003), but
+Sharpe drops from 0.99 to 0.88 and max drawdown deepens from -17.3% to -20.8% to get it --
+a real cost, not a free improvement, and a worse trade than the vol-targeting result below.<br/>
+&bull; <b>Making the beta overlay's static 0.5x notional bigger</b> just mixes the portfolio
+further toward simply holding the market outright (9.94% return, Sharpe 0.59, -55.5% max drawdown
+over the same window) -- more of the overlay's size directly imports more of the market's own
+worse risk-adjusted profile, not a free scaling.""")
+
+body("""The alternative tested is <b>volatility targeting</b> (the same idea behind Moreira &amp;
+Muir's 2017 "volatility-managed portfolios" result): instead of a fixed notional every quarter,
+scale the position by (a target volatility level) / (that position's own trailing realized
+volatility), so exposure shrinks automatically heading into a turbulent period and grows back in a
+calm one. This was applied two ways: to the beta overlay's own notional (scaled by trailing market
+volatility), and separately to the alpha book's own notional (scaled by the alpha book's own
+trailing volatility) -- both using a 63-trading-day trailing window, clipped to [0.5x, 2.0x], with
+the target level calibrated to the sample's own average trailing volatility so the AVERAGE exposure
+stays comparable to the static design (a genuine risk-timing comparison, not a comparison against
+a different average market exposure).""")
+
+fig(FIG / "18_voltarget_nav_curves.png", width=5.6*inch)
+caption("""Figure 3. The fully vol-managed variant (thick green line) tracks above the static
+overlay for most of the sample and recovers from the 2008-2009 drawdown faster -- the position
+had already been scaled down heading into it.""")
+
+body("""Vol-targeting the overlay alone improved every metric versus the static design: 11.00%
+return (vs. 10.08%), Sharpe 1.03 (vs. 0.97), max drawdown -18.5% (vs. -23.2%). Vol-targeting the
+alpha book alone told a more nuanced story: return and Sharpe both improved (10.74%, 1.00), but
+max drawdown got slightly <i>worse</i> (-24.4%) -- a useful diagnostic in its own right, showing
+that scaling the alpha book's exposure by its own trailing volatility isn't automatically
+risk-reducing in isolation. Combining both -- <b>Strategy 6-fully-vt</b> -- resolved that
+regression and produced the best result of this research pass: <b>11.58% return, Sharpe 1.06, max
+drawdown -17.9%</b>, beating the static-overlay baseline on all three metrics simultaneously. This
+supersedes the plain static overlay as the recommended way to reach a higher, more market-like
+return -- see the Recommendation section of <i>PEAD_Strategy_Showcase.pdf</i> for the full
+comparison table and per-variant profiles.""")
+
+story.append(PageBreak())
+
+# ============================== STAGE 8: NEW SIGNAL RESEARCH ==============================
+h2("Stage 8: scoping a genuinely new signal, without a new data pull")
+body("""Stage 7 established that pushing return further isn't about leverage or a bigger overlay.
+The other lever discussed was <b>breadth</b>: the Fundamental Law of Active Management
+(IR ~ IC x sqrt(breadth)) says raising the risk-adjusted return of the alpha book itself needs a
+genuinely independent signal, not another way to size or overlay the existing one. An audit of the
+raw data already pulled for this project (no new WRDS query) found three untouched candidates:
+IBES analyst estimate revisions and dispersion (raw_wrds/ibes/statsumu_epsus.parquet -- IBES's own
+consensus summary, never opened by any prior script), a Compustat quarterly revenue field
+(fundq.parquet's saleq, sitting next to the book-equity field that <i>is</i> used), and
+sue_seasonal (a second earnings-surprise measure, already computed, used until now only as an
+appendix robustness cut).""")
+
+body("""Each was tested the way this project already tests candidate signals (scripts/27's
+two-part template): a standalone Fama-MacBeth predictive check first, then an actual blended
+trading-weight test through the full position-level engine -- not treated as a pass on statistical
+significance alone.""")
+
+h3("Two more dead ends, despite real precedent")
+body("""<b>sue_seasonal</b> is standalone significant (a top-bottom quintile spread with t=3.25 on
+60-day forward returns) -- but blending it into the weight construction made return, Sharpe, and
+drawdown monotonically <i>worse</i> at every blend weight tested. It measures the same earnings
+event as sue_analyst through a different expectations model (correlation 0.30), and apparently
+adds conflicting noise rather than complementary information once blended in.""")
+body("""<b>Revenue surprise</b> (built the same seasonal-random-walk way as sue_seasonal, since no
+analyst revenue estimates exist in this data pull) is the best-precedented candidate on paper --
+Jegadeesh &amp; Livnat (2006) find revenue surprise adds incremental drift beyond EPS surprise --
+but here it was only marginally significant standalone (t=1.47, and a double sort against SUE
+decile showed no clean pattern) and, like sue_seasonal, made the blended strategy monotonically
+worse. <b>Analyst revisions</b> (net up/down revisions from the same IBES file) fared similarly:
+weak and unevenly-covered standalone, and a clean monotonic decline in the blend test. Both are
+documented negative results, the same way EAR and SUE-reversal were.""")
+
+h3("Dispersion: a risk filter, not a new alpha signal")
+body("""<b>Analyst estimate dispersion</b> (the spread of analyst estimates around the consensus,
+also from statsumu_epsus.parquet) produced a genuine but counterintuitive result. Standalone, a
+quintile sort of forward returns by dispersion is completely flat (t=-0.43) -- it has no
+directional predictive power on its own, unlike every other candidate tested. Yet blending it into
+the trim/tilt weight construction at a modest weight (0.05-0.25) held Sharpe in a ~1.28-1.32
+plateau while max drawdown steadily improved from -17.3% to -9.4%.""")
+body("""Before trusting that, a composition check compared the average size quintile, liquidity
+quintile, and dollar volume of the book at blend weight 0 versus 0.20: all three were essentially
+unchanged, ruling out "disguised size/liquidity quality filter" as the explanation. The most
+plausible mechanism instead: dispersion measures how much analysts disagree about the very
+estimate a surprise is measured against, so a high-dispersion event's surprise is measured against
+a noisier consensus and is more likely to reflect that noise than real information. Downweighting
+those positions is a <b>risk/variance filter</b>, not a return-predictive tilt -- the same category
+of result as Strategy 5's sector-neutrality (a better risk-adjusted profile, not more expected
+return), and described that way deliberately.""")
+
+fig(FIG / "21_strategy8_comparison_bars.png", width=5.6*inch)
+caption("""Figure 4. Strategy 8 (dispersion blend weight 0.20) gives up 0.36pp of return relative
+to Strategy 6 for a matching-or-better Sharpe and a drawdown less than two-thirds as deep -- the
+shallowest of any strategy in this project. Combining it with the vol-targeted overlay
+(rightmost bars) does not beat Strategy 6-fully-vt.""")
+
+body("""<b>Strategy 8</b> (scripts/39) bakes this in at blend weight 0.20, chosen from where the
+Sharpe plateau and drawdown improvement both look strongest: <b>5.96% return, Sharpe 1.30, max
+drawdown -10.8%</b> -- the shallowest drawdown of any strategy in this project, at a Sharpe
+matching Strategy 6's best. The natural follow-up question -- does this compound with Stage 7's
+vol-targeted overlay? -- was tested directly (scripts/40) rather than assumed: it does not. Strategy
+8 + the vol-targeted overlay comes out worse than Strategy 6-fully-vt on every metric (10.58% /
+0.98 / -20.0% vs. 11.58% / 1.06 / -17.9%), despite Strategy 8 alone having a much shallower
+drawdown than Strategy 6 alone. Reported as tested, not smoothed over: Strategy 8's value is as an
+alternative pure-alpha choice, not as an ingredient for the overlay combination.""")
+
+story.append(PageBreak())
+
 # ============================== SUMMARY TIMELINE ==============================
 h2("The whole arc, in order")
 cell_style = ParagraphStyle(name="Cell", parent=styles["Normal"], fontSize=8.2, leading=10.4)
@@ -307,25 +426,39 @@ timeline_rows = [
      "The other way to add exposure -- found to leak far more beta than intended (cautionary)"),
     ("Dead end", "EAR signal blend", "Caught its own look-ahead bug; flat Sharpe once fixed -- not adopted"),
     ("Dead end", "SUE lag-4 reversal test", "Data shows persistence (+0.05), not reversal -- not adopted"),
+    ("7. Strategy 6-fully-vt", "Vol-target the alpha book and the beta overlay (quarterly, trailing 63d vol)",
+     "Leverage/bigger-overlay sizing sweeps confirmed no free return left; vol-targeting improved return, Sharpe, and drawdown together"),
+    ("Dead end", "sue_seasonal, revenue surprise, analyst revisions",
+     "All 3 tested via the full blend-weight engine; each made the strategy worse despite real or literature-backed standalone signal -- not adopted"),
+    ("8. Strategy 8", "Blend in analyst-dispersion rank (weight 0.20)",
+     "Dispersion has no standalone predictive power but acts as a risk filter when blended; shallowest drawdown of any strategy built"),
 ]
 timeline = [["Stage", "What changed", "Why"]] + [[cell(s), cell(w), cell(y)] for s, w, y in timeline_rows]
 story.append(make_table(timeline, col_widths=[1.15*inch, 2.35*inch, 2.85*inch], fontsize=8.2))
 
 story.append(Spacer(1, 0.25*inch))
 h2("Where this leaves the project")
-body("""Strategy 6 (pure alpha) and Strategy 6 + 0.5x beta overlay are the two designs recommended
-for live consideration, for the reasons laid out in Stage 5. Full performance numbers for every
-strategy are in <i>PEAD_Strategy_Showcase.pdf</i>; the underlying evidence that the earnings-drift
-effect being traded is real, and not an artifact of risk exposure or a narrow subsample, is in
-<i>PEAD_Report.pdf</i>.""")
+body("""Strategy 6, Strategy 8, and Strategy 6-fully-vt are the three designs recommended for live
+consideration: Strategy 6 and Strategy 8 as alternative pure-alpha choices (trade 0.5pp of return
+for a much shallower drawdown, or don't), and Strategy 6-fully-vt as the higher-return choice --
+confirmed, not just assumed, to remain the best return-oriented design after testing whether
+Strategy 8 could improve on it in combination (Stage 8: it doesn't). Full performance numbers for
+every strategy are in <i>PEAD_Strategy_Showcase.pdf</i>; the underlying evidence that the
+earnings-drift effect being traded is real, and not an artifact of risk exposure or a narrow
+subsample, is in <i>PEAD_Report.pdf</i>.""")
 
 story.append(Spacer(1, 0.3*inch))
 rule()
 caption("""Sources: README.md's documented strategy evolution, data/sweep_strategy4_leverage.csv,
-data/sue_reversal_summary.json, data/sue_reversal_by_decile.csv, and the sector-concentration and
-EAR diagnostics printed by scripts/21_leverage_and_improvements.py, scripts/22_sector_neutral_and_cadence.py,
-and scripts/27_ear_signal_diagnostic.py. Scripts: scripts/20_strategy4_tilted.py through
-scripts/28_sue_reversal_test.py, scripts/29_v2_strategy_charts.py, scripts/31_build_development_report.py.""")
+data/sweep_strategy6_sizing.csv, data/sue_reversal_summary.json, data/sue_reversal_by_decile.csv,
+and the sector-concentration and EAR diagnostics printed by scripts/21_leverage_and_improvements.py,
+scripts/22_sector_neutral_and_cadence.py, and scripts/27_ear_signal_diagnostic.py. Scripts:
+scripts/20_strategy4_tilted.py through scripts/28_sue_reversal_test.py,
+scripts/33_strategy6_beta_overlay_voltarget.py, scripts/34_strategy6_voltarget_combined.py,
+scripts/35_strategy6_sizing_sweep.py, scripts/36_revision_dispersion_diagnostic.py,
+scripts/37_revenue_surprise_diagnostic.py, scripts/38_sue_seasonal_diagnostic.py,
+scripts/39_strategy8_dispersion_filter.py, scripts/40_strategy8_beta_overlay_voltarget.py,
+scripts/29_v2_strategy_charts.py, scripts/31_build_development_report.py.""")
 
 doc = SimpleDocTemplate(str(OUT), pagesize=letter,
                          leftMargin=0.75*inch, rightMargin=0.75*inch,

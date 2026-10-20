@@ -145,5 +145,105 @@ fig.tight_layout()
 fig.savefig(FIG / "17_sue_reversal.png", dpi=200)
 plt.close(fig)
 
+
+# ---------- Vol-targeted risk management extension: Strategy 6 family ----------
+VOLTARGET_STRATS = [
+    ("strategy6",                             "6. Pure alpha (no overlay)",            "#3f6fa8"),
+    ("strategy6_beta050",                     "6+beta. Static 0.5x overlay (current)", "#a83f3f"),
+    ("strategy6_beta050_voltarget",           "6+beta-vt. Vol-targeted overlay",       "#d4954a"),
+    ("strategy6_voltarget_alpha_staticoverlay", "6-vt-alpha. Vol-targeted alpha, static overlay", "#7f3fa8"),
+    ("strategy6_fully_voltarget",             "6-fully-vt. Fully vol-managed",         "#2f9f5f"),
+]
+
+fig, ax = plt.subplots(figsize=(8.6, 4.8))
+for key, label, color in VOLTARGET_STRATS:
+    df = pd.read_csv(DATA / f"backtest_v2_{key}.csv", parse_dates=["date"])
+    df = df[df["date"] >= "1996-01-01"]
+    lw = 2.0 if key == "strategy6_fully_voltarget" else 1.4
+    ax.plot(df["date"], df["nav"] / 1e6, linewidth=lw, color=color, label=label)
+ax.axhline(10, color="#888888", linewidth=0.8, linestyle="--")
+ax.set_xlabel("Date")
+ax.set_ylabel("NAV ($M)")
+ax.set_title("Volatility-Targeted Risk Management: Strategy 6 Family", loc="left", fontsize=12.5)
+ax.legend(loc="upper left", fontsize=8.3, frameon=False)
+fig.tight_layout()
+fig.savefig(FIG / "18_voltarget_nav_curves.png", dpi=200)
+plt.close(fig)
+
+voltarget_summary = pd.read_csv(DATA / "results_summary_v2_FINAL.csv").set_index("strategy")
+vt_order = [k for k, _, _ in VOLTARGET_STRATS]
+vt_labels = ["6. Pure alpha", "6+beta. Static\noverlay", "6+beta-vt.\nVol-tgt overlay",
+             "6-vt-alpha.\nVol-tgt alpha", "6-fully-vt.\nFully managed"]
+vt_colors = [c for _, _, c in VOLTARGET_STRATS]
+vt_vals = voltarget_summary.loc[vt_order]
+
+fig, axes = plt.subplots(1, 3, figsize=(11.0, 3.8))
+for ax, (col, title, pct) in zip(axes, metrics):
+    vals = vt_vals[col] * 100 if pct else vt_vals[col]
+    bars = ax.bar(vt_labels, vals, color=vt_colors)
+    ax.set_title(title, fontsize=11)
+    ax.tick_params(axis="x", labelsize=7.5)
+    ax.axhline(0, color="#888888", linewidth=0.7)
+    fmt = "{:.1f}%" if pct else "{:.2f}"
+    for b, v in zip(bars, vals):
+        ax.annotate(fmt.format(v), (b.get_x() + b.get_width() / 2, v),
+                    textcoords="offset points", xytext=(0, 2 if v >= 0 else -10),
+                    ha="center", fontsize=7.5)
+fig.suptitle("Vol-Targeting vs. the Static Overlay: Return, Sharpe, and Drawdown", fontsize=12.2, x=0.02, ha="left")
+fig.tight_layout(rect=[0, 0, 1, 0.93])
+fig.savefig(FIG / "19_voltarget_comparison_bars.png", dpi=200)
+plt.close(fig)
+
+
+# ---------- Strategy 8 (dispersion filter) and its overlay combination ----------
+STRATEGY8_STRATS = [
+    ("strategy6",                   "6. Pure alpha (SUE only)",           "#3f6fa8"),
+    ("strategy8",                   "8. Pure alpha + dispersion filter",  "#2f9f5f"),
+    ("strategy6_fully_voltarget",   "6-fully-vt. Best combo so far",      "#a83f3f"),
+    ("strategy8_beta050_voltarget", "8+beta-vt. Strategy 8 + overlay",    "#d4954a"),
+]
+
+fig, ax = plt.subplots(figsize=(8.6, 4.8))
+for key, label, color in STRATEGY8_STRATS:
+    df = pd.read_csv(DATA / f"backtest_v2_{key}.csv", parse_dates=["date"])
+    df = df[df["date"] >= "1996-01-01"]
+    lw = 2.0 if key == "strategy8" else 1.4
+    ax.plot(df["date"], df["nav"] / 1e6, linewidth=lw, color=color, label=label)
+ax.axhline(10, color="#888888", linewidth=0.8, linestyle="--")
+ax.set_xlabel("Date")
+ax.set_ylabel("NAV ($M)")
+ax.set_title("Strategy 8: A Dispersion-Based Risk Filter on the Alpha Book", loc="left", fontsize=12.2)
+ax.legend(loc="upper left", fontsize=8.3, frameon=False)
+fig.tight_layout()
+fig.savefig(FIG / "20_strategy8_nav_curves.png", dpi=200)
+plt.close(fig)
+
+s8_summary = pd.read_csv(DATA / "results_summary_v2_FINAL.csv").set_index("strategy")
+s8_order = [k for k, _, _ in STRATEGY8_STRATS]
+s8_labels = ["6. Pure alpha\n(SUE only)", "8. + Dispersion\nfilter", "6-fully-vt.\nBest combo",
+             "8+beta-vt.\nStrat 8 + overlay"]
+s8_colors = [c for _, _, c in STRATEGY8_STRATS]
+s8_vals = s8_summary.loc[s8_order]
+
+fig, axes = plt.subplots(1, 3, figsize=(10.0, 3.8))
+for ax, (col, title, pct) in zip(axes, metrics):
+    vals = s8_vals[col] * 100 if pct else s8_vals[col]
+    bars = ax.bar(s8_labels, vals, color=s8_colors)
+    ax.set_title(title, fontsize=11)
+    ax.tick_params(axis="x", labelsize=7.5)
+    ax.axhline(0, color="#888888", linewidth=0.7)
+    fmt = "{:.1f}%" if pct else "{:.2f}"
+    for b, v in zip(bars, vals):
+        ax.annotate(fmt.format(v), (b.get_x() + b.get_width() / 2, v),
+                    textcoords="offset points", xytext=(0, 2 if v >= 0 else -10),
+                    ha="center", fontsize=7.5)
+fig.suptitle("Dispersion Filter: Better Risk-Adjusted Alpha, Not a Bigger Number to Combine",
+             fontsize=11.8, x=0.02, ha="left")
+fig.tight_layout(rect=[0, 0, 1, 0.93])
+fig.savefig(FIG / "21_strategy8_comparison_bars.png", dpi=200)
+plt.close(fig)
+
 print("wrote 12_v2_nav_curves_all.png, 13_v2_nav_curves_lineage.png, 14_v2_drawdowns_all.png, "
-      "15_v2_comparison_bars.png, 16_leverage_sweep.png, 17_sue_reversal.png")
+      "15_v2_comparison_bars.png, 16_leverage_sweep.png, 17_sue_reversal.png, "
+      "18_voltarget_nav_curves.png, 19_voltarget_comparison_bars.png, "
+      "20_strategy8_nav_curves.png, 21_strategy8_comparison_bars.png")

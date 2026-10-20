@@ -20,7 +20,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-DATA = Path("/root/pead_report/data")
+DATA = Path(__file__).resolve().parents[1] / "data"
 WINDOW = 20
 BURN_IN = 30
 PERSIST = 10

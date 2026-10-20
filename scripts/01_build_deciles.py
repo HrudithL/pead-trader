@@ -19,9 +19,12 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-IN_EVENTS = "/mnt/user-data/uploads/PEAD_Trading/data/events/equity_events_1996_2013.parquet"
-IN_FEATURES = "/mnt/user-data/uploads/PEAD_Trading/data/results/event_classification_features.parquet"
-OUT_DIR = Path("/root/pead_report/data")
+# Paths below are specific to this machine: the untracked WRDS-derived data (see .gitignore)
+# lives only in the main checkout, not in this worktree.
+_MAIN_CHECKOUT = "C:/Users/hrudi/Documents/BEI/PEAD_Trading/data"
+IN_EVENTS = f"{_MAIN_CHECKOUT}/events/equity_events_1996_2013.parquet"
+IN_FEATURES = f"{_MAIN_CHECKOUT}/results/event_classification_features.parquet"
+OUT_DIR = Path(__file__).resolve().parents[1] / "data"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 ev = pd.read_parquet(IN_EVENTS)

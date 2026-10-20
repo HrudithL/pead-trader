@@ -13,7 +13,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-DATA = Path("/root/pead_report/data")
+DATA = Path(__file__).resolve().parents[1] / "data"
 
 ext = pd.read_parquet(DATA / "decile_events_extended.parquet")
 ff = pd.read_parquet(DATA / "decile_events_ff_adjusted.parquet")

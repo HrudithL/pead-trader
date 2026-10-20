@@ -1,0 +1,11 @@
+{
+  "name": "voltarget_alpha_voltarget_overlay",
+  "annualized_return": 0.11577438084469871,
+  "annualized_vol": 0.1086251809881694,
+  "sharpe": 1.063114978556792,
+  "max_drawdown": -0.17907894868393182,
+  "final_nav": 84451378.77552997,
+  "alpha_target_vol": 0.04446398132484021,
+  "avg_alpha_scalar": 1.1336830738672128,
+  "avg_market_scalar": 1.2106154594532694
+}

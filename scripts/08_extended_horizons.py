@@ -14,8 +14,10 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-RAW = Path("/mnt/user-data/uploads/PEAD_Trading/data/normalized_equity")
-DATA = Path("/root/pead_report/data")
+# Paths below are specific to this machine: the untracked WRDS-derived data (see .gitignore)
+# lives only in the main checkout, not in this worktree.
+RAW = Path("C:/Users/hrudi/Documents/BEI/PEAD_Trading/data/normalized_equity")
+DATA = Path(__file__).resolve().parents[1] / "data"
 
 HORIZONS = [80, 100, 120, 150, 180]
 

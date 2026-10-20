@@ -31,8 +31,10 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-DATA = Path("/root/pead_report/data")
-RAW = Path("/mnt/user-data/uploads/PEAD_Trading/data/normalized_equity")
+# Paths below are specific to this machine: the untracked WRDS-derived data (see .gitignore)
+# lives only in the main checkout, not in this worktree.
+DATA = Path(__file__).resolve().parents[1] / "data"
+RAW = Path("C:/Users/hrudi/Documents/BEI/PEAD_Trading/data/normalized_equity")
 
 MAX_DAYS = 200
 MIN_QUARTERS = 20      # a holding-period cell needs at least this many announcement quarters...
