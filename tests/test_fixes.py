@@ -136,3 +136,20 @@ def test_mid_fill_ignores_quote_columns_and_needs_none():
         raise AssertionError("bid_ask without entry quotes must refuse to run")
     except ValueError:
         pass
+
+
+# ------------------------------------------------------------------------------ prep stage runner device
+def test_prep_auto_device_resolves_to_a_concrete_value(monkeypatch):
+    import builtins
+    from pead.prep import stages
+    assert stages.resolve_device("cpu") == "cpu" and stages.resolve_device("cuda") == "cuda"
+    real_import = builtins.__import__
+
+    def no_cupy(name, *a, **k):
+        if name == "cupy":
+            raise ImportError("no cupy")
+        return real_import(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_cupy)
+    assert stages.resolve_device("auto") == "cpu"
+    cmd = stages._cmd(stages.BY_NAME["optimal_contract_selector"], stages.resolve_device("auto"), 4, False)
+    assert cmd[-2:] == ["--device", "cpu"]
