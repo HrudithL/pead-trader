@@ -389,7 +389,8 @@ def fig_ladder(S, ctx, out):
     x = np.arange(len(pick))
     for i, (st, lab, c) in enumerate((("published", "published", GREY), ("fix1", "+ open-book cap", GOLD), ("fix12", "+ point-in-time deciles", RED), ("all", "+ decay days (all fixes)", NAVY))):
         axes[0].bar(x + (i - 1.5) * 0.2, [100 * eq.loc[n, f"{st}_ret"] for n in pick], 0.2, color=c, label=lab)
-    axes[0].set_xticks(x, [SHORT.get(n, n.replace("_", "\n")) if n in SHORT else n.replace("balanced_leverage", "bal.-lev.").replace("_", "\n") for n in pick], fontsize=7)
+    axes[0].set_xticks(x, [n.replace("balanced_leverage", "bal-lev").replace("calm_", "").replace("market_boost", "mkt-boost").replace("_", " ") for n in pick],
+                       fontsize=6.5, rotation=30, ha="right")
     axes[0].set(ylabel="Annualized return (%)", title="(a) Equity: fixes applied in turn")
     axes[0].legend(fontsize=6.5, loc="upper left")
     axes[0].grid(axis="x", visible=False)

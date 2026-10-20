@@ -1089,7 +1089,7 @@ Source: \texttt{docs/paper/cache/ladders/equity\_ladder.csv} (copied from the fi
 \caption{The fix-attribution ladder. (a) Equity: annualized return as each fix is applied in turn. (b) Options: published (mid fills), bid/ask fills only, and all fixes.}\label{fig:ladder}
 \end{figure}
 
-Across the \stv{ladder.n_books} equity books, \stv{sent.biggest_fix}. The point-in-time deciles are the largest step for \stv{ladder.n_fix2_largest} books; the open-book cap matters mainly for the six-times books (median step \stv{ladder.med.fix1}, range \stv{ladder.min.fix1} to \stv{ladder.max.fix1} points); the corrected
+Across the \stv{ladder.n_books} equity books, \stv{sent.biggest_fix}. The point-in-time deciles are the largest step for \stv{ladder.n_fix2_largest} books; the open-book cap (median step \stv{ladder.med.fix1}, range \stv{ladder.min.fix1} to \stv{ladder.max.fix1} points); the corrected
 hold periods raise returns for \stv{ladder.n_fix4_raise} books (median \stv{ladder.med.fix4}). Taken together the corrections change return by a median of \stv{ladder.med.total} a year, and lower the Sharpe ratio for \stv{ladder.n_sharpe_lower} of \stv{ladder.n_books} books. The corrected caps hold at sizing time but gross exposure over the current NAV can still
 exceed the cap when NAV falls (for \sn{balanced_leverage_max}, a peak of \stv{balanced_leverage_max.gross_max}$\times$ against a cap of \stv{balanced_leverage_max.cap}$\times$). \stv{sent.sweepnote}
 
@@ -1141,7 +1141,7 @@ We list these without softening. Each is either a reason realized performance wo
 %=====================================================================================
 
 Post-earnings-announcement drift is present in this sample, and it survives the corrections: the 60-day top-minus-bottom spread with point-in-time deciles is \stv{spread.mkt.h60} (\stv{pre.spread.mkt.h60} with the within-quarter ranking), it is significant under earnings-season clustering, it survives
-a size/value characteristic benchmark (which \stv{sent.ffvsmkt} the spread), it is graded by firm size as limits to arbitrage predicts, and it appears in option premia measured at mid prices.
+a size/value characteristic benchmark (which \stv{sent.ffvsmkt} the spread), its spread \stv{sent.sizemono} with firm size, as limits to arbitrage predict, and it appears in option premia measured at mid prices.
 
 What it is worth as a strategy is smaller than earlier drafts reported. The market-neutral equity books earn \sret{calm_weighted} (\sn{calm_weighted}, Sharpe \ssh{calm_weighted}) and, for the research book with an in-sample exponent, \sret{calm_rank_tilt} (\sn{calm_rank_tilt}, Sharpe \ssh{calm_rank_tilt}), against
 \stv{calm_weighted_legacy.ret} and \stv{calm_rank_tilt_legacy.ret} before the corrections; \stv{sent.biggest_fix}. The options book, which earlier drafts credited with an edge and a diversifying role, earns \sret{options_cap20} at a Sharpe ratio of \ssh{options_cap20} when it is filled at the ask and the bid; it \stv{sent.opt_edge}, and the previously reported edge
