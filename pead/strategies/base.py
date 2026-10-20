@@ -92,7 +92,7 @@ class EquityStrategy(Strategy):
         s = self.sizing
         return dict(base_unit_fraction=s.base_unit_fraction, max_gross_leverage=s.max_gross_leverage,
                     liquidity_cap_frac=s.liquidity_cap_frac, return_basis=s.return_basis,
-                    cap_mode=s.cap_mode, beta_overlay=self.beta_overlay)
+                    cap_mode=s.cap_mode, exposure_cap=s.exposure_cap, beta_overlay=self.beta_overlay)
 
     def backtest(self, uni: EquityUniverse) -> EquityRun:
         run = run_equity_backtest(uni, self.weights(uni.events), self.sizing)

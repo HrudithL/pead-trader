@@ -113,9 +113,9 @@ def test_kelly_returns_none_without_edge():
 
 # ---------------------------------------------------------------------------- engines vs the originals
 @pytest.mark.skipif(not HAVE_EQUITY, reason="needs the WRDS-derived equity inputs")
-@pytest.mark.parametrize("name,legacy", [("balanced_leverage", "strategy6"), ("sector_balanced", "strategy5"),
-                                         ("market_exposed", "strategy7"), ("extreme_picks", "extreme"),
-                                         ("graded_bets", "rankweighted"), ("size_balanced", "balanced")])
+@pytest.mark.parametrize("name,legacy", [("balanced_leverage_legacy", "strategy6"), ("sector_balanced_legacy", "strategy5"),
+                                         ("market_exposed_legacy", "strategy7"), ("extreme_picks_legacy", "extreme"),
+                                         ("graded_bets_legacy", "rankweighted"), ("size_balanced_legacy", "balanced")])
 def test_equity_engine_reproduces_original_script_nav(name, legacy):
     from pead.strategies.base import RunContext
     got = registry.get(name).run(RunContext()).daily["nav"].to_numpy()
@@ -125,10 +125,11 @@ def test_equity_engine_reproduces_original_script_nav(name, legacy):
 
 @pytest.mark.skipif(not HAVE_EQUITY, reason="needs the WRDS-derived equity inputs")
 def test_strategy4_matches_original_script_on_current_data():
+    # `_legacy` = the original (pre-fix) leverage cap, which is what those scripts implemented.
     # the committed backtest_v2_strategy4.csv predates the current data (27.147M); the original script
     # re-run on current data ends at 27.077M, which is what the engine must hit
     from pead.strategies.base import RunContext
-    res = registry.get("conviction_tilt").run(RunContext())
+    res = registry.get("conviction_tilt_legacy").run(RunContext())
     assert abs(res.summary["final_nav"] - 27_077_291.9) < 1.0
 
 
@@ -136,7 +137,7 @@ def test_strategy4_matches_original_script_on_current_data():
                     reason="needs equity inputs + Strategy 9 outputs")
 def test_inverse_vol_matches_strategy9_script():
     from pead.strategies.base import RunContext
-    got = registry.get("calm_weighted").run(RunContext()).daily["nav"].to_numpy()
+    got = registry.get("calm_weighted_legacy").run(RunContext()).daily["nav"].to_numpy()
     ref = pd.read_csv(DATA_DIR / "backtest_v2_strategy9_9b_inverse_ivol.csv")["nav"].to_numpy()
     assert np.abs(got - ref).max() < 1.0
 
@@ -148,6 +149,33 @@ def test_options_engine_reproduces_original_final_nav(name, legacy):
     got = registry.get(name).run(RunContext()).summary["final_nav"]
     ref = json.loads((DATA_DIR / f"backtest_{legacy}_summary.json").read_text())["final_nav"]
     assert abs(got - ref) < 1.0
+
+
+# -------------------------------------------------------------- pre-fix numbers stay reproducible
+@pytest.mark.skipif(not HAVE_EQUITY, reason="needs the WRDS-derived equity inputs")
+def test_balanced_leverage_legacy_pins_published_nav():
+    from pead.strategies.base import RunContext
+    res = registry.get("balanced_leverage_legacy").run(RunContext())
+    assert abs(res.summary["final_nav"] - 34_048_037.4) < 1.0
+    assert res.summary["exposure_cap"] == "entry_cohort"
+
+
+def test_every_equity_strategy_has_a_legacy_twin():
+    allr = registry.all_strategies()
+    for n, s in allr.items():
+        if s.asset_class == "equity" and not n.endswith("_legacy"):
+            twin = allr[f"{n}_legacy"]
+            assert twin.status == "reference" and twin.parent == n
+            assert twin.sizing.exposure_cap == "entry_cohort" and s.sizing.exposure_cap == "open_book"
+            assert twin.sizing.base_unit_fraction == s.sizing.base_unit_fraction
+
+
+@pytest.mark.skipif(not HAVE_OPTIONS, reason="needs OptionMetrics-derived option inputs")
+@pytest.mark.parametrize("name,ann,sharpe", [("options_cap20_midfill", 0.04124, 1.769), ("options_cap20_legacy", 0.08581, 3.780)])
+def test_options_mid_conventions_stay_reproducible(name, ann, sharpe):
+    from pead.strategies.base import RunContext
+    s = registry.get(name).run(RunContext()).summary
+    assert abs(s["annualized_return"] - ann) < 5e-5 and abs(s["sharpe"] - sharpe) < 5e-3
 
 
 # ------------------------------------------------------------------------------------------------ live

@@ -58,7 +58,7 @@ class KellyOptimal(OptionsStrategy):
     def params(self):
         s = self.sizing
         return dict(hold_horizon=s.hold_horizon, half_kelly=s.half_kelly, max_premium_frac=s.max_premium_frac,
-                    roundtrip_cost_pct=s.roundtrip_cost_pct, dead_quote_mark=s.dead_quote_mark,
+                    roundtrip_cost_pct=s.roundtrip_cost_pct, dead_quote_mark=s.dead_quote_mark, fill_mode=s.fill_mode,
                     min_roundtrip_cost_per_share=s.min_roundtrip_cost_per_share, min_premium=s.min_premium)
 
     def eligible(self, uni):
@@ -72,19 +72,27 @@ class KellyOptimal(OptionsStrategy):
         return BacktestResult(self.name, "options", daily, summary, qlog, positions, self.meta())
 
 
-# Realistic costing: the corrected zero-bid mark (engine default) plus at least one $0.05 option tick of round-trip
-# cost per share on top of the 3% -- cheap contracts cannot be traded for 3% of a $0.10 premium.
-register_instance(KellyOptimal("options_cap20", 0.20, min_roundtrip_cost_per_share=0.05,
-                               description="Kelly picks, 20% premium cap, dead quotes marked at half-ask, >= $0.05/share cost"))
-register_instance(KellyOptimal("options_cap30", 0.30, parent="options_cap20", min_roundtrip_cost_per_share=0.05,
-                               description="Kelly picks, 30% premium cap, dead quotes marked at half-ask, >= $0.05/share cost"))
+# Real fills: buy at the day-0 ask, sell at the final checkpoint's bid, dead quotes at half-ask. The quoted spread IS the
+# cost, so the flat 3% and the $0.05 tick floor are off (set either > 0 to charge extra friction on top).
+register_instance(KellyOptimal("options_cap20", 0.20, roundtrip_cost_pct=0.0,
+                               description="Kelly picks, 20% premium cap, bought at the ask / sold at the bid, dead quotes at half-ask"))
+register_instance(KellyOptimal("options_cap30", 0.30, parent="options_cap20", roundtrip_cost_pct=0.0,
+                               description="Kelly picks, 30% premium cap, bought at the ask / sold at the bid, dead quotes at half-ask"))
 # The conservative bound: a dying option is worth nothing (liquidating means hitting the zero bid).
 register_instance(KellyOptimal("options_worst_case", 0.20, parent="options_cap20", status="research",
-                               min_roundtrip_cost_per_share=0.05, dead_quote_mark="zero_bid_zero",
+                               roundtrip_cost_pct=0.0, dead_quote_mark="zero_bid_zero",
                                description="options_cap20 with dead quotes worth zero -- the pessimistic bound"))
+# MID-FILL reference: the previous headline convention (mid in / mid out, 3% + >= $0.05/share flat cost, dead quotes at
+# half-ask: 4.12% / Sharpe 1.77). Kept so that number stays reproducible and the size of the fill fix stays visible.
+register_instance(KellyOptimal("options_cap20_midfill", 0.20, parent="options_cap20", status="reference", fill_mode="mid",
+                               min_roundtrip_cost_per_share=0.05,
+                               description="options_cap20 with the previous convention: mid fills, flat 3% + >= $0.05/share cost"))
+register_instance(KellyOptimal("options_cap30_midfill", 0.30, parent="options_cap20_midfill", status="reference", fill_mode="mid",
+                               min_roundtrip_cost_per_share=0.05,
+                               description="options_cap30 with the previous convention: mid fills, flat 3% + >= $0.05/share cost"))
 # As ORIGINALLY reported (dead quotes carried forward at their last live price, flat 3% cost). Kept so the old
 # headline numbers stay reproducible and so the size of the convention's effect stays visible -- not for use.
 for _cap, _par in ((0.20, None), (0.30, "options_cap20_legacy"), (0.40, "options_cap20_legacy")):
     register_instance(KellyOptimal(f"options_cap{int(_cap * 100)}_legacy", _cap, parent=_par, status="reference",
-                                   dead_quote_mark="carry_last",
+                                   dead_quote_mark="carry_last", fill_mode="mid",
                                    description=f"Kelly picks, {int(_cap * 100)}% cap, ORIGINAL convention: dead quotes carried forward, flat 3% cost"))
