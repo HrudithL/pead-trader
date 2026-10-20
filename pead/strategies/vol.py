@@ -1,8 +1,8 @@
 """Volatility-based event scaling used by the Calm Weighted / Calm Rank Tilt / Volatility Filter strategies.
 
 Finding behind these (research diagnostic, prep stage `equity_vol_diagnostic`): the PEAD spread is
-strongest in LOW idiosyncratic-volatility stocks (D10-D1 +4.3% in the low tercile vs +2.1% in the
-high one). Volatility does not change average returns -- it changes how much a given SUE signal is
+strongest in LOW idiosyncratic-volatility stocks (D10-D1 +3.4% in the low tercile vs +1.5% in the
+high one on the corrected data; pre-fix +4.3% vs +2.1%). Volatility does not change average returns -- it changes how much a given SUE signal is
 worth -- so the right use is to SIZE by it, not to hard-filter on it.
 """
 import numpy as np

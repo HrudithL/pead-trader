@@ -2,7 +2,7 @@
 
 Sector Balanced's weights, but with the 1.5x cap lifted to 2.5x (the point where it stops binding) and
 sizing retuned. Because sector+size neutralization already prevents concentration, the cap was
-protecting nothing: return rises 4.1% -> 6.5% with the Sharpe holding at ~1.3. The pure-alpha
+protecting nothing: return rises with the Sharpe holding about level (corrected run: 3.1% -> 5.4%, Sharpe 1.08 -> 1.09; the earlier 4.1% -> 6.5% / 1.3 was pre-fix). The pure-alpha
 reference strategy for the repo."""
 import numpy as np
 

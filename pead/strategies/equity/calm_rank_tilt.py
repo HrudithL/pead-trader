@@ -1,14 +1,15 @@
 """Calm Rank Tilt -- Balanced Leverage, tilted hard toward the calmest stocks by volatility RANK (research).
 
-Calm Weighted sized each event by 1/idiosyncratic-vol (Sharpe 1.30 -> 1.47). The attribution work showed
+Calm Weighted sized each event by 1/idiosyncratic-vol (pre-fix Sharpe 1.30 -> 1.47; corrected run 1.09 -> 1.24). The attribution work showed
 that PEAD alpha per dollar is concentrated in low-volatility names and almost absent in the wildest
 tercile, and that the 1/vol weight, being linear in the vol LEVEL, only mildly demotes the high-vol tail.
 Weighting by (1.02 - vol percentile)^2 -- where the percentile is measured against the previous quarter's
 cross-section within the stock's size quintile -- demotes it hard while staying smooth:
 
-    Sharpe 1.30 (Balanced Leverage) -> 1.47 (Calm Weighted) -> 1.81;  max drawdown -16.6% -> -11.6%;  every era improves
+    Corrected run: Sharpe 1.09 (Balanced Leverage) -> 1.24 (Calm Weighted) -> 1.47;  max drawdown -18.6% -> -17.5% -> -13.6%;  every era improves
+    (pre-fix: 1.30 -> 1.47 -> 1.81, -16.6% -> -11.6%)
     split-sample check: exponent picked on 1996-2004 data alone (best k ~ 3) lifts 2005-2013 Sharpe
-    0.93 -> 1.10, the same as the full-sample best, so the gain is not an artifact of one period.
+    0.93 -> 1.10 (pre-fix, not re-run), the same as the full-sample best, so the gain is not an artifact of one period.
 
 Lower volatility buys room: `calm_rank_levered` spends it on 1.7x the base unit and a 4x gross cap
 for ~9% a year at ~5% vol (a market-neutral book clearing the S&P 500's return in this sample). More
