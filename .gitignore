@@ -53,3 +53,9 @@ reports/paper/*.aux
 reports/paper/*.log
 reports/paper/*.out
 reports/paper/*.toc
+
+# paper build files
+docs/paper/*.aux
+docs/paper/*.log
+docs/paper/*.out
+docs/paper/*.toc
