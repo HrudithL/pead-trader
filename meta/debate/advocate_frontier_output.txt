@@ -1,0 +1,28 @@
+calm_weighted options_cap20
+  opt mult 0: eq scale 0.351  ann 2.62%  vol 1.65%  sharpe 1.58  mdd -5.7%  eras sharpe [np.float64(2.4), np.float64(1.63), np.float64(0.54)]
+  opt mult 1: eq scale 0.317  ann 6.59%  vol 2.67%  sharpe 2.40  mdd -11.5%  eras sharpe [np.float64(2.24), np.float64(2.6), np.float64(2.38)]
+  opt mult 2: eq scale 0.283  ann 10.65%  vol 4.72%  sharpe 2.17  mdd -23.4%  eras sharpe [np.float64(1.71), np.float64(2.36), np.float64(2.5)]
+  opt mult 3: eq scale 0.249  ann 14.81%  vol 6.94%  sharpe 2.03  mdd -33.8%  eras sharpe [np.float64(1.36), np.float64(2.24), np.float64(2.48)]
+  opt mult 4: eq scale 0.198  ann 18.90%  vol 9.20%  sharpe 1.93  mdd -43.1%  eras sharpe [np.float64(1.11), np.float64(2.16), np.float64(2.45)]
+  opt mult 5: eq scale 0.132  ann 22.95%  vol 11.48%  sharpe 1.86  mdd -51.4%  eras sharpe [np.float64(0.92), np.float64(2.11), np.float64(2.42)]
+calm_weighted options_worst_case
+  opt mult 0: eq scale 0.351  ann 2.62%  vol 1.65%  sharpe 1.58  mdd -5.7%  eras sharpe [np.float64(2.4), np.float64(1.63), np.float64(0.54)]
+  opt mult 1: eq scale 0.317  ann 4.76%  vol 2.74%  sharpe 1.71  mdd -14.5%  eras sharpe [np.float64(1.99), np.float64(1.61), np.float64(1.69)]
+  opt mult 2: eq scale 0.283  ann 6.88%  vol 4.86%  sharpe 1.39  mdd -28.3%  eras sharpe [np.float64(1.37), np.float64(1.31), np.float64(1.72)]
+  opt mult 3: eq scale 0.249  ann 8.98%  vol 7.15%  sharpe 1.24  mdd -40.2%  eras sharpe [np.float64(0.99), np.float64(1.18), np.float64(1.69)]
+  opt mult 4: eq scale 0.198  ann 10.92%  vol 9.47%  sharpe 1.14  mdd -50.8%  eras sharpe [np.float64(0.74), np.float64(1.11), np.float64(1.66)]
+  opt mult 5: eq scale 0.132  ann 12.72%  vol 11.83%  sharpe 1.07  mdd -59.7%  eras sharpe [np.float64(0.55), np.float64(1.05), np.float64(1.63)]
+calm_rank_tilt options_cap20
+  opt mult 0: eq scale 0.373  ann 2.99%  vol 1.50%  sharpe 1.97  mdd -4.5%  eras sharpe [np.float64(2.94), np.float64(1.89), np.float64(0.81)]
+  opt mult 1: eq scale 0.337  ann 6.94%  vol 2.61%  sharpe 2.59  mdd -10.8%  eras sharpe [np.float64(2.65), np.float64(2.67), np.float64(2.57)]
+  opt mult 2: eq scale 0.301  ann 10.97%  vol 4.69%  sharpe 2.24  mdd -22.6%  eras sharpe [np.float64(1.93), np.float64(2.38), np.float64(2.56)]
+  opt mult 3: eq scale 0.265  ann 15.10%  vol 6.92%  sharpe 2.07  mdd -33.3%  eras sharpe [np.float64(1.49), np.float64(2.25), np.float64(2.51)]
+  opt mult 4: eq scale 0.208  ann 19.12%  vol 9.19%  sharpe 1.95  mdd -43.0%  eras sharpe [np.float64(1.18), np.float64(2.17), np.float64(2.47)]
+  opt mult 5: eq scale 0.139  ann 23.10%  vol 11.48%  sharpe 1.87  mdd -51.4%  eras sharpe [np.float64(0.95), np.float64(2.11), np.float64(2.43)]
+calm_rank_tilt options_worst_case
+  opt mult 0: eq scale 0.373  ann 2.99%  vol 1.50%  sharpe 1.97  mdd -4.5%  eras sharpe [np.float64(2.94), np.float64(1.89), np.float64(0.81)]
+  opt mult 1: eq scale 0.337  ann 5.10%  vol 2.67%  sharpe 1.88  mdd -13.8%  eras sharpe [np.float64(2.39), np.float64(1.66), np.float64(1.85)]
+  opt mult 2: eq scale 0.301  ann 7.19%  vol 4.83%  sharpe 1.46  mdd -27.8%  eras sharpe [np.float64(1.58), np.float64(1.33), np.float64(1.78)]
+  opt mult 3: eq scale 0.265  ann 9.26%  vol 7.13%  sharpe 1.28  mdd -39.7%  eras sharpe [np.float64(1.12), np.float64(1.19), np.float64(1.72)]
+  opt mult 4: eq scale 0.208  ann 11.13%  vol 9.47%  sharpe 1.16  mdd -50.4%  eras sharpe [np.float64(0.8), np.float64(1.11), np.float64(1.67)]
+  opt mult 5: eq scale 0.139  ann 12.85%  vol 11.83%  sharpe 1.08  mdd -59.5%  eras sharpe [np.float64(0.58), np.float64(1.06), np.float64(1.64)]

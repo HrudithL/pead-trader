@@ -40,3 +40,6 @@ Thumbs.db
 
 # Pipeline run logs (operational, not a research finding) -- see scripts/options_strategy/run_pipeline.py
 logs/
+
+# meta-strategy outputs (regenerable)
+meta/out/
