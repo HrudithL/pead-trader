@@ -1,0 +1,31 @@
+[
+  {
+    "name": "static_alpha_static_overlay",
+    "annualized_return": 0.1008008679480541,
+    "annualized_vol": 0.10513256946598136,
+    "sharpe": 0.9662217527227923,
+    "max_drawdown": -0.232261982486684,
+    "final_nav": 64912422.77596704
+  },
+  {
+    "name": "voltarget_alpha_static_overlay",
+    "annualized_return": 0.10740647337317766,
+    "annualized_vol": 0.10780499110220718,
+    "sharpe": 1.0004302848705748,
+    "max_drawdown": -0.24359666792586115,
+    "final_nav": 72934447.66530271,
+    "alpha_target_vol": 0.04446398132484021,
+    "avg_alpha_scalar": 1.1336830738672128
+  },
+  {
+    "name": "voltarget_alpha_voltarget_overlay",
+    "annualized_return": 0.11577438084469871,
+    "annualized_vol": 0.1086251809881694,
+    "sharpe": 1.063114978556792,
+    "max_drawdown": -0.17907894868393182,
+    "final_nav": 84451378.77552997,
+    "alpha_target_vol": 0.04446398132484021,
+    "avg_alpha_scalar": 1.1336830738672128,
+    "avg_market_scalar": 1.2106154594532694
+  }
+]
