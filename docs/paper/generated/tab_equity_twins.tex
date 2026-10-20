@@ -1,0 +1,37 @@
+\begin{table}[t]\centering
+\caption{Effect of the equity corrections on every book that has a saved pre-correction twin.}\label{tab:twins}
+{\small
+\begin{adjustbox}{max width=\linewidth}
+\begin{tabular}{lrrrrrr}
+\toprule
+ & \multicolumn{3}{c}{Before the fix (legacy twin)} & \multicolumn{3}{c}{After the fix}\\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+Book & Return & Sharpe & Max DD & Return & Sharpe & Max DD \\
+\midrule
+\sn{balanced_leverage} & 6.5\% & 1.30 & $-$16.6\% & 5.4\% & 1.09 & $-$18.6\% \\
+\sn{balanced_leverage_max} & 12.1\% & 1.00 & $-$36.5\% & 8.3\% & 0.69 & $-$44.9\% \\
+\sn{calm_rank_levered} & 9.2\% & 1.73 & $-$15.9\% & 8.1\% & 1.39 & $-$19.6\% \\
+\sn{calm_rank_tilt} & 7.1\% & 1.81 & $-$11.6\% & 6.0\% & 1.47 & $-$13.6\% \\
+\sn{calm_weighted_filter} & 6.5\% & 1.41 & $-$15.7\% & 5.1\% & 1.08 & $-$17.6\% \\
+\sn{calm_weighted} & 6.7\% & 1.47 & $-$15.6\% & 5.6\% & 1.24 & $-$17.5\% \\
+\sn{calm_weighted_matched} & 7.3\% & 1.45 & $-$17.0\% & 5.8\% & 1.18 & $-$18.7\% \\
+\sn{conviction_tilt} & 5.2\% & 1.18 & $-$13.1\% & 3.8\% & 0.97 & $-$14.5\% \\
+\sn{conviction_tilt_max} & 10.7\% & 0.89 & $-$40.0\% & 9.3\% & 0.76 & $-$40.5\% \\
+\sn{extreme_picks} & 4.9\% & 0.93 & $-$18.5\% & 3.3\% & 0.65 & $-$25.2\% \\
+\sn{extreme_picks_max} & 9.5\% & 0.80 & $-$36.2\% & 9.0\% & 0.63 & $-$56.4\% \\
+\sn{graded_bets} & 3.9\% & 1.01 & $-$14.0\% & 2.4\% & 0.62 & $-$19.5\% \\
+\sn{graded_bets_max} & 10.8\% & 0.89 & $-$38.8\% & 8.6\% & 0.64 & $-$48.0\% \\
+\sn{market_boost} & 10.1\% & 0.97 & $-$23.2\% & 9.2\% & 0.90 & $-$25.1\% \\
+\sn{market_boost_max} & 15.0\% & 1.09 & $-$37.0\% & 11.6\% & 0.86 & $-$44.6\% \\
+\sn{market_exposed} & 7.3\% & 1.11 & $-$15.5\% & 6.6\% & 0.72 & $-$34.1\% \\
+\sn{market_exposed_max} & 11.8\% & 1.00 & $-$33.0\% & 11.5\% & 0.72 & $-$53.8\% \\
+\sn{sector_balanced} & 4.1\% & 1.33 & $-$10.8\% & 3.1\% & 1.08 & $-$11.4\% \\
+\sn{sector_balanced_max} & 12.1\% & 1.00 & $-$36.5\% & 8.3\% & 0.69 & $-$44.9\% \\
+\sn{size_balanced} & 4.7\% & 0.91 & $-$17.5\% & 3.8\% & 0.81 & $-$18.1\% \\
+\sn{size_balanced_max} & 8.4\% & 0.72 & $-$37.5\% & 8.9\% & 0.72 & $-$43.6\% \\
+\sn{volatility_filter} & 6.3\% & 1.23 & $-$16.7\% & 4.6\% & 0.89 & $-$18.8\% \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+}
+\end{table}

@@ -1,0 +1,79 @@
+name: Live paper trading (daily)
+
+# Runs the PEAD live paper-trading engine (python -m pead live run) once per US trading
+# day, before the market open, on GitHub Actions' free tier -- no server to run or pay for. State
+# (positions, NAV history, trade log, the decile return model) lives as plain CSV/JSON files under
+# data/live/ and is persisted by committing it back to the repo at the end of each run, so the next
+# scheduled run (a fresh checkout, no server-side disk) picks up exactly where the last one left off.
+#
+# Schedule: 12:45 UTC = 8:45am ET / 7:45am CT, which is >=45 min before the earliest a scheduled
+# GitHub Actions cron reliably fires (GitHub explicitly documents cron start times as best-effort,
+# sometimes delayed several minutes at peak load) and before the 9:30am ET open, so today's
+# already-reported (yesterday-after-close + today-before-open) earnings surprises are tradeable at
+# or near today's open. cron is UTC always, so this drifts by an hour across US DST changes -- an
+# accepted trade-off for a strategy that holds ~60 trading days, not one sensitive to a same-day hour.
+on:
+  # PAUSED during repo consolidation (2026-10): no ALPACA/FINNHUB secrets are configured, so a scheduled run would fail
+  # every weekday and then try to commit to main. To go live: add the three repository secrets, then uncomment.
+  # schedule:
+  #   - cron: "45 12 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run without writing state or submitting orders"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-paper-trading
+  cancel-in-progress: false  # never cancel a run mid-trade; let it finish or fail cleanly
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-live.txt
+
+      - name: Run daily live paper-trading cycle
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          ARGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="--dry-run"; fi
+          python -m pead live run $ARGS
+
+      - name: Commit updated state
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          git config user.name "pead-live-trading-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/live/
+          if git diff --cached --quiet; then
+            echo "no state changes to commit"
+          else
+            git commit -m "Live paper trading: $(date -u +%Y-%m-%d) run"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+
+      - name: Upload run log as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-trading-run-${{ github.run_number }}
+          path: data/live/run_log.jsonl
+          retention-days: 90

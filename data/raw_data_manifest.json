@@ -1,0 +1,316 @@
+{
+  "earnings": {
+    "files": {
+      "ibes_clean_1995_2014.parquet": {
+        "sha256": "2c9d18a558069be6361c472a14ef00a63ad493cdbe4e714893e5f7d1bbc6afc3",
+        "size": 10760012
+      }
+    },
+    "present": true
+  },
+  "events": {
+    "files": {
+      "equity_events_1996_2013.parquet": {
+        "sha256": "468e2f02822332c122605079eb43f687ef2358f98545e393aca8c375d4c93dc9",
+        "size": 32336044
+      }
+    },
+    "present": true
+  },
+  "metadata": {
+    "files": {
+      "ambiguous_links.csv": {
+        "sha256": "4b1d8b2bccb3fff36a1c6625242dcfac3a857df7b59fb2d54c0c5c0addff734d",
+        "size": 75765
+      },
+      "decile_return_distributions.parquet": {
+        "sha256": "b941550798a2220d1e6e799b465606013d1aef4f6b3f5d451b3702ca0b5f6530",
+        "size": 1690315
+      },
+      "om_trading_calendar.parquet": {
+        "sha256": "41b5e6d77d35b817283bb7e29133e331b78703c456c5db5723eaddeea2c9db73",
+        "size": 39035
+      },
+      "optionmetrics_universe.parquet": {
+        "sha256": "dd9ee5439099b13735f97f20e860e864d325a3d126a01c650c86dfa75dc41e40",
+        "size": 319123
+      },
+      "optionmetrics_universe_history.parquet": {
+        "sha256": "be31a8a195d668f412567b7c63da167c0dd12b053b788f084a481516cfe06d08",
+        "size": 665689
+      },
+      "permnos_without_gvkey.csv": {
+        "sha256": "d2af0cfc689223d8e8453115b34b03a1f40077b07b0add21ac5651a32ce2d247",
+        "size": 240
+      },
+      "permnos_without_ibes_ticker.csv": {
+        "sha256": "f4d593e43b2121f6305ad76b21b16910eddf946727a22944a5031a108444fd60",
+        "size": 30522
+      },
+      "resolved_universe_ids.parquet": {
+        "sha256": "ae705f5c13b1e515aedce0f7d9ef824ac756870e69829023d9105e21b24a3219",
+        "size": 458343
+      },
+      "unresolved_secids.csv": {
+        "sha256": "e8b70498fe53b75e2e8c11e39bcd3689088d6ee84ea9bc7e340e0d976c9dd8ec",
+        "size": 15522
+      },
+      "wrds_available_libraries.txt": {
+        "sha256": "b960ee41fceef9becc7f94dfcc922c3c6a13ddb2d96ac16b5779bc04b1630f40",
+        "size": 4022
+      },
+      "wrds_library_availability.json": {
+        "sha256": "506b820cf9d7f08a88f7bb14815200e3e71bf6e392c6be9e30f7ae81b1bb03fe",
+        "size": 88
+      },
+      "wrds_pull_manifest_compustat.csv": {
+        "sha256": "dab061d31df5436a7d73f41d9896edbea3ececf3424cf572236d3347b65c235e",
+        "size": 343
+      },
+      "wrds_pull_manifest_crsp.csv": {
+        "sha256": "9a1b3865f14851a0e1fa6be0b42bece73c88f28dd322f108935ec22744ce2631",
+        "size": 3929
+      },
+      "wrds_pull_manifest_ibes.csv": {
+        "sha256": "0dea6100bb4cd8e5c23c485d025b43e27366b33c395157b3b49d04e76197b8d9",
+        "size": 2005
+      },
+      "wrds_pull_manifest_reference.csv": {
+        "sha256": "26bfe2aff468551cbaf2964865dc60aadaa1ef426b3115894e439c3890f58f4d",
+        "size": 612
+      }
+    },
+    "present": true
+  },
+  "normalized_equity": {
+    "files": {
+      "equity_1995.parquet": {
+        "sha256": "9aee96d64217a52a5e6086e0ce70dc99375d500ba4384aaec5a09c1f8f396beb",
+        "size": 8064385
+      },
+      "equity_1996.parquet": {
+        "sha256": "34a7cb4bfb835b3e2f4c11a07dc46f6b9c6862f4abdeba36017f293d148b850f",
+        "size": 9460438
+      },
+      "equity_1997.parquet": {
+        "sha256": "dc750aba11e4d7ae6eba8d630cb096323a6f76e432ae0049f4306c3ae5b12311",
+        "size": 10734806
+      },
+      "equity_1998.parquet": {
+        "sha256": "6287908d38443d52501ead059eb0b3381c31c3ec8094f00183c4850256ffa6b4",
+        "size": 11451822
+      },
+      "equity_1999.parquet": {
+        "sha256": "6a3c7f327f5c1fc397864480b637af08baa2371bf344952691f74686d10e8c48",
+        "size": 11870665
+      },
+      "equity_2000.parquet": {
+        "sha256": "656012197249350001fdb5ea46e86f75e85aca97a83b683408056f87f7e44ac3",
+        "size": 13192970
+      },
+      "equity_2001.parquet": {
+        "sha256": "cd3f0c3075fe22c6769a2acbb3382e1d16e589712f74d2fb29bc25c1f356e888",
+        "size": 15427640
+      },
+      "equity_2002.parquet": {
+        "sha256": "2630ee9416e7f3c426ac7f3ac5cd171c5ec51f38033a89bcc95e657f1e9738a5",
+        "size": 16414488
+      },
+      "equity_2003.parquet": {
+        "sha256": "ad68b34d3ed99b5eada909510d6f5e2be246a3297b1c111b983486012696977b",
+        "size": 13097810
+      },
+      "equity_2004.parquet": {
+        "sha256": "c2c1c5d705d800bea8b67a1391ab039d7e5abb098184308de9a6ea74736e621e",
+        "size": 13222147
+      },
+      "equity_2005.parquet": {
+        "sha256": "19ff6555e724e62fdf2b20b0e3f211ec028dca9c72f528007f2981c1e5d3ec93",
+        "size": 13668221
+      },
+      "equity_2006.parquet": {
+        "sha256": "b69328584549aaf4fc6f632452b7943be4edffc225b573d03caecaef446e72ce",
+        "size": 14273397
+      },
+      "equity_2007.parquet": {
+        "sha256": "ec8a24894c44089ebefa0fbc7a9e7c52f57d46809e6f908de447dcde52da04d7",
+        "size": 15380071
+      },
+      "equity_2008.parquet": {
+        "sha256": "64bde3c051bf6d9a9937f41662536c43f677ae27211a368644777f21a3abab3c",
+        "size": 22649267
+      },
+      "equity_2009.parquet": {
+        "sha256": "5d131e7aca453dbe037fea634862f095ac4d375639c9d8da84e9ea529433af1c",
+        "size": 20332345
+      },
+      "equity_2010.parquet": {
+        "sha256": "1aae03c63a7b28c9338fd14fed8190260692725afd1112a0c29ce20fb7237161",
+        "size": 15148018
+      },
+      "equity_2011.parquet": {
+        "sha256": "1a2b2cccc2302a1581a805ea6597ed49d27b335a451c1485821a758243190a93",
+        "size": 17909204
+      },
+      "equity_2012.parquet": {
+        "sha256": "c80578a5180bfc9ec701fa9cc458d4ab8710ce379603f3c1bc8c050916a4e791",
+        "size": 14814236
+      },
+      "equity_2013.parquet": {
+        "sha256": "5f0aeaafe208b7df8bff7feed473e91f49625f8ac0a61adb432315f2aae423a4",
+        "size": 14575457
+      },
+      "equity_2014.parquet": {
+        "sha256": "3b97e7327c95f9fb05fdac2ead255808be74ae1de8abbfd51ed43baf219a2bf6",
+        "size": 7915856
+      },
+      "market_benchmark.parquet": {
+        "sha256": "3cfecf6b8d5762b72e5c3f9259e285b2d8b988a4ac367cfac945045933cd43e5",
+        "size": 269215
+      }
+    },
+    "present": true
+  },
+  "raw_wrds": {
+    "files": {
+      "comp/company.parquet": {
+        "sha256": "d9731137f1b01f8f0670bc5778dbbf80f4bb67266b43cc00bf9c21b515f03a2c",
+        "size": 1388819
+      },
+      "comp/funda.parquet": {
+        "sha256": "8b9211bb24efe3e0dc6a65fa0c55fae66926ff25f83c4d4ccdb7f34e0c26c36e",
+        "size": 2603046
+      },
+      "comp/fundq.parquet": {
+        "sha256": "fb3d310699da593b0ef7905aa45f59c0ce0dd8b7707c52a6e36121532abb73e1",
+        "size": 9081292
+      },
+      "crsp/ccmxpf_lnkhist.parquet": {
+        "sha256": "2565d79442fff8555c4065c289d3a77e2c66aa7b2e1af3a0487de126bbc6015b",
+        "size": 1330603
+      },
+      "crsp/dsedelist.parquet": {
+        "sha256": "9652901b9eb596a898116def3c57a4956d4c974706b27b4716e9892aeefe3934",
+        "size": 75464
+      },
+      "crsp/dsf_1995.parquet": {
+        "sha256": "32663c0dd0a7912a85488db8c02a441100a0cc6a3d8ac90e2f295915096a8cc0",
+        "size": 14240004
+      },
+      "crsp/dsf_1996.parquet": {
+        "sha256": "405db15b9bd60d13802a0b58a0d88bed3a47298d6e215f6191fff0016099e188",
+        "size": 16735629
+      },
+      "crsp/dsf_1997.parquet": {
+        "sha256": "6273c43125e13d02849ae36f00a8b59c6c37bc95493784be6f3370a75b126c37",
+        "size": 19229941
+      },
+      "crsp/dsf_1998.parquet": {
+        "sha256": "da5b271ba52df6dcdf6b76b50ca117e05b8547c31e6f9687cb2e74d1ab836071",
+        "size": 20499831
+      },
+      "crsp/dsf_1999.parquet": {
+        "sha256": "beab235010e561ce0b278b08fbc6f52c41d6b0cb96693d1513ef9fff3c29170b",
+        "size": 21325606
+      },
+      "crsp/dsf_2000.parquet": {
+        "sha256": "1e08a3fecb35a7ef3a054e291575b7f9acc3f3337ca4e323e45f0232e26b1ef8",
+        "size": 23504848
+      },
+      "crsp/dsf_2001.parquet": {
+        "sha256": "02687ea03c1536f3ce721676c50b83434445a7d989f35dd12b694a33eb908c1d",
+        "size": 25707213
+      },
+      "crsp/dsf_2002.parquet": {
+        "sha256": "4811bee537906d5d04849253754081e51eafb219d1d2b0c49baf5dfb7bbe648f",
+        "size": 26271775
+      },
+      "crsp/dsf_2003.parquet": {
+        "sha256": "cbae2b4ec7927abc618f2925186bc576021a16188831d581647014edd02655b8",
+        "size": 24957633
+      },
+      "crsp/dsf_2004.parquet": {
+        "sha256": "814538d99fd916fafa2d361ec4f9f1ba59ad5b43e15e21b3556f3b1a300ec05b",
+        "size": 25428439
+      },
+      "crsp/dsf_2005.parquet": {
+        "sha256": "72ca0c81b1c31a8a9b6e0243224e4c43736af8b02c1a2a0fd5895440ef4fce6e",
+        "size": 26272970
+      },
+      "crsp/dsf_2006.parquet": {
+        "sha256": "b1969845cdc658a7246607c99b9f70ad79bea212a9d137c27ca4ddda57ac4e0b",
+        "size": 27458594
+      },
+      "crsp/dsf_2007.parquet": {
+        "sha256": "c9fef7f9e170eb6ef0822f91da3f533bb533e4ab2a2856cfe6f3b7d38f78d7c9",
+        "size": 29284644
+      },
+      "crsp/dsf_2008.parquet": {
+        "sha256": "882183924be116b90f0247275722e23468200a6b461e1816e5b1eae11f110c52",
+        "size": 32781000
+      },
+      "crsp/dsf_2009.parquet": {
+        "sha256": "6b39a27ad63629f85f9c98386b27c921182ae33c9a460ac818f8675e4fae5537",
+        "size": 29713209
+      },
+      "crsp/dsf_2010.parquet": {
+        "sha256": "a2c4965e2a000a7dc4ae942899970ba4bbee366b046dc18b44bb0511603b0983",
+        "size": 29409020
+      },
+      "crsp/dsf_2011.parquet": {
+        "sha256": "57cce613f16f7b33fc8ef67e79b4477c20e487637bf772a0458f81fe79b406ea",
+        "size": 30257865
+      },
+      "crsp/dsf_2012.parquet": {
+        "sha256": "40e013afe71111a13b0aca45ad4edd1a246ff3e3bd07e089bd9ebb2697a088d2",
+        "size": 29396921
+      },
+      "crsp/dsf_2013.parquet": {
+        "sha256": "9f2f9eb9387f0ff04dabfb8500e36dbf25bc0905f81fa49ab013e1abb2a58a1d",
+        "size": 29303953
+      },
+      "crsp/dsf_2014.parquet": {
+        "sha256": "8d93cf38121d3fd68018b009d8669a29c526b2a37b4b3b83f2271f1715f71d2f",
+        "size": 14715544
+      },
+      "crsp/dsi.parquet": {
+        "sha256": "c9c032b9a80fd53f46829ed44fb639847f2dd1863f8e266e5075c1bbc92e43e1",
+        "size": 252453
+      },
+      "crsp/stocknames.parquet": {
+        "sha256": "555dd01b58e04a8a726cbc219827c0ebc89e1f95c276b3731167579432a7e858",
+        "size": 3167926
+      },
+      "ibes/actu_epsus.parquet": {
+        "sha256": "b7146689e87338c9c545f87ef5b3e1daa0dced34bf616dfd302893c0d2122f11",
+        "size": 2354357
+      },
+      "ibes/detu_epsus.parquet": {
+        "sha256": "6fd14c9662daad090dcb03e7d0960c4c4870f5e665b74e6c3ada1fb58236b890",
+        "size": 124872770
+      },
+      "ibes/idsum.parquet": {
+        "sha256": "525b6231757f4097ee70a3d152b08abe4ada4d4f6aea83a7f6217227ef2a4d70",
+        "size": 5451247
+      },
+      "ibes/statsumu_epsus.parquet": {
+        "sha256": "aaaef134af99ca395a8e7ef059b0f4f92b5cfbea6dc3c8092264de1d9792088f",
+        "size": 47662104
+      },
+      "wrdsapps/ibcrsphist.parquet": {
+        "sha256": "53177295fe5e3eb0dc2d31e6e38487af9043b0fa02d8b09c3d52466288fecf22",
+        "size": 777549
+      }
+    },
+    "present": true
+  },
+  "results": {
+    "files": {
+      "event_classification_features.parquet": {
+        "sha256": "ee17826ce17204c2399d1a8d6c17d78ca488564e1a7e4d5483de04f1352a792d",
+        "size": 4860792
+      }
+    },
+    "present": true
+  }
+}

@@ -1,0 +1,5 @@
+# Extra dependencies for pead/live (live paper trading engine).
+# Install alongside requirements.txt: pip install -r requirements.txt -r requirements-live.txt
+yfinance>=0.2.40
+alpaca-py>=0.30
+scipy>=1.11

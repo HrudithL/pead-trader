@@ -1,0 +1,23 @@
+{\small
+\begin{adjustbox}{max width=\linewidth}
+\begin{tabular}{lrrrllll}
+\toprule
+Book & Base unit & Gross cap & ADV cap & Returns & Trim rule & Cap on & Overlay \\
+\midrule
+\sn{extreme_picks} & 0.003 & 1.5$\times$ & 5\% & mktadj & proportional & open\_book & 0 \\
+\sn{graded_bets} & 0.002 & 1.5$\times$ & 5\% & mktadj & proportional & open\_book & 0 \\
+\sn{size_balanced} & 0.003 & 1.5$\times$ & 5\% & mktadj & proportional & open\_book & 0 \\
+\sn{conviction_tilt} & 0.002 & 1.5$\times$ & 5\% & mktadj & priority & open\_book & 0 \\
+\sn{sector_balanced} & 0.0015 & 1.5$\times$ & 5\% & mktadj & priority & open\_book & 0 \\
+\sn{balanced_leverage} & 0.003 & 2.5$\times$ & 5\% & mktadj & priority & open\_book & 0 \\
+\sn{market_boost} & 0.003 & 2.5$\times$ & 5\% & mktadj & priority & open\_book & 0.5 \\
+\sn{market_exposed} & 0.003 & 2.5$\times$ & 5\% & raw & priority & open\_book & 0 \\
+\sn{calm_weighted} & 0.003 & 2.5$\times$ & 5\% & mktadj & priority & open\_book & 0 \\
+\sn{calm_rank_tilt} & 0.003 & 2.5$\times$ & 5\% & mktadj & priority & open\_book & 0 \\
+\sn{calm_rank_levered} & 0.005 & 4$\times$ & 5\% & mktadj & priority & open\_book & 0 \\
+\sn{balanced_leverage_max} & 0.012 & 6$\times$ & 5\% & mktadj & priority & open\_book & 0 \\
+\sn{market_boost_max} & 0.012 & 6$\times$ & 5\% & mktadj & priority & open\_book & 0.5 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+}

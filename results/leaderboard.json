@@ -1,0 +1,44 @@
+{
+  "equity": {
+    "sharpe": {
+      "strategy": "calm_rank_tilt",
+      "value": 1.465455062709722
+    },
+    "annualized_return": {
+      "strategy": "market_boost_max",
+      "value": 0.11615028447601428
+    },
+    "calmar": {
+      "strategy": "calm_rank_tilt",
+      "value": 0.44176811333085825
+    }
+  },
+  "options": {
+    "sharpe": {
+      "strategy": "options_cap20",
+      "value": 0.15618291173385673
+    },
+    "annualized_return": {
+      "strategy": "options_cap20",
+      "value": 0.0028246057047605078
+    },
+    "calmar": {
+      "strategy": "options_cap20",
+      "value": 0.014965909342714702
+    }
+  },
+  "portfolio": {
+    "sharpe": {
+      "strategy": "calm_blend",
+      "value": 1.281365029049095
+    },
+    "annualized_return": {
+      "strategy": "calm_blend",
+      "value": 0.057953323903917386
+    },
+    "calmar": {
+      "strategy": "calm_blend",
+      "value": 0.28782756102121276
+    }
+  }
+}

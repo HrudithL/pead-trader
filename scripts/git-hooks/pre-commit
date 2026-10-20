@@ -17,14 +17,17 @@
 #   git config core.hooksPath scripts/git-hooks
 set -euo pipefail
 
-symlinks=$(git diff --cached --name-only --diff-filter=ACMR -z | \
-  xargs -0 -I{} git ls-files -s --cached -- {} 2>/dev/null | awk '$1 == "120000" {print $4}')
+# One git call, not one per file: the previous `xargs -I{} git ls-files -s` form spawned a git process per
+# staged file and deadlocked under Git-for-Windows' bash on large commits (hundreds of staged files). The raw
+# diff reports each staged file's NEW mode directly; 120000 is a symlink. Covers added, copied, modified,
+# renamed and type-changed (file -> symlink) entries -- renames and type changes were missed before.
+symlinks=$(git diff --cached --raw --diff-filter=ACMRT | awk '$2 == "120000" {print $NF}')
 
 if [[ -n "$symlinks" ]]; then
   echo "pre-commit: refusing to commit a symlink -- this repo tracks no symlinks, by design:" >&2
   echo "$symlinks" | sed 's/^/  /' >&2
   echo >&2
-  echo "If this is raw data meant for a GPU box, point scripts/common/paths.py's PEAD_*_DIR env" >&2
+  echo "If this is raw data meant for a GPU box, point pead/common/paths.py's PEAD_*_DIR env" >&2
   echo "vars at it instead (see GPU_SETUP.md's 'Never symlink data into this repo'). If you" >&2
   echo "really mean to commit a symlink, this hook is deliberately not overridable via config --" >&2
   echo "use 'git commit --no-verify' only if you are certain, and only for something other than" >&2
