@@ -1,5 +1,6 @@
 """Per-strategy profiles: best/worst trade recipes, what the biggest winners and losers look like, consistency of losses.
-Writes results/profiles_*.csv.   python scripts/strategy_profiles.py"""
+Writes results/profiles_*.csv.   python scripts/strategy_profiles.py
+(Run with PEAD_DATA_DIR / PEAD_RAW_EQUITY_DIR pointing at the corrected data vintage so the events match the corrected results.)"""
 import sys
 from pathlib import Path
 import numpy as np, pandas as pd
@@ -69,21 +70,44 @@ def timing(p):
     for v in neg:
         run = run + 1 if v else 0; best = max(best, run)
     cost = p["cost"].sum(); gross = p["excess"].sum()
+    sec = p.groupby(["ann_quarter", "ff12_sector"], observed=True)["notional"].apply(lambda v: v.abs().sum())
+    sec = sec / sec.groupby(level=0).transform("sum")        # each FF12 sector's share of that announcement quarter's new dollars
     return dict(pct_quarters_pos=float((q["a"] > 0).mean()), worst_q=str(q["a"].idxmin()), worst_q_M=float(q["a"].min() / 1e6),
                 longest_losing_streak=best, neg_years=",".join(str(i) for i in y.index[y["a"] < 0]),
                 best10_share=float(q["a"].nlargest(10).sum() / q["a"].sum()), cost_pct_of_excess=float(cost / gross),
                 long_alpha_M=float(p.loc[p.leg == "long", "alpha_net"].sum() / 1e6), short_alpha_M=float(p.loc[p.leg == "short", "alpha_net"].sum() / 1e6),
                 long_bp=float(1e4 * p.loc[p.leg == "long", "alpha_net"].sum() / p.loc[p.leg == "long", "notional"].abs().sum()),
                 short_bp=float(1e4 * p.loc[p.leg == "short", "alpha_net"].sum() / p.loc[p.leg == "short", "notional"].abs().sum()),
-                top_name_pct_alpha=float(p.groupby("permno")["alpha_net"].sum().nlargest(20).sum() / p["alpha_net"].sum()))
+                max_sector_share_of_quarter=float(sec.max()), top_name_pct_alpha=float(p.groupby("permno")["alpha_net"].sum().nlargest(20).sum() / p["alpha_net"].sum()))
 
-rec_all, tp_all, tm_all = [], [], []
-for n in NAMES:
-    p = prep(n)
-    r = recipes(p); r.insert(0, "strategy", n); rec_all.append(r)
-    t = trade_profile(p); t.insert(0, "strategy", n); tp_all.append(t.reset_index().rename(columns={"index": "group"}))
-    tm_all.append(dict(strategy=n, **timing(p)))
-    print(n, "done", flush=True)
-pd.concat(rec_all).to_csv(R / "profiles_recipes.csv", index=False)
-pd.concat(tp_all).to_csv(R / "profiles_trades.csv", index=False)
-pd.DataFrame(tm_all).to_csv(R / "profiles_timing.csv", index=False)
+def beta_legs(p):
+    """The high-beta-short question: alpha and real dollars of (high-beta shorts / low+mid-beta shorts / high-beta longs /
+    low+mid-beta longs). money = percent of the book's dollars traded; real = actual P&L (net_pnl), alpha = size-matched."""
+    tot_n = p["notional"].abs().sum()
+    hi = p["beta3"] == "high-beta"
+    groups = {"high-beta shorts": (p["leg"] == "short") & hi, "low/mid-beta shorts": (p["leg"] == "short") & ~hi,
+              "high-beta longs": (p["leg"] == "long") & hi, "low/mid-beta longs": (p["leg"] == "long") & ~hi}
+    rows = []
+    for k, m in groups.items():
+        g = p[m]; n = g["notional"].abs().sum()
+        eras_a = [x["alpha_net"].sum() for _, x in g.groupby("era", observed=True)]
+        eras_r = [x["net_pnl"].sum() for _, x in g.groupby("era", observed=True)]
+        rows.append(dict(group=k, money=100 * n / tot_n, alpha_M=g["alpha_net"].sum() / 1e6, alpha_bp=1e4 * g["alpha_net"].sum() / n,
+                         t=_tstat(_quarter_series(g)), eras_alpha_neg=sum(v < 0 for v in eras_a), real_M=g["net_pnl"].sum() / 1e6,
+                         real_bp=1e4 * g["net_pnl"].sum() / n, eras_real_neg=sum(v < 0 for v in eras_r)))
+    return pd.DataFrame(rows)
+
+
+if __name__ == "__main__":
+    rec_all, tp_all, tm_all, bl_all = [], [], [], []
+    for n in NAMES:
+        p = prep(n)
+        r = recipes(p); r.insert(0, "strategy", n); rec_all.append(r)
+        t = trade_profile(p); t.insert(0, "strategy", n); tp_all.append(t.reset_index().rename(columns={"index": "group"}))
+        tm_all.append(dict(strategy=n, **timing(p)))
+        b = beta_legs(p); b.insert(0, "strategy", n); bl_all.append(b)
+        print(n, "done", flush=True)
+    pd.concat(rec_all).to_csv(R / "profiles_recipes.csv", index=False)
+    pd.concat(tp_all).to_csv(R / "profiles_trades.csv", index=False)
+    pd.DataFrame(tm_all).to_csv(R / "profiles_timing.csv", index=False)
+    pd.concat(bl_all).to_csv(R / "profiles_beta_legs.csv", index=False)
