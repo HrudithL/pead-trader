@@ -1,6 +1,6 @@
-"""Strategy 3 -- Size-balanced extreme decile.
+"""Size Balanced -- Extreme Picks with an equal budget for each company-size group.
 
-Strategy 1's trade, but each leg's budget is spread evenly over the size quintiles present that
+Extreme Picks' trade, but each leg's budget is spread evenly over the size quintiles present that
 quarter, so micro-caps (where most extreme surprises happen) cannot dominate the book."""
 import numpy as np
 
@@ -14,8 +14,8 @@ from pead.strategies.registry import register
 class SizeBalanced(EquityStrategy):
     name = "size_balanced"
     family = "equity-baseline"
-    parent = "extreme_decile"
-    description = "Extreme deciles, size-quintile neutral each quarter"
+    parent = "extreme_picks"
+    description = "Extreme Picks, with an equal budget for each of the five company sizes"
     thesis = "PEAD is stronger in small caps; balancing by size keeps the edge but removes a size bet."
     sizing = Sizing(base_unit_fraction=0.003, max_gross_leverage=1.5, cap_mode="proportional")
     required_columns = ("decile", "size_quintile", "event_id")

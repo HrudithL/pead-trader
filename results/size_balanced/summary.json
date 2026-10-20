@@ -3,9 +3,9 @@
   "name": "size_balanced",
   "asset_class": "equity",
   "family": "equity-baseline",
-  "parent": "extreme_decile",
+  "parent": "extreme_picks",
   "status": "validated",
-  "description": "Extreme deciles, size-quintile neutral each quarter",
+  "description": "Extreme Picks, with an equal budget for each of the five company sizes",
   "thesis": "PEAD is stronger in small caps; balancing by size keeps the edge but removes a size bet.",
   "params": {
     "base_unit_fraction": 0.003,

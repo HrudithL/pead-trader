@@ -1,6 +1,6 @@
 # hedged_blend
 
-_portfolio strategy | family: portfolio | status: validated | derived from `s9b_inverse_vol`_
+_portfolio strategy | family: portfolio | status: validated | derived from `calm_weighted`_
 
 ## What this strategy does
 
@@ -18,8 +18,8 @@ Sleeve results come from the strategy registry itself (re-run in-process, ~secon
 
 | parameter | value |
 |---|---|
-| w_s9b_inverse_vol | 0.8 |
-| w_opt_kelly_cap20 | 1.6 |
+| w_calm_weighted | 0.8 |
+| w_options_cap20 | 1.6 |
 
 ## Performance
 
@@ -40,9 +40,9 @@ Sleeve results come from the strategy registry itself (re-run in-process, ~secon
 
 Correlation of daily returns with the market: **0.13**.
 
-- best Sharpe among portfolio: `hedged_blend_s10` (2.5); this one: 2.25
-- best return among portfolio: `hedged_blend_s10` (0.124); this one: 0.113
-- best Calmar among portfolio: `hedged_blend_s10` (0.802); this one: 0.679
+- best Sharpe among portfolio: `calm_blend` (2.5); this one: 2.25
+- best return among portfolio: `calm_blend` (0.124); this one: 0.113
+- best Calmar among portfolio: `calm_blend` (0.802); this one: 0.679
 
 ![NAV (log scale)](figures/nav.png)
 
@@ -68,8 +68,8 @@ Correlation of daily returns with the market: **0.13**.
 
 | sleeve | weight | pnl_M | share_of_pnl |
 |---|---|---|---|
-| s9b_inverse_vol | 0.80 | 25.93 | 36.6% |
-| opt_kelly_cap20 | 1.60 | 44.95 | 63.4% |
+| calm_weighted | 0.80 | 25.93 | 36.6% |
+| options_cap20 | 1.60 | 44.95 | 63.4% |
 
 - Correlation between the sleeves' daily returns: **-0.05**.
 - Blend market beta 0.033, correlation to the market 0.13.

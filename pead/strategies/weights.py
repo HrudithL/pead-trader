@@ -50,10 +50,10 @@ def neutralized_tilt(events: pd.DataFrame, d_centered: np.ndarray, trim: float, 
       tilt_power  weight ~ (|signal|/0.5)**tilt_power, so 1.0 is linear in rank, >1 leans to the extremes
       groups      within each announcement quarter, every (side, *groups) cell gets an EQUAL share of
                   that side's budget (so no size bucket / sector can dominate), split among its members
-                  by tilt. ("size_quintile",) = Strategy 4, + "ff12_sector" = Strategies 5/6/9.
+                  by tilt. ("size_quintile",) = Conviction Tilt, + "ff12_sector" = Sector Balanced / Balanced Leverage / the Calm strategies.
       by_side     True: long and short legs each sum to the same total (dollar-neutral by construction).
                   False: cells are neutralized across both sides together, so net long/short exposure
-                  falls out of the signal (Strategy 7) -- which makes the book directional.
+                  falls out of the signal (Market Exposed) -- which makes the book directional.
       scale       optional per-event multiplier applied BEFORE neutralization; it reallocates weight
                   only WITHIN a cell, so cell totals (and neutrality) are unchanged. 0 drops the event
                   from its cell entirely. Used for inverse-volatility sizing and cell filters.

@@ -4,8 +4,8 @@ The strategies themselves are NOT configured here -- they are the registered str
 live engine trades exactly what the backtest ran. This file only says which registered strategies to
 run, how much capital to give each, and the few live-only mechanics (cohort window, state files).
 
-    PEAD_LIVE_EQUITY    registered equity strategy name   (default s9b_inverse_vol)
-    PEAD_LIVE_OPTIONS   registered options strategy name   (default opt_kelly_cap20)
+    PEAD_LIVE_EQUITY    registered equity strategy name   (default calm_weighted)
+    PEAD_LIVE_OPTIONS   registered options strategy name   (default options_cap20)
     PEAD_LIVE_BLEND     portfolio strategy whose sleeve multiples set the capital split (default hedged_blend)
 """
 import os
@@ -27,8 +27,8 @@ TRADE_LOG_CSV = LIVE_DIR / "trade_log.csv"
 DECILE_MODEL_JSON = LIVE_DIR / "decile_return_model.json"
 RUN_LOG = LIVE_DIR / "run_log.jsonl"
 
-EQUITY_STRATEGY = os.environ.get("PEAD_LIVE_EQUITY", "s9b_inverse_vol")
-OPTIONS_STRATEGY = os.environ.get("PEAD_LIVE_OPTIONS", "opt_kelly_cap20")
+EQUITY_STRATEGY = os.environ.get("PEAD_LIVE_EQUITY", "calm_weighted")
+OPTIONS_STRATEGY = os.environ.get("PEAD_LIVE_OPTIONS", "options_cap20")
 BLEND_STRATEGY = os.environ.get("PEAD_LIVE_BLEND", "hedged_blend")
 
 INITIAL_CAPITAL = float(os.environ.get("PEAD_LIVE_INITIAL_CAPITAL", 1_000_000.0))

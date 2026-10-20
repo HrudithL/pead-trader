@@ -43,11 +43,11 @@ One idea: **a strategy is one file; everything else is shared machinery that tak
 
 ```bash
 python -m pead list                              # every strategy: family, status, live-ready
-python -m pead run s9b_inverse_vol               # one strategy  -> results/s9b_inverse_vol/
-python -m pead run s6_neutral_levered opt_kelly_cap20   # several, in parallel worker processes
+python -m pead run calm_weighted               # one strategy  -> results/calm_weighted/
+python -m pead run balanced_leverage options_cap20   # several, in parallel worker processes
 python -m pead run equity                        # a whole asset class ('options', 'portfolio', 'all', 'family:equity-volatility', 's9*')
 python -m pead run all --jobs 8                  # everything, capped at 8 workers
-python -m pead report s9b_inverse_vol            # rebuild a report from a saved run
+python -m pead report calm_weighted            # rebuild a report from a saved run
 python -m pead compare                           # comprehensive cross-strategy report -> results/comprehensive/
 python -m pead portfolio                         # equity x options blend frontier -> results/portfolio/
 python -m pead prep --list                       # data-build stages and whether their outputs exist
@@ -83,7 +83,7 @@ from pead.strategies.registry import register
 class MyIdea(EquityStrategy):
     name = "my_idea"
     family = "equity-experiments"
-    parent = "s6_neutral_levered"           # lineage, shown in the comprehensive report
+    parent = "balanced_leverage"           # lineage, shown in the comprehensive report
     status = "research"                      # validated | research | reference | unverified
     description = "one line"
     thesis = "why it should make money"

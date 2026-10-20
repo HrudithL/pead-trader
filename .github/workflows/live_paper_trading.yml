@@ -13,8 +13,10 @@ name: Live paper trading (daily)
 # or near today's open. cron is UTC always, so this drifts by an hour across US DST changes -- an
 # accepted trade-off for a strategy that holds ~60 trading days, not one sensitive to a same-day hour.
 on:
-  schedule:
-    - cron: "45 12 * * 1-5"
+  # PAUSED during repo consolidation (2026-10): no ALPACA/FINNHUB secrets are configured, so a scheduled run would fail
+  # every weekday and then try to commit to main. To go live: add the three repository secrets, then uncomment.
+  # schedule:
+  #   - cron: "45 12 * * 1-5"
   workflow_dispatch:
     inputs:
       dry_run:

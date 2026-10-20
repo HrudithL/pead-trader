@@ -30,7 +30,7 @@ HAVE_OPTIONS = (DATA_DIR / "event_options" / "optimal_forward_prices.parquet").e
 # --------------------------------------------------------------------------------------- registry
 def test_registry_discovers_all_families():
     names = set(registry.all_strategies())
-    for expected in ("s6_neutral_levered", "s9b_inverse_vol", "opt_kelly_cap20", "opt_kelly_cap20_legacy", "hedged_blend", "s10_vol_rank_tilt"):
+    for expected in ("balanced_leverage", "calm_weighted", "options_cap20", "options_cap20_legacy", "hedged_blend", "calm_rank_tilt"):
         assert expected in names
     assert {s.asset_class for s in registry.all_strategies().values()} == {"equity", "options", "portfolio"}
 
@@ -44,8 +44,8 @@ def test_every_strategy_declares_metadata():
 
 
 def test_resolve_selectors():
-    assert registry.resolve(["s6_neutral_levered"]) == ["s6_neutral_levered"]
-    assert "opt_kelly_cap20" in registry.resolve(["options"])
+    assert registry.resolve(["balanced_leverage"]) == ["balanced_leverage"]
+    assert "options_cap20" in registry.resolve(["options"])
     assert all(n.startswith("s9") for n in registry.resolve(["s9*"]))
     with pytest.raises(KeyError):
         registry.resolve(["no_such_strategy"])
@@ -113,9 +113,9 @@ def test_kelly_returns_none_without_edge():
 
 # ---------------------------------------------------------------------------- engines vs the originals
 @pytest.mark.skipif(not HAVE_EQUITY, reason="needs the WRDS-derived equity inputs")
-@pytest.mark.parametrize("name,legacy", [("s6_neutral_levered", "strategy6"), ("s5_sector_neutral", "strategy5"),
-                                         ("s7_directional", "strategy7"), ("extreme_decile", "extreme"),
-                                         ("rank_weighted", "rankweighted"), ("size_balanced", "balanced")])
+@pytest.mark.parametrize("name,legacy", [("balanced_leverage", "strategy6"), ("sector_balanced", "strategy5"),
+                                         ("market_exposed", "strategy7"), ("extreme_picks", "extreme"),
+                                         ("graded_bets", "rankweighted"), ("size_balanced", "balanced")])
 def test_equity_engine_reproduces_original_script_nav(name, legacy):
     from pead.strategies.base import RunContext
     got = registry.get(name).run(RunContext()).daily["nav"].to_numpy()
@@ -128,7 +128,7 @@ def test_strategy4_matches_original_script_on_current_data():
     # the committed backtest_v2_strategy4.csv predates the current data (27.147M); the original script
     # re-run on current data ends at 27.077M, which is what the engine must hit
     from pead.strategies.base import RunContext
-    res = registry.get("s4_tilted_size_neutral").run(RunContext())
+    res = registry.get("conviction_tilt").run(RunContext())
     assert abs(res.summary["final_nav"] - 27_077_291.9) < 1.0
 
 
@@ -136,13 +136,13 @@ def test_strategy4_matches_original_script_on_current_data():
                     reason="needs equity inputs + Strategy 9 outputs")
 def test_inverse_vol_matches_strategy9_script():
     from pead.strategies.base import RunContext
-    got = registry.get("s9b_inverse_vol").run(RunContext()).daily["nav"].to_numpy()
+    got = registry.get("calm_weighted").run(RunContext()).daily["nav"].to_numpy()
     ref = pd.read_csv(DATA_DIR / "backtest_v2_strategy9_9b_inverse_ivol.csv")["nav"].to_numpy()
     assert np.abs(got - ref).max() < 1.0
 
 
 @pytest.mark.skipif(not HAVE_OPTIONS, reason="needs OptionMetrics-derived option inputs")
-@pytest.mark.parametrize("name,legacy", [("opt_kelly_cap20_legacy", "options_optimal_h60d"), ("opt_kelly_cap30_legacy", "options_optimal_cap30_h60d")])
+@pytest.mark.parametrize("name,legacy", [("options_cap20_legacy", "options_optimal_h60d"), ("options_cap30_legacy", "options_optimal_cap30_h60d")])
 def test_options_engine_reproduces_original_final_nav(name, legacy):
     from pead.strategies.base import RunContext
     got = registry.get(name).run(RunContext()).summary["final_nav"]

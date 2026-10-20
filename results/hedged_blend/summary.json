@@ -3,13 +3,13 @@
   "name": "hedged_blend",
   "asset_class": "portfolio",
   "family": "portfolio",
-  "parent": "s9b_inverse_vol",
+  "parent": "calm_weighted",
   "status": "validated",
   "description": "Market-neutral inverse-vol equity book (0.8x) + corrected-quote Kelly options book (1.6x), on one NAV",
   "thesis": "The sleeves are uncorrelated with each other (about -0.05) and with the market (~0 / 0.18): equity alpha earned most of its return in 1996-2003 and made +10% in 2008 when the options book lost; options earned most after 2003. Weights set so each sleeve contributes equal stand-alone risk, scaled to ~5% portfolio volatility.",
   "params": {
-    "w_s9b_inverse_vol": 0.8,
-    "w_opt_kelly_cap20": 1.6
+    "w_calm_weighted": 0.8,
+    "w_options_cap20": 1.6
   },
   "live_ready": false,
   "summary": {

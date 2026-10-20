@@ -1,7 +1,7 @@
 """The backtest runner: take strategy names in, run them in parallel, save and (optionally) report.
 
-    python -m pead run s6_neutral_levered                 # one strategy
-    python -m pead run s6_neutral_levered opt_kelly_cap30 # several, in parallel
+    python -m pead run balanced_leverage                 # one strategy
+    python -m pead run balanced_leverage options_cap30 # several, in parallel
     python -m pead run equity                              # every equity strategy
     python -m pead run all --jobs 8
 

@@ -15,7 +15,7 @@ python -m pead live run                           # a real daily cycle; state in
 python -m pead live status
 ```
 
-Defaults: equity `s9b_inverse_vol`, options `opt_kelly_cap20`, capital split from the `hedged_blend` portfolio strategy
+Defaults: equity `calm_weighted`, options `options_cap20`, capital split from the `hedged_blend` portfolio strategy
 (0.8x equity sizing, 1.6x options premium budget, on one NAV; `PEAD_LIVE_INITIAL_CAPITAL`, default $1M).
 `.github/workflows/live_paper_trading.yml` runs one cycle per trading day and commits the state files back.
 

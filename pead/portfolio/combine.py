@@ -3,7 +3,7 @@
 The raw material is each strategy's daily return stream (P&L / prior-day NAV). Two facts from the
 attribution work drive the design:
 
-  * the market-neutral equity sleeve (Strategy 6 / 9b) has ~0 correlation with both the market AND the
+  * the market-neutral equity sleeve (Balanced Leverage / Calm Weighted) has ~0 correlation with both the market AND the
     options sleeve (-0.05), so adding it to options cuts portfolio variance almost for free;
   * the options sleeve is ~98% long calls: it carries a small positive market beta (corr ~0.18), loses
     on the worst market days, and had its one bad year in 2008 -- while the equity sleeve made 10% that
@@ -126,8 +126,8 @@ def run_portfolio_study(equity=None, options=None, verbose=True, out_dir=None):
     import json
     out_dir = out_dir or RUNS_DIR / "portfolio"
     out_dir.mkdir(parents=True, exist_ok=True)
-    eq_names = [equity] if equity else ["s6_neutral_levered", "s9b_inverse_vol", "s6_beta_overlay"]
-    op_names = [options] if options else ["opt_kelly_cap20", "opt_kelly_cap30", "opt_kelly_cap20_legacy"]
+    eq_names = [equity] if equity else ["balanced_leverage", "calm_weighted", "market_boost"]
+    op_names = [options] if options else ["options_cap20", "options_cap30", "options_cap20_legacy"]
     mkt = None
     rows, best = [], None
     for e in eq_names:

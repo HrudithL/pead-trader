@@ -1,43 +1,43 @@
 {
   "equity": {
     "sharpe": {
-      "strategy": "s10_vol_rank_tilt",
+      "strategy": "calm_rank_tilt",
       "value": 1.8118454089058857
     },
     "annualized_return": {
-      "strategy": "s6_beta_overlay_aggressive",
+      "strategy": "market_boost_max",
       "value": 0.15005573987008058
     },
     "calmar": {
-      "strategy": "s10_vol_rank_tilt",
+      "strategy": "calm_rank_tilt",
       "value": 0.6138712775805791
     }
   },
   "options": {
     "sharpe": {
-      "strategy": "opt_kelly_cap20",
+      "strategy": "options_cap20",
       "value": 1.7691942185290117
     },
     "annualized_return": {
-      "strategy": "opt_kelly_cap30",
+      "strategy": "options_cap30",
       "value": 0.056898060760790736
     },
     "calmar": {
-      "strategy": "opt_kelly_cap20",
+      "strategy": "options_cap20",
       "value": 0.2982305462227409
     }
   },
   "portfolio": {
     "sharpe": {
-      "strategy": "hedged_blend_s10",
+      "strategy": "calm_blend",
       "value": 2.501451245099347
     },
     "annualized_return": {
-      "strategy": "hedged_blend_s10",
+      "strategy": "calm_blend",
       "value": 0.12428022697145868
     },
     "calmar": {
-      "strategy": "hedged_blend_s10",
+      "strategy": "calm_blend",
       "value": 0.8016202998566707
     }
   }

@@ -1,4 +1,4 @@
-"""Volatility-based event scaling used by the Strategy 9 family.
+"""Volatility-based event scaling used by the Calm Weighted / Calm Rank Tilt / Volatility Filter strategies.
 
 Finding behind these (research diagnostic, prep stage `equity_vol_diagnostic`): the PEAD spread is
 strongest in LOW idiosyncratic-volatility stocks (D10-D1 +4.3% in the low tercile vs +2.1% in the

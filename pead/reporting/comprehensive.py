@@ -16,9 +16,9 @@ from pead.reporting import attribution as A
 from pead.reporting import charts as C
 from pead.reporting.doc import Doc
 
-REPRESENTATIVE = ["extreme_decile", "rank_weighted", "s4_tilted_size_neutral", "s5_sector_neutral", "s6_neutral_levered",
-                  "s7_directional", "s9b_inverse_vol", "s9a_vol_cell_filter", "s10_vol_rank_tilt", "s6_beta_overlay",
-                  "opt_kelly_cap20", "opt_kelly_cap30", "opt_kelly_cap20_legacy", "hedged_blend"]
+REPRESENTATIVE = ["extreme_picks", "graded_bets", "conviction_tilt", "sector_balanced", "balanced_leverage",
+                  "market_exposed", "calm_weighted", "volatility_filter", "calm_rank_tilt", "market_boost",
+                  "options_cap20", "options_cap30", "options_cap20_legacy", "hedged_blend"]
 TABLE_COLS = ["name", "family", "status", "annualized_return", "annualized_vol", "sharpe", "max_drawdown", "calmar",
               "sharpe_1996_2001", "sharpe_2002_2007", "sharpe_2008_2013"]
 
@@ -80,8 +80,8 @@ def build_comprehensive_report(names=None, pdf=True):
     doc.h2("2. What each iteration changed")
     lin = _lineage(df)
     doc.table(lin, index=False, fmt={"d_return": "{:+.2%}", "d_vol": "{:+.2%}", "d_sharpe": "{:+.2f}", "d_maxdd": "{:+.1%}"})
-    doc.p("`d_*` columns are the change from the parent strategy. Reading down: neutralizing size and sector (S4->S5) and "
-          "inverse-vol sizing (S6->S9b) buy Sharpe; raising the leverage cap buys return; the aggressive variants buy "
+    doc.p("`d_*` columns are the change from the parent strategy. Reading down: neutralizing size and sector (Conviction Tilt -> Sector Balanced) and "
+          "inverse-vol sizing (Balanced Leverage -> Calm Weighted) buy Sharpe; raising the leverage cap buys return; the max-size variants buy "
           "return at the cost of Sharpe because the liquidity cap starts to bind.")
 
     # ---- 3. era decay ---------------------------------------------------------------------------
@@ -90,22 +90,22 @@ def build_comprehensive_report(names=None, pdf=True):
     era = era.loc[[n for n in keep if n in era.index]]
     doc.table(era, fmt={c: "{:.2f}" for c in era.columns})
     yrs = {n: yearly_table(load_daily(n)[0], 1e7).set_index("year")["ret"] for n in
-           [k for k in ("s9b_inverse_vol", "opt_kelly_cap20", "hedged_blend") if k in keep]}
+           [k for k in ("calm_weighted", "options_cap20", "hedged_blend") if k in keep]}
     ymk = mk.groupby(mk.index.year).apply(lambda x: (1 + x).prod() - 1)
     ytab = pd.DataFrame(yrs).assign(market=ymk).loc[1996:2013]
     doc.table(ytab, fmt={c: "{:.1%}" for c in ytab.columns})
     doc.image(C.bar_chart(ytab, fig / "years_sleeves.png", "Calendar-year return by sleeve", list(ytab.columns),
                           ylabel="return", rotation=60, figsize=(10, 3.6)),
               "Equity alpha is front-loaded (1996-2003); the options book is back-loaded (2003-2013) and lost in 2008 when equity gained.")
-    doc.p("**The equity drift has decayed**: Strategy 9b's return fell from ~14% a year in 1996-99 to ~2-5% in 2011-13, the "
+    doc.p("**The equity drift has decayed**: Calm Weighted's return fell from ~14% a year in 1996-99 to ~2-5% in 2011-13, the "
           "usual signature of PEAD being arbitraged. The options book shows the opposite shape in this sample, which is part of "
           "why the two combine well -- and part of why its recent strength should not be extrapolated without a skeptical look.")
 
     # ---- 4. long vs short across equity books -------------------------------------------------------
     doc.h2("4. Equity books: long leg vs. short leg")
     rows = []
-    for n in [k for k in ("extreme_decile", "rank_weighted", "s4_tilted_size_neutral", "s5_sector_neutral",
-                          "s6_neutral_levered", "s9b_inverse_vol") if k in set(df["name"])]:
+    for n in [k for k in ("extreme_picks", "graded_bets", "conviction_tilt", "sector_balanced",
+                          "balanced_leverage", "calm_weighted") if k in set(df["name"])]:
         ls = A.leg_summary(load_result(n))
         rows.append(dict(strategy=n, long_pnl_M=ls["long"]["pnl_M"], short_pnl_M=ls["short"]["pnl_M"],
                          long_excess_M=ls["long"]["excess_M"], short_excess_M=ls["short"]["excess_M"],
@@ -123,24 +123,24 @@ def build_comprehensive_report(names=None, pdf=True):
         "The legs' daily P&L are ~-0.8 correlated: the short leg is a hedge. Dropping it for a long-only book would multiply the volatility "
         "and add market-relative factor exposure without adding alpha.",
         "The backtest charges no stock-borrow fee. The short leg is small-cap-heavy where borrow is expensive; each 1% a year of borrow costs "
-        "~0.6pp of Strategy 6's return (see the per-strategy report's borrow table).",
+        "~0.6pp of Balanced Leverage's return (see the per-strategy report's borrow table).",
         "Alpha per dollar traded is ~7x higher in the smallest size quintile (~11x in the least liquid quintile) than in the largest, and the "
         ">90-day holding cells earn ~8x the alpha per dollar of the <=40-day cells. The book's capacity is therefore bounded by small illiquid names."])
 
     # ---- 5. options -----------------------------------------------------------------------------
-    if "opt_kelly_cap20" in set(df["name"]):
+    if "options_cap20" in set(df["name"]):
         doc.h2("5. Options book: what the return is made of, and how much of it is real")
         cur = df.set_index("name")
-        if "opt_kelly_cap20_legacy" in cur.index and "opt_kelly_cap20_conservative" in cur.index:
+        if "options_cap20_legacy" in cur.index and "options_worst_case" in cur.index:
             doc.p("**The originally reported options result does not survive a careful look at the quotes.** The original backtest marked "
                   "a missing forward quote at the previous live quote. 22% of picks have no quote at 60 days and 93% of those are zero-bid "
                   "options -- dead contracts nobody will buy -- which that convention never marked down. Corrected: "
-                  f"{cur.loc['opt_kelly_cap20_legacy', 'annualized_return']:.2%} / Sharpe {cur.loc['opt_kelly_cap20_legacy', 'sharpe']:.2f} as reported "
-                  f"-> {cur.loc['opt_kelly_cap20', 'annualized_return']:.2%} / {cur.loc['opt_kelly_cap20', 'sharpe']:.2f} "
+                  f"{cur.loc['options_cap20_legacy', 'annualized_return']:.2%} / Sharpe {cur.loc['options_cap20_legacy', 'sharpe']:.2f} as reported "
+                  f"-> {cur.loc['options_cap20', 'annualized_return']:.2%} / {cur.loc['options_cap20', 'sharpe']:.2f} "
                   "(dead quotes at half-ask, plus a $0.05 minimum tick cost) -> "
-                  f"{cur.loc['opt_kelly_cap20_conservative', 'annualized_return']:.2%} / {cur.loc['opt_kelly_cap20_conservative', 'sharpe']:.2f} "
+                  f"{cur.loc['options_worst_case', 'annualized_return']:.2%} / {cur.loc['options_worst_case', 'sharpe']:.2f} "
                   "if dead options are worth nothing. A real, smaller edge remains.")
-        att = A.options_attribution(load_result("opt_kelly_cap20"))
+        att = A.options_attribution(load_result("options_cap20"))
         c = att["concentration"]
         doc.bullets([
             f"{c['pct_calls']:.1%} of funded trades are calls, producing {c['call_share_of_gross']:.1%} of gross P&L -- across ALL deciles, "
@@ -156,9 +156,9 @@ def build_comprehensive_report(names=None, pdf=True):
         doc.h3("Execution and marking sensitivity")
         from pead.strategies import registry
         from pead.strategies.base import RunContext
-        doc.table(A.options_execution_sensitivity(registry.get("opt_kelly_cap20"), RunContext()),
+        doc.table(A.options_execution_sensitivity(registry.get("options_cap20"), RunContext()),
                   fmt={"annualized_return": "{:.2%}", "annualized_vol": "{:.2%}", "max_drawdown": "{:.1%}"}, index=False)
-        doc.p("Treat the corrected `opt_kelly_cap20` / `opt_kelly_cap30` as the options sleeve and the `_legacy` strategies as the "
+        doc.p("Treat the corrected `options_cap20` / `options_cap30` as the options sleeve and the `_legacy` strategies as the "
               "historical headline only. Everything the hedged blend says about options is built on the corrected numbers.")
 
     # ---- 6. correlations -----------------------------------------------------------------------
@@ -167,9 +167,9 @@ def build_comprehensive_report(names=None, pdf=True):
     doc.image(C.heatmap(corr, fig / "corr.png", "Daily-return correlation"), "Equity books cluster together; options are independent of them.")
     doc.bullets([
         "All market-neutral equity variants are 0.7-0.99 correlated -- they are one bet expressed several ways, so combining them adds nothing.",
-        f"Equity vs. options correlation: {corr.loc['s9b_inverse_vol', 'opt_kelly_cap20']:.2f}. The options book's correlation to the market is "
-        f"{corr.loc['market', 'opt_kelly_cap20']:.2f}; the market-neutral equity books' is ~0.",
-        "`s6_beta_overlay` is 0.94 correlated with the market by construction; it answers 'beat the S&P', not 'diversify'."])
+        f"Equity vs. options correlation: {corr.loc['calm_weighted', 'options_cap20']:.2f}. The options book's correlation to the market is "
+        f"{corr.loc['market', 'options_cap20']:.2f}; the market-neutral equity books' is ~0.",
+        "`market_boost` is 0.94 correlated with the market by construction; it answers 'beat the S&P', not 'diversify'."])
 
     # ---- 7. combination ---------------------------------------------------------------------------
     _combination_section(doc, fig, R, mk, keep)
@@ -177,7 +177,7 @@ def build_comprehensive_report(names=None, pdf=True):
     # ---- 8. recommendations ---------------------------------------------------------------------
     doc.h2("8. Conclusions and next steps")
     doc.bullets([
-        "Use `s9b_inverse_vol` as the equity alpha sleeve (validated, no fitted parameters, ahead of Strategy 6 in every era; `s10_vol_rank_tilt` is the stronger research candidate) and `opt_kelly_cap20` "
+        "Use `calm_weighted` as the equity alpha sleeve (validated, no fitted parameters, ahead of Balanced Leverage in every era; `calm_rank_tilt` is the stronger research candidate) and `options_cap20` "
         "(or the cap30 variant) as the options sleeve -- a real but modest edge once dead quotes are marked down -- and blend by equal "
         "risk (`hedged_blend`).",
         "Do not add more market-neutral equity variants -- they are one bet. New equity ideas must change the signal or the holding rule, not "
@@ -192,10 +192,10 @@ def build_comprehensive_report(names=None, pdf=True):
 
 def _combination_section(doc, fig, R, mk, keep):
     doc.h2("7. Combining an equity book with an options book")
-    e = "s9b_inverse_vol"
-    o = "opt_kelly_cap20"
+    e = "calm_weighted"
+    o = "options_cap20"
     if e not in R or o not in R:
-        doc.p("Run `s9b_inverse_vol` and `opt_kelly_cap20` first.")
+        doc.p("Run `calm_weighted` and `options_cap20` first.")
         return
     RR = R[[e, o]]
     st = {k: P.stats(RR[k]) for k in RR}
@@ -244,7 +244,7 @@ def _combination_section(doc, fig, R, mk, keep):
         f"The options book's worst year (2008, {yrs.loc[2008, o]:+.1%}) coincided with the equity book's {yrs.loc[2008, e]:+.1%}; in 2009 the signs flipped. "
         "That offset is the hedge -- it comes from low correlation across time, not from any offsetting position.",
         f"The blend's market beta is {sp:.3f}: there is nothing left for an index hedge to remove. Layering a short-index overlay on top would only "
-        "pay costs; a market-beta overlay (`s6_beta_overlay`) goes the other way, adding the equity risk premium on purpose.",
+        "pay costs; a market-beta overlay (`market_boost`) goes the other way, adding the equity risk premium on purpose.",
         "Everything here is in-sample except the walk-forward row. The caveats that apply to the sleeves apply to the blend: the options sleeve's "
         "costs, the equity sleeve's missing borrow fees, and no financing cost on the stacked multiples."])
     fr.to_csv(RUNS_DIR / "comprehensive" / "capital_split_frontier.csv")

@@ -8,7 +8,7 @@ paper trading take the same strategy as input.**
 ```bash
 pip install -r requirements.txt            # python 3.12 + pandas 3 reproduce the committed results (see Data)
 python -m pead list                        # every strategy, family, status
-python -m pead run s9b_inverse_vol         # backtest one strategy  -> results/s9b_inverse_vol/ (report included)
+python -m pead run calm_weighted         # backtest one strategy  -> results/calm_weighted/ (report included)
 python -m pead run equity                  # a whole class; or 'options', 'all', 'family:equity-volatility', 's9*'
 python -m pead compare                     # comprehensive cross-strategy report -> results/comprehensive/report.pdf
 python -m pead portfolio                   # equity x options blend study
@@ -33,12 +33,12 @@ python -m pytest tests -q
 
 | Strategy | Return | Vol | Sharpe | Max DD | Note |
 |---|---|---|---|---|---|
-| `s6_neutral_levered` (Strategy 6) | 6.5% | 4.9% | 1.30 | -16.6% | the equity reference |
-| `s9b_inverse_vol` | 6.7% | 4.5% | 1.47 | -15.6% | validated equity alpha sleeve |
-| `s10_vol_rank_tilt` | 7.1% | 3.8% | 1.81 | -11.6% | research |
-| `s6_beta_overlay` | 10.1% | 10.5% | 0.97 | -23.2% | alpha + 0.5x market: clears the S&P |
-| `opt_kelly_cap20` | 4.1% | 2.3% | 1.77 | -13.8% | corrected options book (was reported as 8.6% / 3.8) |
-| `hedged_blend` | 11.3% | 4.8% | 2.25 | -16.7% | 0.8x `s9b` + 1.6x `opt_kelly_cap20`, one NAV |
+| `balanced_leverage` | 6.5% | 4.9% | 1.30 | -16.6% | the equity reference |
+| `calm_weighted` | 6.7% | 4.5% | 1.47 | -15.6% | validated equity alpha sleeve |
+| `calm_rank_tilt` | 7.1% | 3.8% | 1.81 | -11.6% | research |
+| `market_boost` | 10.1% | 10.5% | 0.97 | -23.2% | alpha + 0.5x market: clears the S&P |
+| `options_cap20` | 4.1% | 2.3% | 1.77 | -13.8% | corrected options book (was reported as 8.6% / 3.8) |
+| `hedged_blend` | 11.3% | 4.8% | 2.25 | -16.7% | 0.8x `calm_weighted` + 1.6x `options_cap20`, one NAV |
 
 Short-borrow fees, financing and market impact are not modeled; see STRATEGIES.md section 6.
 
@@ -75,5 +75,5 @@ are tracked.
   blocks it). Point `PEAD_*_DIR` / `OPTIONMETRICS_DIR` environment variables at wherever the data lives instead
   (`pead/common/paths.py`). The master copy of the non-OptionMetrics data is `D:/OptionMetrics/pead_wrds_data/`; checkouts hold real copies.
 * **Use Python 3.12 / pandas 3.** pandas 2 assigns a handful of book-to-market terciles differently, which shifts 7 of 144 decay-day cells and
-  Strategy 6's return by ~0.2pp. Compare result CSVs numerically, never by text diff (float formatting differs at 1e-13).
+  Balanced Leverage's return by ~0.2pp. Compare result CSVs numerically, never by text diff (float formatting differs at 1e-13).
 * Known data gaps: OptionMetrics 2011 is structurally corrupt and excluded from every options result; 2013 ends in August.

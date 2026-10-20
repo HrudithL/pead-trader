@@ -1,10 +1,10 @@
 # size_balanced
 
-_equity strategy | family: equity-baseline | status: validated | derived from `extreme_decile`_
+_equity strategy | family: equity-baseline | status: validated | derived from `extreme_picks`_
 
 ## What this strategy does
 
-Extreme deciles, size-quintile neutral each quarter
+Extreme Picks, with an equal budget for each of the five company sizes
 
 **Why it should work.** PEAD is stronger in small caps; balancing by size keeps the edge but removes a size bet.
 
@@ -42,9 +42,9 @@ Strategy 1's trade, but each leg's budget is spread evenly over the size quintil
 
 Correlation of daily returns with the market: **0.00**.
 
-- best Sharpe among equity: `s10_vol_rank_tilt` (1.81); this one: 0.906
-- best return among equity: `s6_beta_overlay_aggressive` (0.15); this one: 0.0474
-- best Calmar among equity: `s10_vol_rank_tilt` (0.614); this one: 0.27
+- best Sharpe among equity: `calm_rank_tilt` (1.81); this one: 0.906
+- best return among equity: `market_boost_max` (0.15); this one: 0.0474
+- best Calmar among equity: `calm_rank_tilt` (0.614); this one: 0.27
 
 ![NAV (log scale)](figures/nav.png)
 

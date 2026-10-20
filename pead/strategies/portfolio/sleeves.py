@@ -53,23 +53,23 @@ class PortfolioStrategy(Strategy):
 
 register_instance(PortfolioStrategy(
     "hedged_blend",
-    {"s9b_inverse_vol": 0.8, "opt_kelly_cap20": 1.6},
+    {"calm_weighted": 0.8, "options_cap20": 1.6},
     "Market-neutral inverse-vol equity book (0.8x) + corrected-quote Kelly options book (1.6x), on one NAV",
     "The sleeves are uncorrelated with each other (about -0.05) and with the market (~0 / 0.18): equity alpha earned most "
     "of its return in 1996-2003 and made +10% in 2008 when the options book lost; options earned most after 2003. "
     "Weights set so each sleeve contributes equal stand-alone risk, scaled to ~5% portfolio volatility.",
-    parent="s9b_inverse_vol"))
+    parent="calm_weighted"))
 
 register_instance(PortfolioStrategy(
-    "hedged_blend_s10",
-    {"s10_vol_rank_tilt": 0.9, "opt_kelly_cap20": 1.6},
-    "The same blend with the stronger research equity sleeve (s10_vol_rank_tilt: Sharpe 1.8)",
+    "calm_blend",
+    {"calm_rank_tilt": 0.9, "options_cap20": 1.6},
+    "The same blend with the stronger research equity sleeve (calm_rank_tilt: Sharpe 1.8)",
     "As hedged_blend, with the volatility-rank equity book as the alpha sleeve.",
     parent="hedged_blend", status="research"))
 
 register_instance(PortfolioStrategy(
-    "hedged_blend_legacy_options",
-    {"s9b_inverse_vol": 0.8, "opt_kelly_cap20_legacy": 1.15},
+    "legacy_blend",
+    {"calm_weighted": 0.8, "options_cap20_legacy": 1.15},
     "The blend with the options book as originally reported (dead quotes carried forward) -- an overstated upper bound",
     "Shows how much of the blend's Sharpe came from the options sleeve's quote-marking convention.",
     parent="hedged_blend", status="reference"))

@@ -9,10 +9,10 @@ Sharpe (daily P&L / prior-day NAV). The CRSP value-weighted market over the same
 
 | | What we have | The honest verdict |
 |---|---|---|
-| **Equity PEAD (market-neutral)** | Long the best earnings surprises, short the worst, neutral to size and sector. `s9b_inverse_vol`: **6.7%/yr, 4.5% vol, Sharpe 1.47, max DD -15.6%**; `s10_vol_rank_tilt`: 7.1%, Sharpe 1.81, DD -11.6% | Real, diversified, ~0 market correlation, but **decaying** (alpha per dollar fell ~4x from 1996-01 to 2008-13) and capacity-limited (it lives in small, illiquid names). Does not beat the S&P by itself -- it is not supposed to. |
-| **Equity + beta overlay** | `s6_beta_overlay`: 10.1%/yr, Sharpe 0.97. Aggressive: 15.0%/yr, Sharpe 1.09, DD -37% | The way the equity side clears the S&P 500: alpha book + a synthetic 0.5x market position. The return above the S&P is paid for with the market's drawdown. |
+| **Equity PEAD (market-neutral)** | Long the best earnings surprises, short the worst, neutral to size and sector. `calm_weighted`: **6.7%/yr, 4.5% vol, Sharpe 1.47, max DD -15.6%**; `calm_rank_tilt`: 7.1%, Sharpe 1.81, DD -11.6% | Real, diversified, ~0 market correlation, but **decaying** (alpha per dollar fell ~4x from 1996-01 to 2008-13) and capacity-limited (it lives in small, illiquid names). Does not beat the S&P by itself -- it is not supposed to. |
+| **Equity + beta overlay** | `market_boost`: 10.1%/yr, Sharpe 0.97. Aggressive: 15.0%/yr, Sharpe 1.09, DD -37% | The way the equity side clears the S&P 500: alpha book + a synthetic 0.5x market position. The return above the S&P is paid for with the market's drawdown. |
 | **Options (Kelly selection)** | **Reported 8.6%/yr, Sharpe 3.8. After fixing a quote-handling error: 4.1%/yr, Sharpe 1.8** (2.3% / 1.0 if dead options are worth zero) | A real but much smaller edge than the number everyone has been quoting. See section 4 -- this is the most important finding in this document. |
-| **Hedged blend** | `hedged_blend` = 0.8x `s9b` + 1.6x `opt_kelly_cap20` on one NAV: **11.3%/yr, 4.8% vol, Sharpe 2.25, DD -16.7%** | The two books are uncorrelated (-0.05) and cover each other's weak eras, so the blend is better than either. In-sample except where noted. |
+| **Hedged blend** | `hedged_blend` = 0.8x `calm_weighted` + 1.6x `options_cap20` on one NAV: **11.3%/yr, 4.8% vol, Sharpe 2.25, DD -16.7%** | The two books are uncorrelated (-0.05) and cover each other's weak eras, so the blend is better than either. In-sample except where noted. |
 | **Volatility strategies (9, 10)** | Size by inverse volatility, or by volatility rank | They improve Sharpe (1.30 -> 1.47 -> 1.81), not return. The "underperformance" is that vol is a risk-sizing tool, not a new source of alpha. Section 3 says where the headroom actually is. |
 
 ## 1. Shared mechanics (so the strategy sections can be short)
@@ -25,7 +25,7 @@ direction of the surprise for weeks afterward.
 decay, measured empirically (`cell_decay_days.csv`) -- from ~30 to 200 days -- not a fixed horizon.
 
 **Returns.** Market-neutral books use returns minus the CRSP value-weighted market return, so a position's P&L is
-performance *relative to the market*. (Strategy 7 and the beta overlay use raw returns on purpose.)
+performance *relative to the market*. (Market Exposed and Market Boost use raw returns on purpose.)
 
 **The engine** (`pead/engines/equity.py`): position size = weight x a base unit that is **re-set every quarter from the
 previous quarter-end NAV** (real compounding, no same-day feedback); each position capped at 5% of the stock's 21-day
@@ -45,7 +45,7 @@ round-trip costs of 5-25 bp by liquidity quintile. No short-borrow fees and no f
 
 For **every** equity strategy the short leg loses money in absolute terms while the long leg earns several times the total:
 
-| Strategy 6 | long leg | short leg |
+| Balanced Leverage | long leg | short leg |
 |---|---|---|
 | P&L before costs | **+$42.7M** | **-$11.8M** |
 | of which "common" (average event stock vs. the market) | +$26.9M | -$27.7M |
@@ -57,7 +57,7 @@ For **every** equity strategy the short leg loses money in absolute terms while 
 Read it carefully. The headline asymmetry is a **benchmark artifact, not a signal failure**: the average event stock
 beat the cap-weighted market by ~1.5% over its holding window (small-cap tilt plus the earnings-announcement premium).
 That flatters the long leg and penalizes the short leg by the same ~$27M. Strip it out and **the surprise signal earns
-exactly the same on both legs** ($15.9M each). The shorts are paying their way -- they are just paid in relative performance,
+exactly the same on both legs** ($15.9M each). (That equality depends on the benchmark: against same-size announcers the long leg earns about twice the short leg; see docs/STRATEGY_PROFILES.md.) The shorts are paying their way -- they are just paid in relative performance,
 not in absolute declines. Consequences:
 
 * The legs' daily P&L are **-0.81 correlated**. The short leg is the hedge that removes the long leg's variance. A long-only
@@ -65,9 +65,9 @@ not in absolute declines. Consequences:
 * Do not "fix" the short leg by dropping it. If it ever needs fixing, hedge the *common* component with an index and keep the
   shorts for their excess return.
 * **Short-borrow is not in the backtest** and the short leg is small-cap-heavy. Each 1%/yr of borrow costs ~0.6pp of return
-  (5%/yr takes Strategy 6 from 6.5% to 2.6%). This is the biggest unmodeled risk on the equity side.
+  (5%/yr takes Balanced Leverage from 6.5% to 2.6%). This is the biggest unmodeled risk on the equity side.
 
-### 2.2 Where the alpha sits (Strategy 6; Strategy 9b looks the same)
+### 2.2 Where the alpha sits (Balanced Leverage; Calm Weighted looks the same)
 
 | Slice | Share of net alpha | Alpha per $ traded | Comment |
 |---|---|---|---|
@@ -77,28 +77,28 @@ not in absolute declines. Consequences:
 | Least-liquid quintile | 23% on 7% of notional | **249 bp** | vs 22 bp in the most liquid. |
 | Holding window > 90 days | **42%** on 10% of notional | **303 bp** | vs 37 bp for windows <= 40 days. Long-decay cells carry the strategy. |
 | Era 1996-01 / 2002-07 / 2008-13 | 38% / 41% / 21% | 136 / 89 / **33 bp** | Alpha per dollar fell ~4x: the arbitrage is crowding. |
-| Low / mid / high idiosyncratic vol | 41% / 37% / 22% | 88 / 82 / 49 bp | Why Strategy 9 sizes by volatility. |
+| Low / mid / high idiosyncratic vol | 41% / 37% / 22% | 88 / 82 / 49 bp | Why the Calm strategies size by volatility. |
 | Sectors | Energy 16%, Shops 13%, Health 11%, Money 11% ... Telecom 1% | | Broad -- sector neutrality does what it should. |
 
 ### 2.3 The strategy catalog
 
 | Strategy (registry name) | What it does | Why it is good | Return / vol / Sharpe / max DD |
 |---|---|---|---|
-| **1** `extreme_decile` | Long D10, short D1, equal weight, per-cell holding windows | The cleanest statement of PEAD; the baseline everything is compared to | 4.9% / 5.3% / 0.93 / -18.5% |
-| **2** `rank_weighted` | All deciles, weight ~ rank distance from the median | Diversified across the whole cross-section, lowest vol | 3.9% / 3.9% / 1.01 / -14.0% |
-| **3** `size_balanced` | Strategy 1 with equal budget per size quintile | Removes the hidden size bet (extremes are mostly micro-caps) | 4.7% / 5.3% / 0.91 / -17.5% |
-| **4** `s4_tilted_size_neutral` | Trim the middle 30% of ranks, tilt to extremes, size-neutral, drop lowest-conviction first when capped | Fixes why rank-weighting under-earned: 4x more positions saturated the caps | 5.2% / 4.4% / 1.18 / -13.1% |
-| **5** `s5_sector_neutral` | Strategy 4 + FF12 sector neutrality | A diagnostic found up to 29% of gross in one sector (8.3% if even): an unpriced, PEAD-irrelevant bet | 4.1% / 3.0% / 1.33 / **-10.8%** |
-| **6** `s6_neutral_levered` | Strategy 5 weights, gross cap 2.5x | With sector+size neutrality the cap protected nothing: return 4.1% -> 6.5% at the same Sharpe | 6.5% / 4.9% / 1.30 / -16.6% |
-| **6+** `s6_beta_overlay` | Strategy 6 + a synthetic market position of 0.5x NAV (2bp cost, rebalanced quarterly) | 130/30-style long extension: alpha untouched, equity risk premium added on top. Clears the S&P. | **10.1%** / 10.5% / 0.97 / -23.2% |
-| **7** `s7_directional` | Cells neutralized across sides together, raw returns | *Cautionary:* raw returns, so every position carries its own market beta; net dollar exposure is only ~10% of gross (like every other book) yet the book is **0.52 correlated with the market** -- equal dollars are not equal beta | 7.3% / 6.6% / 1.11 / -15.5% |
-| **9b** `s9b_inverse_vol` | Strategy 6 x 1/ivol inside each neutralization cell | No fitted parameters; better in all three eras; PEAD is worth more per unit of risk in calm stocks | 6.7% / 4.5% / **1.47** / -15.6% |
-| 9a, 9c | Walk-forward drop of (side, vol tercile) cells; both together | *Negative result:* filtering does not help (1.23, 1.41 < 1.47). The effect is a gradient, not one broken cell | 6.3% / 5.0% / 1.23, 6.5% / 4.6% / 1.41 |
-| **10** `s10_vol_rank_tilt` | Strategy 6 x (1.02 - prior-quarter vol percentile)^2 | Rank-based (no vol-level or clip dependence), leak-free, all but switches off the wildest names | 7.1% / 3.8% / **1.81** / **-11.6%** |
-| 10 levered | Same, base unit 0.005, 4x cap | Spends the lower volatility on size | 9.2% / 5.2% / 1.73 / -15.9% |
-| `*_aggressive` | Each design at 6x gross cap and a larger base unit (the highest return with Sharpe >= 0.6 and DD >= -40%) | Shows what each can deliver if drawdown tolerance is the only limit | e.g. S6: 12.2% / 12.2% / 1.00 / -36.5%; S6+overlay: **15.0%** / 13.7% / 1.09 / -37.0% |
+| `extreme_picks` | Long D10, short D1, equal weight, per-cell holding windows | The cleanest statement of PEAD; the baseline everything is compared to | 4.9% / 5.3% / 0.93 / -18.5% |
+| `graded_bets` | All deciles, weight ~ rank distance from the median | Diversified across the whole cross-section, lowest vol | 3.9% / 3.9% / 1.01 / -14.0% |
+| `size_balanced` | Extreme Picks with equal budget per size quintile | Removes the hidden size bet (extremes are mostly micro-caps) | 4.7% / 5.3% / 0.91 / -17.5% |
+| `conviction_tilt` | Trim the middle 30% of ranks, tilt to extremes, size-neutral, drop lowest-conviction first when capped | Fixes why rank-weighting under-earned: 4x more positions saturated the caps | 5.2% / 4.4% / 1.18 / -13.1% |
+| `sector_balanced` | Conviction Tilt + FF12 sector neutrality | A diagnostic found up to 29% of gross in one sector (8.3% if even): an unpriced, PEAD-irrelevant bet | 4.1% / 3.0% / 1.33 / **-10.8%** |
+| `balanced_leverage` | Sector Balanced weights, gross cap 2.5x | With sector+size neutrality the cap protected nothing: return 4.1% -> 6.5% at the same Sharpe | 6.5% / 4.9% / 1.30 / -16.6% |
+| `market_boost` | Balanced Leverage + a synthetic market position of 0.5x NAV (2bp cost, rebalanced quarterly) | 130/30-style long extension: alpha untouched, equity risk premium added on top. Clears the S&P. | **10.1%** / 10.5% / 0.97 / -23.2% |
+| `market_exposed` | Cells neutralized across sides together, raw returns | *Cautionary:* raw returns, so every position carries its own market beta; net dollar exposure is only ~10% of gross (like every other book) yet the book is **0.52 correlated with the market** -- equal dollars are not equal beta | 7.3% / 6.6% / 1.11 / -15.5% |
+| `calm_weighted` | Balanced Leverage x 1/ivol inside each neutralization cell | No fitted parameters; better in all three eras; PEAD is worth more per unit of risk in calm stocks | 6.7% / 4.5% / **1.47** / -15.6% |
+| `volatility_filter`, `calm_weighted_filter` | Walk-forward drop of (side, vol tercile) cells; both together | *Negative result:* filtering does not help (1.23, 1.41 < 1.47). The effect is a gradient, not one broken cell | 6.3% / 5.0% / 1.23, 6.5% / 4.6% / 1.41 |
+| `calm_rank_tilt` | Balanced Leverage x (1.02 - prior-quarter vol percentile)^2 | Rank-based (no vol-level or clip dependence), leak-free, all but switches off the wildest names | 7.1% / 3.8% / **1.81** / **-11.6%** |
+| `calm_rank_levered` | Same, base unit 0.005, 4x cap | Spends the lower volatility on size | 9.2% / 5.2% / 1.73 / -15.9% |
+| `*_max` | Each design at 6x gross cap and a larger base unit (the highest return with Sharpe >= 0.6 and DD >= -40%) | Shows what each can deliver if drawdown tolerance is the only limit | e.g. S6: 12.2% / 12.2% / 1.00 / -36.5%; S6+overlay: **15.0%** / 13.7% / 1.09 / -37.0% |
 
-Strategies 5 and 6 aggressive converge to the same configuration (same weights; Strategy 6's only edge was a higher starting
+Sector Balanced Max and Balanced Leverage Max converge to the same configuration (same weights; Balanced Leverage's only edge was a higher starting
 cap). All the market-neutral variants are 0.7-0.99 correlated with each other -- they are one bet expressed several ways, so
 blending them adds nothing.
 
@@ -107,7 +107,7 @@ blending them adds nothing.
 **What the vol work actually found.** In idiosyncratic-volatility terciles the D10-D1 spread is +4.3% (low), +3.3%, +2.1%
 (high); the Fama-MacBeth SUE x vol interaction is t = -2.4 to -2.7, and volatility alone has no effect on returns (t ~ -0.1).
 So vol does not create alpha, it *modulates how much a given SUE signal is worth* -- which makes it a **sizing** input.
-That is why inverse-vol sizing works (9b), outright filtering does not (9a/9c), and why "dropping the high-vol tercile"
+That is why inverse-vol sizing works (Calm Weighted), outright filtering does not (Volatility Filter and Calm Weighted Filter), and why "dropping the high-vol tercile"
 (in-sample, look-ahead) only reaches Sharpe 1.73.
 
 **Why it feels like it underperforms.** Sizing by risk moves the *risk-adjusted* result (Sharpe 1.30 -> 1.47 -> 1.81, drawdown
@@ -115,7 +115,7 @@ That is why inverse-vol sizing works (9b), outright filtering does not (9a/9c), 
 sits in a small-cap, illiquid, decaying pool: the 5%-of-volume cap binds on 11% of positions already, and returns per dollar fell
 ~4x across the sample. The spare risk budget is the room to grow.
 
-**What was tested (all on the same engine; Strategy 9b = 1.47 baseline):**
+**What was tested (all on the same engine; Calm Weighted = 1.47 baseline):**
 
 | Experiment | Result | Verdict |
 |---|---|---|
@@ -129,8 +129,8 @@ sits in a small-cap, illiquid, decaying pool: the 5%-of-volume cap binds on 11% 
 | Split-sample check on k | Exponent picked on 1996-2004 data alone (best k ~ 3) lifts 2005-2013 Sharpe 0.93 -> 1.10, equal to the full-sample best | The gain is not one period's artifact |
 | More size at the same cap (base unit 0.004 / 0.005 / 4x cap / 6x cap) | 8.2% @ 1.77 / 9.2% @ 1.73 / 10.0% @ 1.69 | Return rises, 2008-13 Sharpe decays (0.78 -> 0.41-0.62) as the liquidity cap bites |
 
-`s10_vol_rank_tilt` is the result of that search. Its status is `research`, not `validated`: the exponent and sizing were chosen
-after seeing 9b's full-sample numbers (the split-sample row is the only out-of-sample evidence).
+`calm_rank_tilt` is the result of that search. Its status is `research`, not `validated`: the exponent and sizing were chosen
+after seeing Calm Weighted's full-sample numbers (the split-sample row is the only out-of-sample evidence).
 
 **Ranked list of remaining headroom** (each a hypothesis the attribution supports, not a result):
 1. *Market-hedge the common component.* ~$27M of long-side P&L and -$28M of short-side P&L is the average event stock vs. the cap-weighted
@@ -172,7 +172,7 @@ sections below test.
 
 ### 4.2 Where the return comes from
 
-On the corrected backtest (`opt_kelly_cap20`: 4.1%/yr, Sharpe 1.77):
+On the corrected backtest (`options_cap20`: 4.1%/yr, Sharpe 1.77):
 
 * **98.2% of funded trades are calls**, producing 96.5% of gross P&L -- including in decile 1, where puts "should" win. The selector found cheap
   OTM calls better value than puts even after bad news. Puts are 1.8% of trades.
@@ -192,11 +192,11 @@ price forward never marks a dying option down, which flatters exactly the cheap 
 
 | Options book (20% premium cap, 60-day hold) | Return | Vol | Sharpe | Max DD |
 |---|---|---|---|---|
-| As originally reported (carry last quote, flat 3% cost) -- `opt_kelly_cap20_legacy` | 8.58% | 2.18% | 3.78 | -10.3% |
+| As originally reported (carry last quote, flat 3% cost) -- `options_cap20_legacy` | 8.58% | 2.18% | 3.78 | -10.3% |
 | Dead quotes marked at half-ask, flat 3% cost | 5.87% | 2.29% | 2.50 | -12.7% |
-| **+ at least a $0.05 tick of round-trip cost per share -- `opt_kelly_cap20`** | **4.12%** | 2.30% | **1.77** | -13.8% |
-| Dead quotes worth zero -- `opt_kelly_cap20_conservative` | 2.34% | 2.37% | 0.99 | -17.1% |
-| 30% cap, corrected -- `opt_kelly_cap30` | 5.69% | 3.61% | 1.55 | -22.3% |
+| **+ at least a $0.05 tick of round-trip cost per share -- `options_cap20`** | **4.12%** | 2.30% | **1.77** | -13.8% |
+| Dead quotes worth zero -- `options_worst_case` | 2.34% | 2.37% | 0.99 | -17.1% |
+| 30% cap, corrected -- `options_cap30` | 5.69% | 3.61% | 1.55 | -22.3% |
 
 (The fix lives upstream too: the forward-price prep stage now keeps bid and ask, and the engine marks a zero-bid checkpoint at half the ask.)
 
@@ -211,23 +211,23 @@ choice, not extra edge.
 a long-convexity, mildly bullish position -- and the equity book is market-neutral. They also cover each other's weak eras: equity earned most of its
 return in 1996-2003 and made **+10.6% in 2008** when options lost 10.0%; options earned most after 2003; in 2009 the signs flipped.
 
-**The blend** (`hedged_blend`): `0.8 x s9b_inverse_vol + 1.6 x opt_kelly_cap20` on one NAV, daily rebalanced. The multiples are chosen so each sleeve contributes
+**The blend** (`hedged_blend`): `0.8 x calm_weighted + 1.6 x options_cap20` on one NAV, daily rebalanced. The multiples are chosen so each sleeve contributes
 equal stand-alone volatility, scaled to ~5% portfolio volatility. They are multiples of each sleeve's own sizing, not shares of capital: the options sleeve spends only its
 premium budget and the equity sleeve is margin-financed long/short, so both fit on one NAV.
 
 | | Return | Vol | Sharpe | Max DD | 1996-01 / 2002-07 / 2008-13 Sharpe |
 |---|---|---|---|---|---|
-| `s9b_inverse_vol` alone | 6.7% | 4.5% | 1.47 | -15.6% | 2.40 / 1.63 / 0.59 |
-| `opt_kelly_cap20` alone | 4.1% | 2.3% | 1.77 | -13.8% | 0.69 / 2.04 / 2.39 |
+| `calm_weighted` alone | 6.7% | 4.5% | 1.47 | -15.6% | 2.40 / 1.63 / 0.59 |
+| `options_cap20` alone | 4.1% | 2.3% | 1.77 | -13.8% | 0.69 / 2.04 / 2.39 |
 | **`hedged_blend`** | **11.3%** | 4.8% | **2.25** | -16.7% | 2.41 / 2.70 / 1.91 |
-| `hedged_blend_s10` (research equity sleeve) | 12.4% | 4.7% | 2.50 | -15.5% | 2.92 / 2.84 / 2.10 |
-| `hedged_blend_legacy_options` (the overstated upper bound) | 14.2% | 4.2% | 3.21 | -9.9% | |
+| `calm_blend` (research equity sleeve) | 12.4% | 4.7% | 2.50 | -15.5% | 2.92 / 2.84 / 2.10 |
+| `legacy_blend` (the overstated upper bound) | 14.2% | 4.2% | 3.21 | -9.9% | |
 
 The blend's Sharpe is stable across eras (the sleeves' strengths alternate) and its market beta is 0.037, so **a market hedge would only add cost**; the equity
 sleeve is already the hedge. Capital-split blends (weights summing to 1) and the walk-forward max-Sharpe weights give Sharpe 2.0-2.25 at 2-3% volatility
 (`python -m pead compare`, section 7); only the walk-forward row is out of sample.
 
-If the goal is to beat the S&P rather than to minimize risk, the same logic applies to the other axis: `s6_beta_overlay` or its aggressive variant supplies the
+If the goal is to beat the S&P rather than to minimize risk, the same logic applies to the other axis: `market_boost` or its aggressive variant supplies the
 equity premium (10-15%/yr) at a market-like drawdown; the options sleeve adds an uncorrelated 4-6% at ~2-4% vol.
 
 ## 6. What none of these numbers include
@@ -239,4 +239,4 @@ equity premium (10-15%/yr) at a market-like drawdown; the options sleeve adds an
 * **Survivorship in the live universe:** the backtest trades the full CRSP universe; live paper trading uses the S&P 500, where alpha per dollar is much lower
   (largest size quintile: 28 bp/$ vs 203).
 * **2011** (the OptionMetrics file is structurally corrupt) and the truncated **2013** in all options results.
-* Parameters of Strategies 9b and 10 and the options caps were chosen on the same 1996-2013 sample they are reported on.
+* Parameters of Calm Weighted and Calm Rank Tilt and the options caps were chosen on the same 1996-2013 sample they are reported on.

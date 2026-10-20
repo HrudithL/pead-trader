@@ -74,17 +74,17 @@ class KellyOptimal(OptionsStrategy):
 
 # Realistic costing: the corrected zero-bid mark (engine default) plus at least one $0.05 option tick of round-trip
 # cost per share on top of the 3% -- cheap contracts cannot be traded for 3% of a $0.10 premium.
-register_instance(KellyOptimal("opt_kelly_cap20", 0.20, min_roundtrip_cost_per_share=0.05,
+register_instance(KellyOptimal("options_cap20", 0.20, min_roundtrip_cost_per_share=0.05,
                                description="Kelly picks, 20% premium cap, dead quotes marked at half-ask, >= $0.05/share cost"))
-register_instance(KellyOptimal("opt_kelly_cap30", 0.30, parent="opt_kelly_cap20", min_roundtrip_cost_per_share=0.05,
+register_instance(KellyOptimal("options_cap30", 0.30, parent="options_cap20", min_roundtrip_cost_per_share=0.05,
                                description="Kelly picks, 30% premium cap, dead quotes marked at half-ask, >= $0.05/share cost"))
 # The conservative bound: a dying option is worth nothing (liquidating means hitting the zero bid).
-register_instance(KellyOptimal("opt_kelly_cap20_conservative", 0.20, parent="opt_kelly_cap20", status="research",
+register_instance(KellyOptimal("options_worst_case", 0.20, parent="options_cap20", status="research",
                                min_roundtrip_cost_per_share=0.05, dead_quote_mark="zero_bid_zero",
-                               description="opt_kelly_cap20 with dead quotes worth zero -- the pessimistic bound"))
+                               description="options_cap20 with dead quotes worth zero -- the pessimistic bound"))
 # As ORIGINALLY reported (dead quotes carried forward at their last live price, flat 3% cost). Kept so the old
 # headline numbers stay reproducible and so the size of the convention's effect stays visible -- not for use.
-for _cap, _par in ((0.20, None), (0.30, "opt_kelly_cap20_legacy"), (0.40, "opt_kelly_cap20_legacy")):
-    register_instance(KellyOptimal(f"opt_kelly_cap{int(_cap * 100)}_legacy", _cap, parent=_par, status="reference",
+for _cap, _par in ((0.20, None), (0.30, "options_cap20_legacy"), (0.40, "options_cap20_legacy")):
+    register_instance(KellyOptimal(f"options_cap{int(_cap * 100)}_legacy", _cap, parent=_par, status="reference",
                                    dead_quote_mark="carry_last",
                                    description=f"Kelly picks, {int(_cap * 100)}% cap, ORIGINAL convention: dead quotes carried forward, flat 3% cost"))
