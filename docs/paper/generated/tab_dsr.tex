@@ -1,0 +1,18 @@
+{\small
+\begin{adjustbox}{max width=\linewidth}
+\begin{tabular}{lrrrrrr}
+\toprule
+Book & $N$ & Active Sharpe & $\widehat{\mathrm{SR}}_0$ & PSR vs 0 & DSR & $N^\ast$ for DSR$<0.95$ \\
+\midrule
+\sn{calm_weighted} & 348 & 1.28 & 0.72 & 1.000 & 0.99 & 3{,}607 \\
+\sn{calm_rank_tilt} & 348 & 1.52 & 0.72 & 1.000 & 1.00 & 259{,}589 \\
+\sn{balanced_leverage} & 348 & 1.13 & 0.72 & 1.000 & 0.95 & 411 \\
+\sn{balanced_leverage_max} & 348 & 0.71 & 0.72 & 0.999 & 0.49 & 7 \\
+\sn{options_cap20} & 35 & 0.17 & 2.82 & 0.739 & 0.00 & 2 \\
+\sn{options_cap30} & 35 & $-$0.02 & 2.82 & 0.473 & 0.00 & 2 \\
+\sn{hedged_blend} & 348 & 1.13 & 0.72 & 1.000 & 0.96 & 469 \\
+\sn{calm_blend} & 348 & 1.33 & 0.72 & 1.000 & 0.99 & 9{,}060 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+}

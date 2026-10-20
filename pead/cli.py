@@ -5,6 +5,7 @@
   report <name...>              (re)build the per-strategy report from a saved run
   compare [<name...>]           comprehensive cross-strategy report (correlations, combinations, attribution)
   portfolio                     optimal equity + options hedged blend
+  paper [--no-pdf]              rebuild the research paper (numbers, tables, figures, PDF) from results/
   prep <stage...> | prep --list build the data inputs the backtests read (WRDS / OptionMetrics stages)
   live <command>                paper-trading engine
 """
@@ -14,6 +15,9 @@ import sys
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "paper":
+        from pead.reporting.paper import main as paper_main
+        return paper_main(argv[1:])
     if argv and argv[0] in ("prep", "live"):          # these own their argument parsing (flags pass straight through)
         if argv[0] == "prep":
             from pead.prep.stages import main as prep_main
