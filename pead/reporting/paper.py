@@ -28,6 +28,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -49,6 +50,7 @@ MAIN_REPO = Path(os.environ.get(
     "PEAD_MAIN_REPO",
     r"C:\Users\hrudi\Documents\BEI\PEAD_Trading\.claude\worktrees\strategy-analysis-backtest-481b86"))
 
+FIXED_DATA = Path(os.environ.get("PEAD_FIXED_DATA", str(ROOT.parent / "vintage_fixed" / "data")))   # corrected data vintage
 HORIZONS = [1, 5, 10, 20, 40, 60]
 TRADING_DAYS = 252
 # Assumptions of the stylized model in Section 2 (not estimated from data): used only to evaluate the elasticity band.
@@ -255,11 +257,12 @@ def external(runs, refresh=False):
     stamps_now = {n: _stamp(RES / n / "summary.json") for n in ("balanced_leverage", "options_cap20")}
     pos_bl = MAIN_REPO / "results" / "balanced_leverage" / "positions.parquet"
     pos_op = MAIN_REPO / "results" / "options_cap20" / "positions.parquet"
-    events_p = MAIN_REPO / "data" / "equity_vol_panel.parquet"
+    events_p = FIXED_DATA / "equity_vol_panel.parquet"           # corrected (point-in-time) event panel
     mkt_p = MAIN_REPO / "data" / "normalized_equity" / "market_benchmark.parquet"
+    dec_p = FIXED_DATA / "decile_events.parquet"
     same_run = all(_stamp(MAIN_REPO / "results" / n / "summary.json") == stamps_now[n] and stamps_now[n] is not None
                    for n in stamps_now)
-    can = same_run and all(p.exists() for p in (pos_bl, pos_op, events_p, mkt_p))
+    can = same_run and all(p.exists() for p in (pos_bl, pos_op, events_p, mkt_p, dec_p))
     if can and not refresh and cache_json.exists() and cache_mkt.exists():
         prev = json.loads(cache_json.read_text(encoding="utf-8"))
         if prev.get("stamps") == stamps_now:          # same run: nothing to recompute
@@ -270,6 +273,11 @@ def external(runs, refresh=False):
         ext.update(_beta_vol(pos_bl, events_p))
         ext.update(_option_trades(pos_op))
         ext.update(_events_facts(events_p))
+        ext.update(_evidence_from_events(dec_p))
+        PIT = CACHE / "pit"
+        PIT.mkdir(exist_ok=True)
+        for f in ("ff_decile_horizon_stats.csv", "ff_spread_horizon_stats.csv", "ff_coverage_stats.csv", "cell_decay_days.csv"):
+            shutil.copyfile(FIXED_DATA / f, PIT / f)
         mk = pd.read_parquet(mkt_p, columns=["date", "vwretd", "ewretd"]).drop_duplicates("date").sort_values("date")
         mk["date"] = pd.to_datetime(mk["date"])
         mk.to_csv(cache_mkt, index=False)
@@ -287,6 +295,41 @@ def external(runs, refresh=False):
         mk = pd.read_csv(cache_mkt, parse_dates=["date"])
         return ext, mk
     raise SystemExit("No positions/event data reachable (PEAD_MAIN_REPO) and no cache in docs/paper/cache/.")
+
+
+def _fm(x):
+    x = x.dropna()
+    return float(x.mean()), float(x.std(ddof=1) / np.sqrt(len(x))), len(x)
+
+
+def _evidence_from_events(path):
+    """Fama-MacBeth decile means, D10-D1 spreads and subsample spreads recomputed from the corrected event file
+    (market-adjusted forward returns). The same function reproduces the committed pre-correction tables exactly
+    when run on the old file (checked when this was written)."""
+    e = pd.read_parquet(path)
+    dec, spr = [], []
+    for h in HORIZONS:
+        c = f"ret_fwd_{h}d_mktadj"
+        d = e.dropna(subset=[c, "decile"])
+        q = d.groupby(["ann_quarter", "decile"])[c].mean().unstack()
+        for k in range(1, 11):
+            m, se, n = _fm(q[k])
+            dec.append(dict(horizon=h, decile=k, mean=m, se=se, t_stat=m / se, n_events=int((d.decile == k).sum()), n_quarters=n))
+        m, se, n = _fm(q[10] - q[1])
+        spr.append(dict(horizon=h, mean_spread=m, se=se, t_stat=m / se, n_quarters=n))
+    c = "ret_fwd_60d_mktadj"
+    subs = {}
+    for tag, col in (("size", "size_quintile"), ("era", "era"), ("sector", "ff12_sector")):
+        rows = []
+        for g, d in e.dropna(subset=[col]).groupby(col):
+            d = d.dropna(subset=[c, "decile"])
+            q = d.groupby(["ann_quarter", "decile"])[c].mean().unstack()
+            if 1 not in q or 10 not in q:
+                continue
+            m, se, n = _fm(q[10] - q[1])
+            rows.append(dict(group=str(g), mean_spread=m, se=se, t_stat=m / se, n_events=int(len(d)), n_quarters=n))
+        subs[tag] = rows
+    return {"evidence": dict(dec=dec, spr=spr, subs=subs, n_events=int(len(e)), source=str(path.name))}
 
 
 def _tstat_q(s):
@@ -397,6 +440,7 @@ def compute(S, runs, ext, mkt):
         S.put(f"{n}.dd", s["max_drawdown"], pc(s["max_drawdown"], 1))
         S.put(f"{n}.calmar", s["calmar"], f2(s["calmar"]))
         S.put(f"{n}.nav", s["final_nav"], usd_m(s["final_nav"]))
+        S.put(f"{n}.status", runs[n]["status"], tx(runs[n]["status"]))
         for k, lab in (("sharpe_1996_2001", "shA"), ("sharpe_2002_2007", "shB"), ("sharpe_2008_2013", "shC")):
             S.put(f"{n}.{lab}", s[k], f2(s[k]))
         d = daily(n)
@@ -444,7 +488,10 @@ def compute(S, runs, ext, mkt):
 
     # ---------- market (CRSP value-weighted) ----------
     m = mkt.set_index("date")["vwretd"].fillna(0.0)
-    m = m.loc["1996":"2013-12-31"]
+    # same calendar the strategy statistics use (first to last day of the equity daily series), so the comparison is like for like
+    d0, d1 = daily_cache["calm_weighted"]["date"].iloc[0], daily_cache["calm_weighted"]["date"].iloc[-1]
+    m = m.loc[d0:d1]
+    S.put("market.window", f"{d0.year}--{d1.year}", f"{d0.year}--{d1.year}")
     mnav = (1 + m).cumprod()
     mdd = (mnav / mnav.cummax() - 1).min()
     ann = mnav.iloc[-1] ** (TRADING_DAYS / len(m)) - 1
@@ -464,6 +511,7 @@ def compute(S, runs, ext, mkt):
     frontier_section(S, ctx)
     inference_section(S, ctx)
     sentences(S, ctx)
+    ladder_section(S, ctx)
     audit_section(S, ctx)
     reproducibility_section(S, ctx)
     return ctx
@@ -496,21 +544,46 @@ def leader(S, runs, meta):
 
 # ------------------------------------------------------------------------------------------------------
 def signal_evidence(S, ctx):
-    dec = read_csv("decile_horizon_stats.csv")
-    ffd = read_csv("ff_decile_horizon_stats.csv")
-    spr = read_csv("spread_horizon_stats.csv").set_index("horizon")
-    ffs = read_csv("ff_spread_horizon_stats.csv").set_index("horizon")
+    # Equity signal tables use the CORRECTED (point-in-time decile) vintage, recomputed from the corrected event file or
+    # read from docs/paper/cache; the committed data/ tables are the pre-correction (within-quarter ranking) vintage and
+    # are kept only for the before/after comparison. Option-spread, option-coverage, reversal and volatility-diagnostic
+    # tables exist only in the pre-correction vintage and are labelled as such in the text.
+    pit = ctx["ext"]["evidence"]
+    PIT = CACHE / "pit"
+    dec = pd.DataFrame(pit["dec"])
+    ffd = pd.read_csv(PIT / "ff_decile_horizon_stats.csv")
+    spr = pd.DataFrame(pit["spr"]).set_index("horizon")
+    ffs = pd.read_csv(PIT / "ff_spread_horizon_stats.csv").set_index("horizon")
+    pre_spr = read_csv("spread_horizon_stats.csv").set_index("horizon")
+    pre_ffs = read_csv("ff_spread_horizon_stats.csv").set_index("horizon")
     osp = read_csv("option_spread_horizon_stats.csv")
     ocov = read_csv("option_coverage_stats.csv")
-    cov = read_csv("ff_coverage_stats.csv").iloc[0]
-    size = read_csv("subsample_size.csv").sort_values("group")
-    era = read_csv("subsample_era.csv")
+    cov = pd.read_csv(PIT / "ff_coverage_stats.csv").iloc[0]
+    size = pd.DataFrame(pit["subs"]["size"]).assign(group=lambda d: d["group"].astype(float).astype(int)).sort_values("group")
+    era = pd.DataFrame(pit["subs"]["era"])
     era["start"] = era["group"].str[:4].astype(int)
     era = era.sort_values("start")
-    sec = read_csv("subsample_sector.csv").sort_values("mean_spread")
+    sec = pd.DataFrame(pit["subs"]["sector"]).sort_values("mean_spread")
     rev = json.loads((DATA / "sue_reversal_summary.json").read_text(encoding="utf-8"))
-    decay = read_csv("cell_decay_days.csv")
-    ctx.update(dec=dec, ffd=ffd, spr=spr, ffs=ffs, osp=osp, size=size, era=era, sec=sec)
+    decay = pd.read_csv(PIT / "cell_decay_days.csv")
+    ctx.update(dec=dec, ffd=ffd, spr=spr, ffs=ffs, osp=osp, size=size, era=era, sec=sec, pre_spr=pre_spr, pre_ffs=pre_ffs)
+    for h in HORIZONS:
+        S.put(f"pre.spread.mkt.h{h}", float(pre_spr.loc[h, "mean_spread"]), f"{pre_spr.loc[h, 'mean_spread'] * 100:.2f}\\%")
+        S.put(f"pre.spread.ff.h{h}", float(pre_ffs.loc[h, "mean_spread"]), f"{pre_ffs.loc[h, 'mean_spread'] * 100:.2f}\\%")
+        S.put(f"pre.spread.mkt.t.h{h}", float(pre_spr.loc[h, "t_stat"]), f"{pre_spr.loc[h, 't_stat']:.2f}")
+    S.put("pre.Q", int(read_csv("decile_horizon_stats.csv")["n_quarters"].max()), str(int(read_csv("decile_horizon_stats.csv")["n_quarters"].max())))
+    S.put("pre.n_events", int(read_csv("ff_coverage_stats.csv").iloc[0]["n_events"]), intc(read_csv("ff_coverage_stats.csv").iloc[0]["n_events"]))
+    rows = []
+    for h in HORIZONS:
+        rows.append([f"$+{h}$d", f2(pre_spr.loc[h, "mean_spread"] * 100), f2(pre_spr.loc[h, "t_stat"]), f2(spr.loc[h, "mean_spread"] * 100), f2(spr.loc[h, "t_stat"]),
+                     f2(pre_ffs.loc[h, "mean_spread"] * 100), f2(pre_ffs.loc[h, "t_stat"]), f2(ffs.loc[h, "mean_spread"] * 100), f2(ffs.loc[h, "t_stat"])])
+    tab = table("lrrrrrrrr", ["Horizon", r"$\hat\mu$", "$t$", r"$\hat\mu$", "$t$", r"$\hat\mu$", "$t$", r"$\hat\mu$", "$t$"], rows, size=r"\small")
+    tab = tab.replace(r"\toprule" + "\n", r"\toprule" + "\n & \\multicolumn{2}{c}{Mkt-adj., within-quarter} & \\multicolumn{2}{c}{Mkt-adj., point-in-time} & "
+                      r"\multicolumn{2}{c}{Size/BM-adj., within-quarter} & \multicolumn{2}{c}{Size/BM-adj., point-in-time}\\" + "\n"
+                      r"\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}" + "\n")
+    write_fragment("tab_pit_compare.tex", tab)
+    S.put("pit.drop60", float(pre_spr.loc[60, "mean_spread"] - spr.loc[60, "mean_spread"]), pp((pre_spr.loc[60, "mean_spread"] - spr.loc[60, "mean_spread"]) * 100, 2))
+    S.put("sent.pit_effect", "lowers" if spr.loc[60, "mean_spread"] < pre_spr.loc[60, "mean_spread"] else "does not lower")
 
     Q = int(dec["n_quarters"].max())
     S.put("Q", Q, str(Q))
@@ -848,7 +921,7 @@ def equity_section(S, ctx):
     S.put("sent.filter_vs_sizing",
           "do not beat" if max(runs["volatility_filter"]["summary"]["sharpe"], runs["calm_weighted_filter"]["summary"]["sharpe"]) <= runs["calm_weighted"]["summary"]["sharpe"] else "beat")
     # vs cap: realized gross exceeds the nominal cap on carry-over positions
-    for n in ("balanced_leverage", "calm_weighted", "calm_rank_tilt", "balanced_leverage_max"):
+    for n in [x for x in ("balanced_leverage", "calm_weighted", "calm_rank_tilt", "balanced_leverage_max") for x in (x, x + "_legacy") if x in runs]:
         cap = runs[n]["params"]["max_gross_leverage"]
         d = ctx["daily"][n]
         g = (d["gross_exposure"] / d["nav"])[d["gross_exposure"] > 0]
@@ -1172,8 +1245,14 @@ def options_section(S, ctx):
     ext = ctx["ext"]
     # options table
     rows = []
-    order = [("options_cap20", "validated headline"), ("options_cap30", "validated"), ("options_worst_case", "pessimistic bound"),
-             "MID", ("options_cap20_legacy", "overstated"), ("options_cap30_legacy", "overstated"), ("options_cap40_legacy", "overstated")]
+    order = [("options_cap20", "bid/ask fills, point-in-time deciles (current)"), ("options_cap30", "bid/ask fills, point-in-time deciles (current)"),
+             ("options_worst_case", "bid/ask fills, dead options worth zero (current)"),
+             "MID", ("options_cap20_midfill", "mid fills + tick floor, point-in-time deciles"), ("options_cap30_midfill", "mid fills + tick floor, point-in-time deciles"),
+             ("options_cap20_prefix_fix", "mid fills + tick floor, within-quarter deciles (reported before the fixes)"),
+             ("options_cap30_prefix_fix", "mid fills + tick floor, within-quarter deciles (reported before the fixes)"),
+             ("options_worst_case_prefix_fix", "as above, dead options worth zero"),
+             "MID", ("options_cap20_legacy", "original convention: carry-forward, flat 3\\%"), ("options_cap30_legacy", "original convention"),
+             ("options_cap40_legacy", "original convention")]
     for it in order:
         if it == "MID":
             rows.append("MID"); continue
@@ -1181,8 +1260,14 @@ def options_section(S, ctx):
         if n not in runs:
             continue
         s = runs[n]["summary"]
-        rows.append([sn(n), tx(s.get("dead_quote_mark", "")), pc(s["annualized_return"]), pc(s["annualized_vol"]), f2(s["sharpe"]), pc(s["max_drawdown"], 1), f2(s["calmar"]), lab])
-    write_fragment("tab_options.tex", table("llrrrrrl", ["Book", "Dead-quote mark", "Return", "Vol", "Sharpe", "Max DD", "Calmar", "Role"], rows, size=r"\small"))
+        rows.append([sn(n), lab, pc(s["annualized_return"]), pc(s["annualized_vol"]), f2(s["sharpe"]), pc(s["max_drawdown"], 1)])
+    write_fragment("tab_options.tex", table("llrrrr", ["Book", "Fills and deciles", "Return", "Vol", "Sharpe", "Max DD"], rows, size=r"\small"))
+    s20 = runs["options_cap20"]["summary"]
+    S.put("opt.nask", s20.get("n_entries_filled_at_ask", 0), intc(s20.get("n_entries_filled_at_ask", 0)))
+    if "total_net_M" in ext:
+        S.put("ot.net_M", ext["total_net_M"], usd_m_raw(ext["total_net_M"]))
+        S.put("ot.prem_M", ext["total_premium_M"], usd_m_raw(ext["total_premium_M"], 0))
+        S.put("ot.net_over_prem", ext["total_net_M"] / ext["total_premium_M"], pc(ext["total_net_M"] / ext["total_premium_M"], 2))
     # the audit chain from the strategy's own docstring
     doc = runs["options_cap20"].get("module_doc", "")
     mm = re.search(r"([\d.]+)% / Sharpe ([\d.]+) as originally reported\s+->\s+([\d.]+)% / ([\d.]+) with\s+the corrected mark\s+->\s+([\d.]+)% / ([\d.]+) once each contract also pays.*?->\s+([\d.]+)% / ([\d.]+) if dead", doc, re.S)
@@ -1194,8 +1279,8 @@ def options_section(S, ctx):
         S.put("optchain.zero.ret", float(g), f"{g}\\%"); S.put("optchain.zero.sh", float(h), h)
         # they must agree with the saved runs
         chk = [(float(a) / 100, runs["options_cap20_legacy"]["summary"]["annualized_return"]),
-               (float(e) / 100, runs["options_cap20"]["summary"]["annualized_return"]),
-               (float(g) / 100, runs["options_worst_case"]["summary"]["annualized_return"])]
+               (float(e) / 100, runs["options_cap20_prefix_fix"]["summary"]["annualized_return"]),
+               (float(g) / 100, runs["options_worst_case_prefix_fix"]["summary"]["annualized_return"])]
         S.put("optchain.consistent", all(abs(x - y) < 6e-4 for x, y in chk), "")
         S.put("optchain.ok", True, "")
     else:
@@ -1317,7 +1402,9 @@ def blend_section(S, ctx):
             [sn("options_cap20"), "options sleeve", pc(runs["options_cap20"]["summary"]["annualized_return"]), pc(runs["options_cap20"]["summary"]["annualized_vol"]),
              f2(runs["options_cap20"]["summary"]["sharpe"]), pc(runs["options_cap20"]["summary"]["max_drawdown"], 1),
              f2(runs["options_cap20"]["summary"]["sharpe_1996_2001"]), f2(runs["options_cap20"]["summary"]["sharpe_2002_2007"]), f2(runs["options_cap20"]["summary"]["sharpe_2008_2013"])],
-            "MID", blend_row("hedged_blend", "validated"), blend_row("calm_blend", "research"), blend_row("legacy_blend", "overstated")]
+            "MID", blend_row("hedged_blend", "validated"), blend_row("calm_blend", "research"),
+            "MID"] + [blend_row(n, lab) for n, lab in (("hedged_blend_prefix_fix", "before the fixes"), ("calm_blend_prefix_fix", "before the fixes"),
+                                                       ("legacy_blend", "overstated legacy")) if n in runs]
     write_fragment("tab_blend.tex", table("llrrrrrrr", ["Book", "Role", "Return", "Vol", "Sharpe", "Max DD", "Sh 96--01", "Sh 02--07", "Sh 08--13"], rows, size=r"\small"))
     # generated: does the blend beat both sleeves on Sharpe?
     sb = runs["hedged_blend"]["summary"]["sharpe"]
@@ -1510,6 +1597,106 @@ def inference_section(S, ctx):
 
 
 # ------------------------------------------------------------------------------------------------------
+def ladder_section(S, ctx):
+    """The fix-attribution ladder: each methodology fix applied in turn (copied with provenance from the fixes branch's
+    isolated vintages into docs/paper/cache/ladders/; checked against the saved _legacy twins)."""
+    runs = ctx["runs"]
+    SRC = ROOT.parent
+    LAD = CACHE / "ladders"
+    LAD.mkdir(parents=True, exist_ok=True)
+    for f in ("equity_ladder.csv", "options_ladder.csv"):
+        if (SRC / f).exists():
+            shutil.copyfile(SRC / f, LAD / f)
+    (LAD / "README.txt").write_text(
+        "equity_ladder.csv and options_ladder.csv were produced by the methodology-fixes work (see docs/FIXES.md, 'Measured effect') from four\n"
+        "isolated data vintages (published, +fix1 open-book cap, +fix1+2 point-in-time deciles, all fixes; options: fix3-only, fix2-only, all).\n"
+        "Copied unchanged from the folder one level above the worktree. The paper builder cross-checks 'published' against the saved *_legacy\n"
+        "runs and 'all' against the saved current runs.\n", encoding="utf-8")
+    eq = pd.read_csv(LAD / "equity_ladder.csv").set_index("name")
+    op = pd.read_csv(LAD / "options_ladder.csv")
+    ctx["ladder_eq"], ctx["ladder_op"] = eq, op
+    ok = True
+    for n in eq.index:
+        if n + "_legacy" in runs:
+            ok &= abs(eq.loc[n, "published_ret"] - runs[n + "_legacy"]["summary"]["annualized_return"]) < 1e-4
+        if n in runs:
+            ok &= abs(eq.loc[n, "all_ret"] - runs[n]["summary"]["annualized_return"]) < 1e-4
+    S.put("ladder.consistent", bool(ok), "")
+    if not ok:
+        print("WARNING: equity ladder does not match the saved runs", file=sys.stderr)
+    stages = [("published", "Published"), ("fix1", "+ open-book cap"), ("fix12", "+ point-in-time deciles"), ("all", "+ search-window decay days")]
+    for n, r in eq.iterrows():
+        for st, _ in stages:
+            S.put(f"ladder.{n}.{st}.ret", float(r[f"{st if st != 'published' else 'published'}_ret"]), pc(r[f"{st}_ret"], 1))
+            S.put(f"ladder.{n}.{st}.sharpe", float(r[f"{st}_sharpe"]), f2(r[f"{st}_sharpe"]))
+            S.put(f"ladder.{n}.{st}.dd", float(r[f"{st}_maxdd"]), pc(r[f"{st}_maxdd"], 1))
+    d1 = eq["fix1_ret"] - eq["published_ret"]
+    d2 = eq["fix12_ret"] - eq["fix1_ret"]
+    d4 = eq["all_ret"] - eq["fix12_ret"]
+    tot = eq["all_ret"] - eq["published_ret"]
+    for tag, d in (("fix1", d1), ("fix2", d2), ("fix4", d4), ("total", tot)):
+        S.put(f"ladder.med.{tag}", float(d.median()), pp(d.median() * 100, 1))
+        S.put(f"ladder.min.{tag}", float(d.min()), pp(d.min() * 100, 1))
+        S.put(f"ladder.max.{tag}", float(d.max()), pp(d.max() * 100, 1))
+    steps = {"the open-book leverage cap": d1.median(), "point-in-time deciles": d2.median(), "search-window decay days": d4.median()}
+    worst = min(steps, key=steps.get)
+    S.put("sent.biggest_fix", f"the largest median cost to return is {worst} ({sg(steps[worst] * 100, 1)} percentage points a year)")
+    S.put("ladder.n_books", len(eq), str(len(eq)))
+    S.put("ladder.n_lower", int((tot < 0).sum()), str(int((tot < 0).sum())))
+    S.put("ladder.n_fix2_largest", int(((d2 < d1) & (d2 < d4)).sum()), str(int(((d2 < d1) & (d2 < d4)).sum())))
+    S.put("ladder.n_sharpe_lower", int((eq["all_sharpe"] < eq["published_sharpe"]).sum()), str(int((eq["all_sharpe"] < eq["published_sharpe"]).sum())))
+    S.put("ladder.n_fix4_raise", int((d4 > 0).sum()), str(int((d4 > 0).sum())))
+    # tables
+    pick = ["balanced_leverage", "calm_weighted", "calm_rank_tilt", "extreme_picks", "balanced_leverage_max", "market_boost", "market_boost_max"]
+    def row(n):
+        r = eq.loc[n]
+        return [sn(n), pc(r["published_ret"], 1), pc(r["fix1_ret"], 1), pc(r["fix12_ret"], 1), pc(r["all_ret"], 1),
+                f"{f2(r['published_sharpe'])} $\\to$ {f2(r['all_sharpe'])}", f"{pc(r['published_maxdd'], 1)} $\\to$ {pc(r['all_maxdd'], 1)}"]
+    hdr = ["Book", "Published", "+ cap", "+ deciles", "+ decay days", "Sharpe", "Max DD"]
+    write_fragment("tab_ladder_equity.tex", table("lrrrrrr", hdr, [row(n) for n in pick if n in eq.index], size=r"\small"))
+    write_fragment("tab_ladder_equity_all.tex", table("lrrrrrr", hdr, [row(n) for n in eq.index], size=r"\footnotesize"))
+    names = {"published": "Published", "fix3_only_bidask": "Bid/ask fills only", "fix2_only_midfill": "Point-in-time deciles only (mid fills)", "all_bidask": "All fixes"}
+    rows = []
+    for n in op["name"].unique():
+        sub = op[op.name == n].set_index("stage")
+        def cell(st):
+            if st not in sub.index:
+                return "--"
+            return f"{pc(sub.loc[st, 'ret'])} / {f2(sub.loc[st, 'sharpe'])}"
+        rows.append([sn(n)] + [cell(st) for st in names])
+        for st in sub.index:
+            S.put(f"ladder.{n}.{st}.ret", float(sub.loc[st, "ret"]), pc(sub.loc[st, "ret"]))
+            S.put(f"ladder.{n}.{st}.sharpe", float(sub.loc[st, "sharpe"]), f2(sub.loc[st, "sharpe"]))
+    write_fragment("tab_ladder_options.tex", table("lrrrr", ["Book"] + list(names.values()), rows, size=r"\small"))
+    # fix 2 and fix 4 settings recorded in docs/FIXES.md
+    fx = (DOCS / "FIXES.md").read_text(encoding="utf-8")
+    m_ = re.search(r"first (\d+)% of announcement quarters \((\d+) of (\d+)\)", fx)
+    S.put("fix.decay.pct", int(m_.group(1)) if m_ else -1, f"{m_.group(1)}\\%" if m_ else "--")
+    S.put("fix.decay.n", int(m_.group(2)) if m_ else -1, m_.group(2) if m_ else "--")
+    S.put("fix.decay.of", int(m_.group(3)) if m_ else -1, m_.group(3) if m_ else "--")
+    S.put("pit.dropped", S.get("pre.n_events") - S.get("n_events"), intc(S.get("pre.n_events") - S.get("n_events")))
+    # leverage: before and after, from the legacy twin and the current run
+    for n in ("calm_weighted", "balanced_leverage_max"):
+        if n + "_legacy" in runs:
+            for k in ("days_over_cap", "max_over_cap"):
+                pass
+    # drawdown screen of the *_max books
+    mx = [n for n in runs if n.endswith("_max") and not n.endswith("_legacy")]
+    breach = [n for n in mx if runs[n]["summary"]["max_drawdown"] < -S.get("rule.dd")]
+    S.put("max.n", len(mx), str(len(mx)))
+    S.put("max.n_breach", len(breach), str(len(breach)))
+    S.put("max.breach", breach, ", ".join(sn(n) for n in sorted(breach)))
+    S.put("max.worst_dd", float(min(runs[n]["summary"]["max_drawdown"] for n in mx)), pc(min(runs[n]["summary"]["max_drawdown"] for n in mx), 1))
+    # alpha ratio of the last era to the first, across the profiled books (all can be tiny or negative)
+    e = ctx["era_bp"]
+    S.put("era.all.CA.min", float((e["C"] / e["A"]).min()), pc((e["C"] / e["A"]).min(), 0))
+    S.put("era.all.CA.max", float((e["C"] / e["A"]).max()), pc((e["C"] / e["A"]).max(), 0))
+    # recipe: in how many eras is the best recipe positive
+    b3 = S.get("best.n_all3")
+    S.put("sent.best_eras", (f"It is positive in all three eras in {b3} of nine books" if b3 else "It is not positive in all three eras in any of the nine books")
+          + (f" (the exceptions are {S.tex['best.neg_books']})" if 0 < b3 < 9 else ""))
+
+
 def audit_section(S, ctx):
     runs = ctx["runs"]
     fixes = (DOCS / "FIXES.md").exists()
@@ -1575,16 +1762,16 @@ def reproducibility_section(S, ctx):
             continue
         p = runs[n]["params"]
         rows.append([sn(n), f"{p['base_unit_fraction']:g}", f"{p['max_gross_leverage']:g}$\\times$", f"{p['liquidity_cap_frac'] * 100:g}\\%", tx(p["return_basis"]),
-                     tx(p["cap_mode"]), f"{p.get('beta_overlay', 0):g}"])
-    write_fragment("tab_params_equity.tex", table("lrrrlll", ["Book", "Base unit", "Gross cap", "ADV cap", "Returns", "Cap mode", "Overlay"], rows, size=r"\small"))
+                     tx(p["cap_mode"]), tx(p.get("exposure_cap", "entry_cohort")), f"{p.get('beta_overlay', 0):g}"])
+    write_fragment("tab_params_equity.tex", table("lrrrllll", ["Book", "Base unit", "Gross cap", "ADV cap", "Returns", "Trim rule", "Cap on", "Overlay"], rows, size=r"\small"))
     rows = []
     for n in ["options_cap20", "options_cap30", "options_worst_case", "options_cap20_legacy", "options_cap30_legacy", "options_cap40_legacy"]:
         if n not in runs:
             continue
         p = runs[n]["params"]
         rows.append([sn(n), f"{p['max_premium_frac']:g}", f"{p['half_kelly']:g}", str(p["hold_horizon"]), f"{p['roundtrip_cost_pct'] * 100:g}\\%",
-                     f"\\${p['min_roundtrip_cost_per_share']:.2f}", tx(p["dead_quote_mark"])])
-    write_fragment("tab_params_options.tex", table("lrrrrrl", ["Book", "Premium cap", "Kelly mult.", "Hold (d)", "Round-trip", "Floor / share", "Dead-quote mark"], rows, size=r"\small"))
+                     f"\\${p['min_roundtrip_cost_per_share']:.2f}", tx(p.get("fill_mode", "mid")), tx(p["dead_quote_mark"])])
+    write_fragment("tab_params_options.tex", table("lrrrrrll", ["Book", "Premium cap", "Kelly mult.", "Hold (d)", "Round-trip", "Floor / share", "Fills", "Dead-quote mark"], rows, size=r"\small"))
     rows = [[tx(a), tx(b) if "*" not in b else b.replace("*", r"$\ast$")] for a, b in OLD_LABELS]
     rows = [[tx(a), (sn(b) if re.fullmatch(r"[a-z_0-9]+", b) else tx(b).replace(r"\_", r"\_"))] for a, b in OLD_LABELS]
     write_fragment("tab_oldnames.tex", ("{\\small\n\\begin{tabularx}{\\linewidth}{@{}p{0.43\\linewidth}X@{}}\n\\toprule\nLabel in earlier drafts & Plain name here\\\\\n\\midrule\n"

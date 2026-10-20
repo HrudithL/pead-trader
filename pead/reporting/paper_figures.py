@@ -243,18 +243,19 @@ def fig_recipes(S, ctx, out):
 def fig_options_audit(S, ctx, out):
     runs, d = ctx["runs"], ctx["daily"]
     fig, axes = plt.subplots(1, 2, figsize=(7.2, 2.9), gridspec_kw=dict(width_ratios=[1.35, 1]))
-    for n, c, ls in (("options_cap20_legacy", RED, "-"), ("options_cap20", GREEN, "-"), ("options_worst_case", GREY, "--")):
+    for n, c, ls in (("options_cap20_legacy", RED, "-"), ("options_cap20_prefix_fix", GOLD, "-"), ("options_cap20", GREEN, "-"), ("options_worst_case", GREY, "--")):
         x = d[n].set_index("date")["nav"]
         x = x[x.index >= x.ne(x.iloc[0]).idxmax()]
         axes[0].plot(x.index, x / x.iloc[0], color=c, ls=ls, lw=1.1, label=n)
     axes[0].set_yscale("log")
-    axes[0].set(ylabel="NAV, rebased to 1 at first trade (log)", title="(a) Same trades, three quote conventions")
-    axes[0].legend(fontsize=7.5, loc="upper left")
-    names = ["options_cap20_legacy", "options_cap20", "options_worst_case", "options_cap30_legacy", "options_cap30"]
+    axes[0].set(ylabel="NAV, rebased to 1 at first trade (log)", title="(a) Four conventions")
+    axes[0].legend(fontsize=7, loc="upper left")
+    names = ["options_cap20_legacy", "options_cap20_prefix_fix", "options_cap20", "options_cap30_legacy", "options_cap30_prefix_fix", "options_cap30", "options_worst_case"]
     x = np.arange(len(names))
-    cols = [RED, GREEN, GREY, RED, GREEN]
+    cols = [RED, GOLD, GREEN, RED, GOLD, GREEN, GREY]
     axes[1].bar(x, [runs[n]["summary"]["sharpe"] for n in names], color=cols, width=0.65)
-    axes[1].set_xticks(x, [n.replace("options_", "").replace("_", "\n") for n in names], fontsize=7)
+    axes[1].axhline(0, color="#444444", lw=0.6)
+    axes[1].set_xticks(x, [n.replace("options_", "").replace("_prefix_fix", "\npre-fix").replace("_legacy", "\nlegacy").replace("_", "\n") for n in names], fontsize=6)
     axes[1].set(ylabel="Sharpe ratio", title="(b) Sharpe by book")
     axes[1].grid(axis="x", visible=False)
     _save(fig, out, "fig_options_audit")
@@ -381,11 +382,36 @@ def fig_kelly(ctx, out):
     _save(fig, out, "fig_kelly_illustration")
 
 
+def fig_ladder(S, ctx, out):
+    eq, op = ctx["ladder_eq"], ctx["ladder_op"]
+    pick = [n for n in ["balanced_leverage", "calm_weighted", "calm_rank_tilt", "extreme_picks", "balanced_leverage_max", "market_boost_max"] if n in eq.index]
+    fig, axes = plt.subplots(1, 2, figsize=(7.2, 2.9), gridspec_kw=dict(width_ratios=[1.5, 1]))
+    x = np.arange(len(pick))
+    for i, (st, lab, c) in enumerate((("published", "published", GREY), ("fix1", "+ open-book cap", GOLD), ("fix12", "+ point-in-time deciles", RED), ("all", "+ decay days (all fixes)", NAVY))):
+        axes[0].bar(x + (i - 1.5) * 0.2, [100 * eq.loc[n, f"{st}_ret"] for n in pick], 0.2, color=c, label=lab)
+    axes[0].set_xticks(x, [SHORT.get(n, n.replace("_", "\n")) if n in SHORT else n.replace("balanced_leverage", "bal.-lev.").replace("_", "\n") for n in pick], fontsize=7)
+    axes[0].set(ylabel="Annualized return (%)", title="(a) Equity: fixes applied in turn")
+    axes[0].legend(fontsize=6.5, loc="upper left")
+    axes[0].grid(axis="x", visible=False)
+    stg = [("published", GREY), ("fix3_only_bidask", RED), ("all_bidask", NAVY)]
+    nm = [n for n in ["options_cap20", "options_cap30"] if n in set(op.name)]
+    x2 = np.arange(len(nm))
+    for i, (st, c) in enumerate(stg):
+        axes[1].bar(x2 + (i - 1) * 0.27, [100 * op[(op.name == n) & (op.stage == st)]["ret"].iloc[0] for n in nm], 0.27, color=c,
+                    label={"published": "mid fills (published)", "fix3_only_bidask": "bid/ask fills only", "all_bidask": "all fixes"}[st])
+    axes[1].axhline(0, color="#444444", lw=0.6)
+    axes[1].set_xticks(x2, [n.replace("options_", "") for n in nm])
+    axes[1].set(ylabel="Annualized return (%)", title="(b) Options")
+    axes[1].legend(fontsize=6.5)
+    axes[1].grid(axis="x", visible=False)
+    _save(fig, out, "fig_ladder")
+
+
 def make_all(S, ctx, out):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     fig_decile(ctx, out); fig_spreads(ctx, out); fig_het(ctx, out)
     fig_nav(ctx, out); fig_calendar(ctx, out); fig_leverage(ctx, out)
     fig_legs(S, ctx, out); fig_betalegs(ctx, out); fig_betavol(S, ctx, out); fig_era(S, ctx, out); fig_recipes(S, ctx, out)
-    fig_options_audit(S, ctx, out); fig_options_trades(S, ctx, out); fig_frontiers(S, ctx, out); fig_dsr(S, ctx, out); fig_kelly(ctx, out)
+    fig_options_audit(S, ctx, out); fig_options_trades(S, ctx, out); fig_frontiers(S, ctx, out); fig_dsr(S, ctx, out); fig_kelly(ctx, out); fig_ladder(S, ctx, out)
     print("figures ->", out)

@@ -1,16 +1,22 @@
 {\small
 \begin{adjustbox}{max width=\linewidth}
-\begin{tabular}{llrrrrrl}
+\begin{tabular}{llrrrr}
 \toprule
-Book & Dead-quote mark & Return & Vol & Sharpe & Max DD & Calmar & Role \\
+Book & Fills and deciles & Return & Vol & Sharpe & Max DD \\
 \midrule
-\sn{options_cap20} & zero\_bid\_half\_ask & 4.12\% & 2.30\% & 1.77 & $-$13.8\% & 0.30 & validated headline \\
-\sn{options_cap30} & zero\_bid\_half\_ask & 5.69\% & 3.61\% & 1.55 & $-$22.3\% & 0.26 & validated \\
-\sn{options_worst_case} & zero\_bid\_zero & 2.34\% & 2.37\% & 0.99 & $-$17.1\% & 0.14 & pessimistic bound \\
+\sn{options_cap20} & bid/ask fills, point-in-time deciles (current) & 0.28\% & 1.92\% & 0.16 & $-$18.9\% \\
+\sn{options_cap30} & bid/ask fills, point-in-time deciles (current) & $-$0.10\% & 3.01\% & $-$0.02 & $-$29.0\% \\
+\sn{options_worst_case} & bid/ask fills, dead options worth zero (current) & $-$1.04\% & 1.99\% & $-$0.52 & $-$32.3\% \\
 \midrule
-\sn{options_cap20_legacy} & carry\_last & 8.58\% & 2.18\% & 3.78 & $-$10.3\% & 0.83 & overstated \\
-\sn{options_cap30_legacy} & carry\_last & 12.26\% & 3.33\% & 3.49 & $-$17.4\% & 0.70 & overstated \\
-\sn{options_cap40_legacy} & carry\_last & 15.79\% & 4.50\% & 3.28 & $-$23.9\% & 0.66 & overstated \\
+\sn{options_cap20_midfill} & mid fills + tick floor, point-in-time deciles & 4.43\% & 2.36\% & 1.85 & $-$14.5\% \\
+\sn{options_cap30_midfill} & mid fills + tick floor, point-in-time deciles & 6.10\% & 3.70\% & 1.62 & $-$22.5\% \\
+\sn{options_cap20_prefix_fix} & mid fills + tick floor, within-quarter deciles (reported before the fixes) & 4.12\% & 2.30\% & 1.77 & $-$13.8\% \\
+\sn{options_cap30_prefix_fix} & mid fills + tick floor, within-quarter deciles (reported before the fixes) & 5.69\% & 3.61\% & 1.55 & $-$22.3\% \\
+\sn{options_worst_case_prefix_fix} & as above, dead options worth zero & 2.34\% & 2.37\% & 0.99 & $-$17.1\% \\
+\midrule
+\sn{options_cap20_legacy} & original convention: carry-forward, flat 3\% & 8.58\% & 2.18\% & 3.78 & $-$10.3\% \\
+\sn{options_cap30_legacy} & original convention & 12.26\% & 3.33\% & 3.49 & $-$17.4\% \\
+\sn{options_cap40_legacy} & original convention & 15.79\% & 4.50\% & 3.28 & $-$23.9\% \\
 \bottomrule
 \end{tabular}
 \end{adjustbox}
