@@ -11,7 +11,7 @@ blocker (e.g. no GPU drivers, no physical access to the drive) -- report back wh
 instead.
 
 This is the complete, step-by-step path from a fresh Linux checkout (the 5090 box, or any
-CUDA-capable Linux machine) to `scripts/run_all_strategies.py` actually running every strategy in
+CUDA-capable Linux machine) to `pead` (the data build and every backtest) running in
 this project. Two things have to arrive on that machine: **the code** (via `git`, normal) and
 **the data** (via the physical OptionMetrics drive, *not* `git` -- see "Why the data isn't in git"
 below).
@@ -24,15 +24,15 @@ lsblk                                                  # find where the drive mo
 ./scripts/setup_gpu_box.sh /media/<you>/OptionMetrics  # prints export lines, touches nothing in data/
 # copy/paste its printed PEAD_*_DIR and OPTIONMETRICS_DIR export lines into ~/.bashrc, then:
 source ~/.bashrc
-python scripts/verify_raw_data.py --check              # confirms the drive's copy matches canonical
+python pead/prep/verify_raw_data.py --check              # confirms the drive's copy matches canonical
 git config core.hooksPath scripts/git-hooks             # blocks ever committing a symlink
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-gpu.txt
 nvidia-smi && python3 -c "import cupy as cp, torch; print(cp.cuda.runtime.getDeviceCount(), torch.cuda.is_available())"
-python scripts/run_all_strategies.py --dry-run
-python scripts/run_all_strategies.py --device cuda --mock-data --smoke-test
+python -m pead prep --list
+python pead/prep/options/optimal_contract_selector.py --device cuda --mock-data --smoke-test
 tmux new -s pead
-python scripts/run_all_strategies.py --device cuda
+python -m pead prep --all --device cuda && python -m pead run all
 ```
 
 Everything here was written after actually validating the pieces that could be validated without
@@ -77,10 +77,9 @@ this setup keeps the data on the drive, not in git, by design.
 `pead_wrds_data/` is a straight copy of this repo's own `data/{raw_wrds,normalized_equity,
 earnings,events,metadata,results}/` folders, staged here once from the machine that holds the
 original WRDS pull. If you ever refresh the underlying WRDS pull, redo that copy -- there's no
-sync mechanism, this is a one-time (or refresh-when-you-refresh-the-data) staging step. Since
-there's no way to verify from this end whether a given staged copy is still current, always ask
-whoever refreshed it last, and treat results built from a GPU-box run as unverified until you
-know the copy you ran against actually matches the source machine's `data/` at the time of the run.
+sync mechanism, this is a one-time (or refresh-when-you-refresh-the-data) staging step. Verify
+the staged copy against the git-tracked `data/raw_data_manifest.json` before every real run (see
+"Step 2b" below) rather than trusting it by assumption.
 
 ## Never symlink data into this repo
 
@@ -93,7 +92,7 @@ symlink's plain-text placeholder there -- no prompt, no error. That destroyed th
 raw WRDS pull once already.
 
 The fix is structural, not just "be careful": every one of the six raw-data locations is a plain
-environment-variable override in `scripts/common/paths.py` (`PEAD_RAW_WRDS_DIR`,
+environment-variable override in `pead/common/paths.py` (`PEAD_RAW_WRDS_DIR`,
 `PEAD_RAW_EQUITY_DIR`, `PEAD_EARNINGS_DIR`, `PEAD_EVENTS_DIR`, `PEAD_METADATA_DIR`,
 `PEAD_RESULTS_DIR`), so **`data/` never needs to contain anything for these six folders on the GPU
 box at all**. `scripts/setup_gpu_box.sh` only prints the export lines below now -- it does not
@@ -123,7 +122,7 @@ against.
 git clone <this repo's remote> PEAD_Trading   # or: cd PEAD_Trading && git pull
 cd PEAD_Trading
 ```
-**Success condition:** `ls` shows `scripts/`, `data/`, `README.md`, `GPU_SETUP.md`.
+**Success condition:** `ls` shows `pead/`, `data/`, `README.md`, `GPU_SETUP.md`.
 
 ## Step 2: attach the drive and point the code at it (env vars, no symlinks)
 
@@ -164,18 +163,18 @@ This is the check the earlier symlink incident was missing -- the staged copy on
 look complete (every folder present, files readable) while still being a different vintage of the
 data than whatever the currently-published results were built from, with nothing in the pipeline
 itself able to tell the difference. `data/raw_data_manifest.json` (committed to git, written once
-from the canonical machine via `python scripts/verify_raw_data.py --write`) is the source of
+from the canonical machine via `python pead/prep/verify_raw_data.py --write`) is the source of
 truth. Check the drive's copy against it before trusting any real run:
 
 ```bash
-python scripts/verify_raw_data.py --check
+python pead/prep/verify_raw_data.py --check
 ```
 
 **Success condition:** it prints `OK <folder>: N files match` for all six folders and exits 0. If
 it instead prints `MISMATCH` for any folder, **stop** -- do not run the pipeline for real against
 this data, and do not commit any of its output. Report back which folder(s) mismatched and how
 (`missing`/`extra`/`changed` files) rather than proceeding; that's exactly the signal that the
-drive needs re-staging from the canonical machine (`python scripts/verify_raw_data.py --write`
+drive needs re-staging from the canonical machine (`python pead/prep/verify_raw_data.py --write`
 there first, to refresh the manifest, if the canonical data itself has legitimately changed).
 
 ## Step 3: Python environment
@@ -196,7 +195,7 @@ python3 -c "import cupy as cp, torch; print(cp.cuda.runtime.getDeviceCount(), to
 ```
 **Success condition:** `nvidia-smi` prints a real GPU (name, driver version, CUDA version), and
 the Python line prints something like `1 True`. If `cupy` fails to import, its error message says
-exactly what's missing (see `scripts/common/gpu.py`'s `get_backend()`) -- it's designed to fail
+exactly what's missing (see `pead/common/gpu.py`'s `get_backend()`) -- it's designed to fail
 loudly here rather than silently falling back to CPU. **If `nvidia-smi` itself fails or isn't
 found**, that means the NVIDIA driver isn't installed on this box -- that's an OS-level
 prerequisite outside this repo's scope (not something a `pip install` fixes). Stop here and flag
@@ -206,95 +205,68 @@ step someone with physical/root access to this specific box needs to handle.
 ## Step 5: preview before committing to a long run
 
 ```bash
-python scripts/run_all_strategies.py --dry-run
+python -m pead prep --list
 ```
-**Success condition:** it prints all 41 stages with a plan for each (`WOULD RUN`, `output already
-exists -- skipping`, etc.) and exits without a traceback. This has zero side effects -- it runs
-nothing. Confirm the stage list and `--jobs` auto-sizing (shown at the top of the output, sized
-off this box's real CPU count and RAM) look sane before going further.
+**Success condition:** it prints every data-build stage with its dependencies and whether its outputs already
+exist (`built yes/no`), and exits without a traceback. It runs nothing. The stages are the dependency graph in
+`pead/prep/stages.py`: eight equity stages (events -> deciles -> decay cells -> positions -> volatility features)
+and ten options stages (calendar -> link -> scan chains -> return distributions -> Kelly selection -> forward prices).
 
-## Step 6: validate the real path with mock data before the real run
+## Step 6: validate the GPU path with mock data before the real run
 
 ```bash
-python scripts/run_all_strategies.py --device cuda --mock-data --smoke-test
+python pead/prep/options/optimal_contract_selector.py --device cuda --mock-data --smoke-test
+python -m pytest tests -q
 ```
-**Success condition:** this actually EXECUTES a shrunk, synthetic-data version of every
-mock-capable stage (Strategy 8's GPU tiers, the options GPU tiers) end to end in well under a
-minute, exercising the real subprocess/GPU/checkpoint machinery with no dependency on the raw data
-being linked in correctly yet. Check the final summary block it prints: every mock-capable stage
-should say `done`, and every stage that needs real (non-mock) data should say
-`skipped_mock_unsupported` -- not `failed`. **A `failed` stage here means something is wrong with
-the Python environment or GPU setup itself (Steps 3-4), independent of any data issue** -- worth
-fixing before spending hours on the real run in Step 7. Check
-`logs/run_all/<stage>.failure.json` for specifics (see "If something goes wrong" below).
+**Success condition:** the selector scores a synthetic chain on the GPU in about a second and writes
+`data/event_options/optimal_contracts_smoke.parquet` (a non-canonical file the real pipeline ignores); the
+tests pass (the reproduction tests are skipped if the real inputs are not linked in yet). A failure here is a
+Python-environment or GPU problem (Steps 3-4), independent of any data issue.
 
 ## Step 7: the real run
 
 ```bash
 tmux new -s pead                                    # survives a dropped SSH session
-python scripts/run_all_strategies.py --device cuda
+python -m pead prep --all --device cuda --jobs 8    # build every missing input
+python -m pead run all                              # backtest every strategy -> results/
+python -m pead compare                              # comprehensive report -> results/comprehensive/
 ```
 
-This is the single command: it builds every equity strategy (1-8) and every options tier (1-4)
-from the raw data now linked in via Step 2, one stage at a time, each one given the whole
-machine (see `scripts/run_all_strategies.py`'s own docstring for exactly why it's sequential
-rather than concurrent). Detach from tmux (`Ctrl-b d`) and walk away; `tmux attach -t pead` to
-check back in. **This can genuinely take hours to days** (the options Tier 3/4 GPU sweeps are the
-largest tensor searches in the project) -- that is expected, not a hang; use the heartbeat file
-below to tell the difference between "still working" and "actually stuck."
+`prep --all` runs independent stages concurrently, serializes the GPU stage (the Kelly selector) to one at a time
+and caps the OptionMetrics disk scans with `--io-parallel` (they contend for one drive). It skips any stage whose
+declared outputs exist, so re-running the same command resumes after a crash or reboot; the per-year scan stages
+checkpoint one file per year. The backtests (`pead run`) are NumPy code that take seconds each and do not use the GPU.
 
-**Success condition:** the final line printed is `finished. per-stage status: logs/run_all_status.json`
-(exit code 0), with no stage left in `logs/run_all_status.json` showing `"state": "failed"`. It's
-normal and expected for some stages to show `skipped_no_script` or `skipped_manual` depending on
-flags -- only `failed` needs attention (see below).
+**Success condition:** `prep` exits 0 and `logs/prep_status.json` shows every stage `done` or `skipped`;
+`python -m pead run all` prints one result line per strategy.
 
 Useful variants:
 ```bash
-python scripts/run_all_strategies.py --device cuda --include-reports   # also build the PDF reports
-python scripts/run_all_strategies.py --only eq_35_finalize_strategy8   # just this stage + its deps
-python scripts/run_all_strategies.py --device cuda --force             # rebuild everything, ignore checkpoints
+python -m pead prep options/forward_prices_optimal --force          # redo one stage's outputs (name as in --list)
+python -m pead prep forward_prices_optimal --force --with-deps      # ...and whatever it needs first
+python -m pead prep --all --force                                   # rebuild everything, ignore checkpoints
 ```
 
 ## If something goes wrong
 
-- **Live status**: `cat logs/run_all_status.json` -- every stage's state (running/done/failed),
-  updated immediately after each one finishes, not batched at the end.
-- **Is it actually alive or hung?**: `cat logs/run_all_heartbeat.json` -- updated every 20s while a
-  stage runs. If that timestamp is stale but the process is still in `ps`, it's genuinely stuck.
-- **Why did stage X fail?**: `cat logs/run_all/<stage>.failure.json` -- exit code, last 60 lines of
-  its own output, and a hardware snapshot (RAM available, disk free, GPU status via `nvidia-smi`)
-  captured at the moment of failure. This is usually enough to tell OOM / disk-full / a real bug
-  apart without re-running anything.
-- **Resuming**: just run the exact same command again. Every finished stage is skipped (its output
-  file already exists); only what didn't finish gets retried.
-- **`opt_41_daily_option_paths`, `opt_42_gpu_exit_optimizer`, or `opt_44_ml_contract_selector`
-  specifically failing on real data**: these three are the ones flagged at the top of this document
-  as never having been run at real, full scale by anyone before -- a failure here is plausibly a
-  genuine bug hitting real data for the first time, not a setup mistake. Read the failure.json
-  first: if it's an OOM (check `hardware_at_failure.ram_available_gb`), a raw OptionMetrics
-  read error (`opt_41` retries a transient one automatically -- see its own code -- but a
-  *consistent* read failure on one year is worth a closer look), or a shape/dtype error deep in a
-  GPU kernel, that's a real finding worth fixing in the script itself, not retrying blindly. Every
-  other stage in the catalog has already been run successfully on either real data or a real GPU
-  (see the top of this document and `PEAD_Strategies_Overview.pdf` for exactly which), so a failure
-  elsewhere is more likely an environment/setup issue from Steps 1-6 above.
-- **A stage fails immediately with an `argparse`/`unrecognized arguments` error**: this is a bug in
-  `scripts/run_all_strategies.py`'s own stage catalog (passing a flag a script doesn't actually
-  accept) -- exactly this class of bug was already caught and fixed once during testing (see the
-  script's git history). Check the failing script's own `--help` output, compare against what
-  `run_all_strategies.py`'s `build_command()` passes it, and fix the mismatch in the catalog.
+- **Live status**: `cat logs/prep_status.json` -- each stage's state, rewritten as stages start and finish.
+- **Why did stage X fail?**: `cat logs/prep/<stage>.log` -- that stage's complete output. Most real failures are
+  out-of-memory (reduce `--jobs`), a full disk, or a transient OptionMetrics read error (the scan helper retries
+  those automatically; a *consistent* failure on one year is worth a closer look -- `opprcd2011` is known to be corrupt
+  and is excluded).
+- **Resuming**: run the same command again. Finished stages are skipped; only what did not finish is retried.
+- **A stage fails immediately with `unrecognized arguments`**: `pead/prep/stages.py` passes `--device`, `--jobs` and
+  `--force` only to scripts whose `flags` declare them; compare the stage's `flags` with the script's own `--help`.
 
 ## When it's done
 
-Results land in `data/*.csv` / `data/*.json` (small, git-trackable) and `reports/*.pdf` (if you
-passed `--include-reports`). Pull those back to wherever you want them tracked:
+Small results land in `results/` (tracked) and `data/*.csv` / `data/*.json`; pull them back with:
 
 ```bash
-git add data/*.csv data/*.json reports/*.pdf scripts/
+git add results/ data/*.csv data/*.json pead/
 git commit -m "Real GPU-box run: <what changed>"
 git push
 ```
 
-The large intermediates (`data/*.parquet` -- position files, feature panels, the daily option
-price paths, etc.) are gitignored on purpose: they're fully regeneratable from the raw data by
-re-running the pipeline, so there's nothing to sync back for those.
+The large intermediates (`data/*.parquet`, `data/event_options/`, `results/*/positions.parquet`) are gitignored on purpose:
+they are fully regenerable from the raw data, so there is nothing to sync back for those.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-time setup on the Linux GPU box (the 5090, or any fresh Linux checkout): points this repo's
-# path constants (scripts/common/paths.py) at the raw WRDS pull + OptionMetrics extract that live
+# path constants (pead/common/paths.py) at the raw WRDS pull + OptionMetrics extract that live
 # on the external drive, instead of copying ~1GB+31GB onto the box's own disk.
 #
 # This prints environment-variable exports rather than creating anything under data/ -- on
@@ -10,7 +10,7 @@
 # commit that tracks a symlink at a path where a REAL directory already exists silently deletes
 # that real directory to place the symlink's text placeholder there -- which is exactly what
 # destroyed this project's local raw WRDS pull once already. Since every one of these locations is
-# already a plain environment-variable override in scripts/common/paths.py, there is no need for
+# already a plain environment-variable override in pead/common/paths.py, there is no need for
 # data/ to contain anything at all for this to work -- so this script no longer touches data/,
 # and there is nothing left for `git add`/`git checkout` to ever catch, accidentally track, or
 # destroy. See the "Never symlink data into this repo" section of GPU_SETUP.md.

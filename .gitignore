@@ -40,3 +40,16 @@ Thumbs.db
 
 # Pipeline run logs (operational, not a research finding) -- see scripts/options_strategy/run_pipeline.py
 logs/
+
+# Strategy-framework outputs that are large and fully regenerable
+results/*/positions.parquet
+data/cache/
+
+# test/tool caches, mock-run outputs, live run log, LaTeX build files
+.pytest_cache/
+*.mock
+data/live/run_log.jsonl
+reports/paper/*.aux
+reports/paper/*.log
+reports/paper/*.out
+reports/paper/*.toc
