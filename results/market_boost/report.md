@@ -10,9 +10,9 @@ Balanced Leverage plus a market position worth half the account
 
 **Design notes** (from the strategy's source file).
 
-Strategy 6 + 0.5x market beta overlay.
+Market Boost -- Balanced Leverage plus a half-size position in the overall stock market.
 
-Keeps Strategy 6's alpha book completely untouched and holds a separate synthetic market-index position of 0.5x trailing NAV beside it (re-sized quarterly, 2bps cost) -- the 130/30-style long-extension structure real funds use to add market exposure without distorting the alpha signal. This is how the equity side clears the S&P 500's return in this sample.
+Keeps Balanced Leverage's book completely untouched and holds a separate synthetic market-index position of 0.5x trailing NAV beside it (re-sized quarterly, 2bps cost) -- the 130/30-style long-extension structure real funds use to add market exposure without distorting the alpha signal. This is how the equity side clears the S&P 500's return in this sample.
 
 | parameter | value |
 |---|---|
@@ -21,30 +21,31 @@ Keeps Strategy 6's alpha book completely untouched and holds a separate syntheti
 | liquidity_cap_frac | 0.05 |
 | return_basis | mktadj |
 | cap_mode | priority |
+| exposure_cap | open_book |
 | beta_overlay | 0.5 |
 
 ## Performance
 
 | metric | market_boost | market (CRSP VW) |
 |---|---|---|
-| Annualized return | 10.08% | 9.94% |
-| Annualized volatility | 10.51% | 19.35% |
-| Sharpe (NAV-pct) | 0.97 | 0.59 |
-| Sortino | 1.40 |  |
-| Max drawdown | -23.2% | -55.5% |
-| Calmar | 0.43 |  |
-| Final NAV ($10M start) | $64,912,423 |  |
-| Worst day | -4.66% |  |
-| % positive days | 55.4% |  |
-| Sharpe 1996-2001 | 1.30 |  |
-| Sharpe 2002-2007 | 1.14 |  |
-| Sharpe 2008-2013 | 0.48 |  |
+| Annualized return | 9.15% | 9.94% |
+| Annualized volatility | 10.39% | 19.35% |
+| Sharpe (NAV-pct) | 0.90 | 0.59 |
+| Sortino | 1.29 |  |
+| Max drawdown | -25.1% | -55.5% |
+| Calmar | 0.36 |  |
+| Final NAV ($10M start) | $55,034,354 |  |
+| Worst day | -4.84% |  |
+| % positive days | 55.3% |  |
+| Sharpe 1996-2001 | 1.20 |  |
+| Sharpe 2002-2007 | 1.10 |  |
+| Sharpe 2008-2013 | 0.40 |  |
 
 Correlation of daily returns with the market: **0.94**.
 
-- best Sharpe among equity: `calm_rank_tilt` (1.81); this one: 0.966
-- best return among equity: `market_boost_max` (0.15); this one: 0.101
-- best Calmar among equity: `calm_rank_tilt` (0.614); this one: 0.434
+- best Sharpe among equity: `calm_rank_tilt` (1.81); this one: 0.895
+- best return among equity: `market_boost_max` (0.15); this one: 0.0915
+- best Calmar among equity: `calm_rank_tilt` (0.614); this one: 0.365
 
 ![NAV (log scale)](figures/nav.png)
 
@@ -70,32 +71,32 @@ Correlation of daily returns with the market: **0.94**.
 
 |  | long leg | short leg |
 |---|---|---|
-| P&L ($M, before costs) | 42.74 | -11.85 |
-| P&L after costs ($M) | 39.45 | -15.40 |
-| of which common (average-event) component ($M) | 26.88 | -27.72 |
-| of which excess / PEAD component ($M) | 15.86 | 15.87 |
-| excess minus costs ($M) | 12.57 | 12.32 |
-| gross return per $ traded (bp) | 253.36 | -68.44 |
-| positions in the money (hit rate) | 0.56 | 0.49 |
-| stand-alone Sharpe (leg only) | 1.20 | -0.24 |
+| P&L ($M, before costs) | 36.74 | -13.08 |
+| P&L after costs ($M) | 33.86 | -16.13 |
+| of which common (average-event) component ($M) | 23.41 | -24.03 |
+| of which excess / PEAD component ($M) | 13.34 | 10.96 |
+| excess minus costs ($M) | 10.45 | 7.91 |
+| gross return per $ traded (bp) | 252.72 | -87.98 |
+| positions in the money (hit rate) | 0.56 | 0.48 |
+| stand-alone Sharpe (leg only) | 1.17 | -0.32 |
 
-Daily P&L correlation between the two legs: **-0.81**.
+Daily P&L correlation between the two legs: **-0.80**.
 
-- **The short leg loses money in absolute terms** (-11.8M before costs) while the long leg earns +42.7M. That is mostly a benchmark effect, not a signal failure: the average earnings-event stock beat the cap-weighted market during its holding window, which flatters the long leg and hurts the short leg by 26.9M / 27.7M. Stripping that common component, the surprise signal itself earned +15.9M on the long side and +15.9M on the short side.
-- The two legs' daily P&L are -0.81 correlated: the short leg is the hedge that makes the long leg's variance disappear (stand-alone leg Sharpe 1.20 long / -0.24 short vs 0.97 combined).
+- **The short leg loses money in absolute terms** (-13.1M before costs) while the long leg earns +36.7M. That is mostly a benchmark effect, not a signal failure: the average earnings-event stock beat the cap-weighted market during its holding window, which flatters the long leg and hurts the short leg by 23.4M / 24.0M. Stripping that common component, the surprise signal itself earned +13.3M on the long side and +11.0M on the short side.
+- The two legs' daily P&L are -0.80 correlated: the short leg is the hedge that makes the long leg's variance disappear (stand-alone leg Sharpe 1.17 long / -0.32 short vs 0.90 combined).
 
 ### By decile and side (signal-driven part only)
 
 | leg | decile | positions | notional_M | net_pnl_M | excess_M | cost_M | alpha_net_M | alpha_share | alpha_bp_per_$ |
 |---|---|---|---|---|---|---|---|---|---|
-| long | 7 | 8,029 | 148.61 | 3.03 | 0.56 | 0.29 | 0.27 | 1.1% | 18.00 |
-| long | 8 | 16,588 | 394.76 | 9.19 | 3.47 | 0.78 | 2.69 | 10.8% | 68.11 |
-| long | 9 | 17,747 | 522.21 | 8.37 | 1.77 | 1.01 | 0.76 | 3.1% | 14.60 |
-| long | 10 | 17,174 | 621.45 | 18.85 | 10.07 | 1.22 | 8.85 | 35.6% | 142.39 |
-| short | 1 | 17,169 | 624.20 | -6.03 | 4.58 | 1.33 | 3.25 | 13.1% | 52.06 |
-| short | 2 | 17,281 | 539.87 | -4.65 | 5.58 | 1.09 | 4.49 | 18.0% | 83.16 |
-| short | 3 | 15,970 | 404.59 | -3.39 | 4.05 | 0.81 | 3.24 | 13.0% | 79.97 |
-| short | 4 | 9,171 | 162.59 | -1.33 | 1.66 | 0.31 | 1.35 | 5.4% | 82.78 |
+| long | 7 | 5,756 | 95.09 | 1.46 | 0.03 | 0.19 | -0.17 | -0.9% | -17.41 |
+| long | 8 | 15,259 | 315.71 | 6.61 | 1.51 | 0.63 | 0.88 | 4.8% | 27.90 |
+| long | 9 | 17,582 | 447.52 | 9.52 | 4.12 | 0.88 | 3.24 | 17.6% | 72.33 |
+| long | 10 | 19,546 | 595.59 | 16.27 | 7.68 | 1.18 | 6.50 | 35.4% | 109.09 |
+| short | 1 | 17,711 | 595.10 | -6.77 | 4.58 | 1.27 | 3.31 | 18.0% | 55.59 |
+| short | 2 | 17,925 | 511.12 | -5.46 | 3.94 | 1.03 | 2.91 | 15.8% | 56.88 |
+| short | 3 | 14,022 | 338.63 | -3.40 | 2.29 | 0.68 | 1.62 | 8.8% | 47.74 |
+| short | 4 | 2,169 | 41.38 | -0.50 | 0.15 | 0.08 | 0.08 | 0.4% | 18.55 |
 
 ![D10 and the short deciles carry the alpha; the middle of each leg earns little](figures/decile.png)
 
@@ -105,72 +106,72 @@ Daily P&L correlation between the two legs: **-0.81**.
 
 | size_quintile | positions | notional_M | net_pnl_M | excess_M | cost_M | alpha_net_M | alpha_share | alpha_bp_per_$ |
 |---|---|---|---|---|---|---|---|---|
-| 1 | 14,213 | 306.96 | 5.45 | 7.41 | 1.18 | 6.24 | 25.1% | 203.15 |
-| 2 | 22,885 | 641.27 | 6.15 | 8.35 | 1.80 | 6.55 | 26.3% | 102.10 |
-| 3 | 25,501 | 785.23 | 6.22 | 7.75 | 1.64 | 6.11 | 24.6% | 77.86 |
-| 4 | 27,583 | 839.10 | 3.71 | 4.93 | 1.31 | 3.62 | 14.5% | 43.15 |
-| 5 | 28,947 | 845.72 | 2.51 | 3.30 | 0.93 | 2.37 | 9.5% | 28.03 |
+| 1 | 13,094 | 277.14 | 0.12 | 1.83 | 1.06 | 0.77 | 4.2% | 27.79 |
+| 2 | 21,037 | 558.41 | 6.62 | 8.55 | 1.56 | 6.98 | 38.0% | 125.07 |
+| 3 | 23,664 | 672.81 | 5.00 | 6.42 | 1.41 | 5.01 | 27.3% | 74.49 |
+| 4 | 25,541 | 712.39 | 3.70 | 4.61 | 1.11 | 3.49 | 19.0% | 49.05 |
+| 5 | 26,634 | 719.38 | 2.29 | 2.89 | 0.79 | 2.10 | 11.4% | 29.18 |
 
 ### By liquidity quintile (1 = least liquid)
 
 | liquidity_quintile | positions | notional_M | net_pnl_M | excess_M | cost_M | alpha_net_M | alpha_share | alpha_bp_per_$ |
 |---|---|---|---|---|---|---|---|---|
-| 1 | 13,650 | 225.40 | 5.20 | 6.74 | 1.13 | 5.61 | 22.6% | 249.07 |
-| 2 | 23,084 | 676.60 | 5.79 | 8.72 | 2.03 | 6.69 | 26.9% | 98.85 |
-| 3 | 25,851 | 834.81 | 6.30 | 8.50 | 1.67 | 6.83 | 27.5% | 81.85 |
-| 4 | 27,665 | 843.84 | 4.54 | 5.11 | 1.18 | 3.93 | 15.8% | 46.53 |
-| 5 | 28,874 | 837.44 | 2.21 | 2.66 | 0.84 | 1.82 | 7.3% | 21.71 |
+| 1 | 12,373 | 201.26 | 2.28 | 3.67 | 1.01 | 2.67 | 14.5% | 132.52 |
+| 2 | 21,374 | 594.43 | 4.04 | 6.62 | 1.78 | 4.84 | 26.4% | 81.40 |
+| 3 | 23,903 | 716.16 | 5.43 | 7.18 | 1.43 | 5.75 | 31.3% | 80.22 |
+| 4 | 25,542 | 717.00 | 3.84 | 4.39 | 1.00 | 3.39 | 18.4% | 47.22 |
+| 5 | 26,774 | 711.11 | 2.13 | 2.42 | 0.71 | 1.70 | 9.3% | 23.97 |
 
 ### By holding-window length
 
 | hold_bucket | positions | notional_M | net_pnl_M | excess_M | cost_M | alpha_net_M | alpha_share | alpha_bp_per_$ |
 |---|---|---|---|---|---|---|---|---|
-| <=40d | 45,855 | 1,296.80 | -0.36 | 7.02 | 2.28 | 4.74 | 19.1% | 36.57 |
-| 41-60d | 25,652 | 773.42 | 4.67 | 4.86 | 1.58 | 3.28 | 13.2% | 42.46 |
-| 61-90d | 35,324 | 1,006.66 | 7.13 | 8.63 | 2.12 | 6.51 | 26.2% | 64.70 |
-| >90d | 12,298 | 341.40 | 12.61 | 11.22 | 0.87 | 10.35 | 41.6% | 303.13 |
+| <=40d | 38,892 | 1,003.09 | 0.23 | 7.87 | 1.91 | 5.96 | 32.5% | 59.44 |
+| 41-60d | 26,124 | 736.12 | 2.12 | 5.39 | 1.61 | 3.78 | 20.6% | 51.39 |
+| 61-90d | 35,980 | 971.10 | 9.61 | 6.14 | 1.78 | 4.35 | 23.7% | 44.84 |
+| >90d | 8,974 | 229.82 | 5.76 | 4.90 | 0.64 | 4.26 | 23.2% | 185.34 |
 
 ### By era
 
 | era | positions | notional_M | net_pnl_M | excess_M | cost_M | alpha_net_M | alpha_share | alpha_bp_per_$ |
 |---|---|---|---|---|---|---|---|---|
-| 1996-01 | 33,895 | 702.89 | 9.20 | 10.91 | 1.38 | 9.54 | 38.3% | 135.71 |
-| 2002-07 | 39,956 | 1,131.98 | 10.13 | 12.35 | 2.22 | 10.13 | 40.7% | 89.47 |
-| 2008-13 | 45,278 | 1,583.40 | 4.72 | 8.47 | 3.25 | 5.22 | 21.0% | 32.97 |
+| 1996-01 | 32,082 | 648.44 | 7.56 | 9.08 | 1.28 | 7.81 | 42.5% | 120.38 |
+| 2002-07 | 36,273 | 996.05 | 8.23 | 10.09 | 1.97 | 8.12 | 44.2% | 81.55 |
+| 2008-13 | 41,615 | 1,295.64 | 1.94 | 5.12 | 2.69 | 2.43 | 13.2% | 18.75 |
 
 ### By FF12 sector
 
 | ff12_sector | positions | notional_M | net_pnl_M | excess_M | cost_M | alpha_net_M | alpha_share | alpha_bp_per_$ |
 |---|---|---|---|---|---|---|---|---|
-| BusEq | 22,094 | 335.42 | 1.77 | 2.48 | 0.71 | 1.77 | 7.1% | 52.89 |
-| Chems | 2,590 | 227.57 | 1.44 | 1.85 | 0.40 | 1.45 | 5.8% | 63.75 |
-| Durbl | 2,843 | 245.81 | 2.39 | 2.91 | 0.45 | 2.46 | 9.9% | 100.13 |
-| Enrgy | 6,194 | 278.68 | 3.95 | 4.57 | 0.52 | 4.05 | 16.3% | 145.38 |
-| Hlth | 11,696 | 325.36 | 2.67 | 3.38 | 0.68 | 2.69 | 10.8% | 82.79 |
-| Manuf | 12,034 | 304.84 | 1.76 | 2.55 | 0.63 | 1.92 | 7.7% | 62.91 |
-| Money | 17,583 | 299.07 | 2.59 | 3.36 | 0.67 | 2.69 | 10.8% | 89.95 |
-| NoDur | 5,081 | 274.80 | 1.38 | 1.87 | 0.52 | 1.35 | 5.4% | 49.05 |
-| Other | 18,377 | 325.08 | 2.31 | 3.13 | 0.72 | 2.41 | 9.7% | 74.15 |
-| Shops | 11,984 | 317.62 | 3.13 | 3.82 | 0.65 | 3.17 | 12.7% | 99.77 |
-| Telcm | 3,981 | 270.57 | 0.18 | 0.75 | 0.49 | 0.26 | 1.0% | 9.46 |
-| Utils | 4,672 | 213.45 | 0.48 | 1.06 | 0.39 | 0.67 | 2.7% | 31.19 |
+| BusEq | 19,612 | 276.98 | 0.79 | 1.35 | 0.58 | 0.77 | 4.2% | 27.70 |
+| Chems | 2,545 | 200.33 | 0.95 | 1.33 | 0.36 | 0.97 | 5.3% | 48.46 |
+| Durbl | 2,812 | 217.25 | 1.56 | 2.10 | 0.40 | 1.70 | 9.2% | 78.15 |
+| Enrgy | 6,250 | 246.54 | 3.05 | 3.55 | 0.47 | 3.08 | 16.8% | 124.98 |
+| Hlth | 10,936 | 280.00 | 1.24 | 1.86 | 0.59 | 1.27 | 6.9% | 45.36 |
+| Manuf | 11,449 | 262.67 | 1.40 | 2.01 | 0.55 | 1.46 | 7.9% | 55.51 |
+| Money | 15,175 | 240.41 | 1.92 | 2.55 | 0.55 | 2.00 | 10.9% | 83.10 |
+| NoDur | 4,887 | 242.43 | 1.08 | 1.49 | 0.47 | 1.02 | 5.6% | 42.24 |
+| Other | 16,350 | 265.41 | 1.89 | 2.56 | 0.59 | 1.97 | 10.7% | 74.26 |
+| Shops | 11,320 | 275.81 | 2.69 | 3.28 | 0.57 | 2.70 | 14.7% | 98.05 |
+| Telcm | 3,942 | 242.50 | 1.36 | 1.86 | 0.45 | 1.41 | 7.7% | 58.27 |
+| Utils | 4,692 | 189.81 | -0.21 | 0.36 | 0.35 | 0.00 | 0.0% | 0.20 |
 
 ### By idiosyncratic-volatility tercile
 
 | vol_tercile | positions | notional_M | net_pnl_M | excess_M | cost_M | alpha_net_M | alpha_share | alpha_bp_per_$ |
 |---|---|---|---|---|---|---|---|---|
-| high vol | 39,523 | 1,094.31 | 4.11 | 7.37 | 1.98 | 5.39 | 21.7% | 49.25 |
-| low vol | 40,091 | 1,165.68 | 10.19 | 12.82 | 2.56 | 10.26 | 41.2% | 87.97 |
-| mid vol | 37,903 | 1,105.61 | 9.59 | 11.28 | 2.19 | 9.09 | 36.5% | 82.20 |
+| high vol | 36,794 | 943.20 | 1.67 | 4.44 | 1.72 | 2.73 | 14.9% | 28.92 |
+| low vol | 36,578 | 998.17 | 8.19 | 10.51 | 2.22 | 8.29 | 45.2% | 83.09 |
+| mid vol | 34,866 | 948.23 | 7.19 | 8.60 | 1.90 | 6.70 | 36.5% | 70.69 |
 
 ### Short-borrow sensitivity (not modeled in the backtest)
 
 | borrow_rate | fee_M | annualized_return | drag |
 |---|---|---|---|
-| 0.0% | 0.0 | 10.08% | -0.00% |
-| 0.5% | 1.8 | 9.93% | 0.15% |
-| 1.0% | 3.5 | 9.77% | 0.31% |
-| 2.0% | 7.0 | 9.44% | 0.64% |
-| 5.0% | 17.5 | 8.32% | 1.76% |
+| 0.0% | 0.0 | 9.15% | -0.00% |
+| 0.5% | 1.5 | 9.00% | 0.15% |
+| 1.0% | 3.0 | 8.84% | 0.31% |
+| 2.0% | 6.0 | 8.51% | 0.64% |
+| 5.0% | 15.0 | 7.39% | 1.77% |
 
 The engine charges the same transaction cost on shorts as on longs and no stock-borrow fee. The short leg is concentrated in small, illiquid names, where borrow is scarce and expensive -- read the table as a floor on the cost of running the short leg.

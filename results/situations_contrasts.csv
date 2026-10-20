@@ -1,177 +1,177 @@
 strategy,dimension,a,b,a_bp,b_bp,diff_bp,t_stat,quarters,method
-balanced_leverage,Calm vs jumpy stocks,calm stocks,jumpy stocks,105.007356764135,46.43539806318185,58.57195870095314,1.8867065809125079,71,paired by quarter
-balanced_leverage,Small vs large companies,1,5,210.76566119776476,30.839369706012796,179.92629149175193,2.771410211464193,72,paired by quarter
-balanced_leverage,Thin vs heavily traded,1,5,266.23575514898505,28.219993775025902,238.01576137395912,4.9597981108878715,72,paired by quarter
-balanced_leverage,Long holds vs short holds,>90d,<=40d,315.04715211887327,35.165478794610564,279.8816733242628,4.628527209253478,72,paired by quarter
-balanced_leverage,Early vs late period,1996-01,2008-13,142.4151166364707,32.745632188993824,109.66948444747689,2.956365995509318,24,different quarters (Welch)
-balanced_leverage,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,174.78803348091515,51.96486076397852,122.82317271693665,2.661932247314628,72,paired by quarter
-balanced_leverage,Market rose vs fell during hold,market rose >5%,market fell >5%,60.86462953856405,42.7855256058185,6.480373963090829,0.034633819980165584,45,paired by quarter
-balanced_leverage,Calm vs stormy market at entry,calm market,stormy market,64.19131182138273,77.98727337545598,-13.795961554073259,-0.24406174248013138,35,different quarters (Welch)
-balanced_leverage_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,71.16122753665394,19.38705984954892,51.77416768710503,1.854572693079376,71,paired by quarter
-balanced_leverage_max,Small vs large companies,1,5,119.52169299916227,24.81466878808349,94.70702421107876,1.1934970691930893,72,paired by quarter
-balanced_leverage_max,Thin vs heavily traded,1,5,231.17233974421924,21.947874745778932,211.38002752153437,4.234047028780476,67,paired by quarter
-balanced_leverage_max,Long holds vs short holds,>90d,<=40d,212.21070285097107,18.228866749676133,193.98183610129502,3.386872041434683,72,paired by quarter
-balanced_leverage_max,Early vs late period,1996-01,2008-13,98.72015481400543,-2.368928216150865,101.08908303015629,3.2822786311485803,24,different quarters (Welch)
-balanced_leverage_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,78.39399252956544,76.22069294415665,2.1732995854087864,0.04884411304881637,72,paired by quarter
-balanced_leverage_max,Market rose vs fell during hold,market rose >5%,market fell >5%,-14.06331845720153,39.15424923680803,-85.91912919777178,-0.472998881992287,45,paired by quarter
-balanced_leverage_max,Calm vs stormy market at entry,calm market,stormy market,54.02694341342789,42.209474560691554,11.817468852736333,0.23996133927633628,35,different quarters (Welch)
-calm_rank_levered,Calm vs jumpy stocks,calm stocks,jumpy stocks,85.4065656095667,93.93027874586777,-8.523713136301046,-0.2305244730001622,71,paired by quarter
-calm_rank_levered,Small vs large companies,1,5,225.80317439812222,43.999246402220734,181.8039279959015,2.571053529127543,72,paired by quarter
-calm_rank_levered,Thin vs heavily traded,1,5,250.89727250139651,54.95320048526364,195.94407201613285,4.524443425863294,72,paired by quarter
-calm_rank_levered,Long holds vs short holds,>90d,<=40d,268.6999887368585,47.00921724316034,221.69077149369815,3.8902476234863137,72,paired by quarter
-calm_rank_levered,Early vs late period,1996-01,2008-13,159.86932466341608,22.406373229482714,137.46295143393337,5.2648485687851,24,different quarters (Welch)
-calm_rank_levered,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,158.76465561486475,107.57310000543744,51.1915556094273,0.7558313583682421,72,paired by quarter
-calm_rank_levered,Market rose vs fell during hold,market rose >5%,market fell >5%,10.154482415593638,51.44365266853968,-71.36088065690069,-0.4003268081986064,45,paired by quarter
-calm_rank_levered,Calm vs stormy market at entry,calm market,stormy market,80.38835762642455,103.80408162226335,-23.415723995838803,-0.5527735269774896,35,different quarters (Welch)
-calm_rank_tilt,Calm vs jumpy stocks,calm stocks,jumpy stocks,96.88676792471125,121.47832338576221,-24.59155546105099,-0.5544714780689264,71,paired by quarter
-calm_rank_tilt,Small vs large companies,1,5,270.15673562666694,44.909761149720005,225.24697447694692,3.366771610211408,72,paired by quarter
-calm_rank_tilt,Thin vs heavily traded,1,5,255.9635674254783,54.90814897620263,201.0554184492756,4.603080695314152,72,paired by quarter
-calm_rank_tilt,Long holds vs short holds,>90d,<=40d,304.8634470396268,55.696975671556416,249.16647136807043,4.588250621279657,72,paired by quarter
-calm_rank_tilt,Early vs late period,1996-01,2008-13,172.11142681265144,39.08480132864907,133.02662548400238,4.708056629017101,24,different quarters (Welch)
-calm_rank_tilt,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,194.5166689334453,108.25878901384415,86.2578799196011,1.2680969098012322,72,paired by quarter
-calm_rank_tilt,Market rose vs fell during hold,market rose >5%,market fell >5%,36.53850379434603,77.29562282524869,-65.0715079156314,-0.3557562674748376,45,paired by quarter
-calm_rank_tilt,Calm vs stormy market at entry,calm market,stormy market,92.10283644259437,116.97422535483226,-24.87138891223789,-0.5180348885352711,35,different quarters (Welch)
-calm_weighted,Calm vs jumpy stocks,calm stocks,jumpy stocks,101.23887967565112,54.9833778678529,46.255501807798204,1.4754215139792377,71,paired by quarter
-calm_weighted,Small vs large companies,1,5,222.74150513180305,37.777342685838434,184.96416244596463,2.8922856305489546,72,paired by quarter
-calm_weighted,Thin vs heavily traded,1,5,259.5836864985269,40.13011129867145,219.4535751998554,4.698741785145258,72,paired by quarter
-calm_weighted,Long holds vs short holds,>90d,<=40d,307.22002485393955,44.571745926520975,262.64827892741863,4.812584921935281,72,paired by quarter
-calm_weighted,Early vs late period,1996-01,2008-13,149.29778052844915,37.7008401012206,111.59694042722856,3.295680484306257,24,different quarters (Welch)
-calm_weighted,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,183.12147618351415,59.300195087003466,123.8212810965107,2.6033254769939296,72,paired by quarter
-calm_weighted,Market rose vs fell during hold,market rose >5%,market fell >5%,60.696985167332784,40.428101599089864,11.464828739841664,0.06324739954791032,45,paired by quarter
-calm_weighted,Calm vs stormy market at entry,calm market,stormy market,72.0954399168578,91.53618679527979,-19.44074687842199,-0.38542417967241727,35,different quarters (Welch)
-calm_weighted_filter,Calm vs jumpy stocks,calm stocks,jumpy stocks,100.52400877569104,36.65427768400316,63.86973109168791,1.7224078597523378,71,paired by quarter
-calm_weighted_filter,Small vs large companies,1,5,220.63485240884768,36.52536532927907,184.1094870795686,2.8663975558499355,72,paired by quarter
-calm_weighted_filter,Thin vs heavily traded,1,5,260.9772834861548,36.09061894542768,224.88666454072717,4.813281705698189,72,paired by quarter
-calm_weighted_filter,Long holds vs short holds,>90d,<=40d,305.4030794196459,41.05117561725303,264.3519038023929,4.794725846227757,72,paired by quarter
-calm_weighted_filter,Early vs late period,1996-01,2008-13,144.1086173056356,38.470128564677815,105.63848874095777,2.9626548027943587,24,different quarters (Welch)
-calm_weighted_filter,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,181.17468024965999,57.0844918827599,124.09018836690012,2.582073490528433,72,paired by quarter
-calm_weighted_filter,Market rose vs fell during hold,market rose >5%,market fell >5%,66.13905303427718,36.32595432784022,25.740089723223516,0.14108354597761721,45,paired by quarter
-calm_weighted_filter,Calm vs stormy market at entry,calm market,stormy market,83.84948469525062,88.1962899774056,-4.346805282154975,-0.08731379402185913,35,different quarters (Welch)
-calm_weighted_matched,Calm vs jumpy stocks,calm stocks,jumpy stocks,98.37391882654329,52.10582582935664,46.268092997186656,1.5160160701155638,71,paired by quarter
-calm_weighted_matched,Small vs large companies,1,5,209.0040119710797,37.77639684690163,171.22761512417804,2.636227856890428,72,paired by quarter
-calm_weighted_matched,Thin vs heavily traded,1,5,252.55527916928338,40.125234360046534,212.43004480923685,4.590381545303043,72,paired by quarter
-calm_weighted_matched,Long holds vs short holds,>90d,<=40d,294.45490754736903,42.22694716372666,252.2279603836423,4.658816768186476,72,paired by quarter
-calm_weighted_matched,Early vs late period,1996-01,2008-13,146.89637508869797,32.88613233415188,114.01024275454608,3.510876279377848,24,different quarters (Welch)
-calm_weighted_matched,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,172.63128527732962,63.80463193688034,108.82665334044925,2.329956719750127,72,paired by quarter
-calm_weighted_matched,Market rose vs fell during hold,market rose >5%,market fell >5%,52.10859792439185,34.890203068799636,5.439955798786092,0.03024341609190076,45,paired by quarter
-calm_weighted_matched,Calm vs stormy market at entry,calm market,stormy market,69.55098861018932,91.23655302457024,-21.68556441438092,-0.4456533462561926,35,different quarters (Welch)
-conviction_tilt,Calm vs jumpy stocks,calm stocks,jumpy stocks,120.47269604690703,58.350625295368935,62.12207075153807,1.9125851430380736,71,paired by quarter
-conviction_tilt,Small vs large companies,1,5,201.6361387664761,31.175772028951794,170.4603667375243,2.8584057652271917,72,paired by quarter
-conviction_tilt,Thin vs heavily traded,1,5,268.6897380826076,26.711263935753834,241.97847414685384,4.374955403911852,72,paired by quarter
-conviction_tilt,Long holds vs short holds,>90d,<=40d,391.0132291949037,39.1586566955965,351.8545724993072,5.674896974546509,72,paired by quarter
-conviction_tilt,Early vs late period,1996-01,2008-13,160.27230625455783,54.722908563563415,105.54939769099443,2.2733412176068697,24,different quarters (Welch)
-conviction_tilt,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,194.26441003557824,43.3160708855416,150.94833915003665,3.3855991533835494,72,paired by quarter
-conviction_tilt,Market rose vs fell during hold,market rose >5%,market fell >5%,104.90206963932897,36.167014413393055,67.7986894165481,0.3472073882981859,45,paired by quarter
-conviction_tilt,Calm vs stormy market at entry,calm market,stormy market,32.52869843911353,133.1792999318426,-100.65060149272907,-1.4389324947124846,35,different quarters (Welch)
-conviction_tilt_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,83.38594656681697,33.02148270042659,50.36446386639035,1.6585558692772004,71,paired by quarter
-conviction_tilt_max,Small vs large companies,1,5,89.94149050402542,27.495725618199057,62.44576488582638,0.8428800974031362,72,paired by quarter
-conviction_tilt_max,Thin vs heavily traded,1,5,238.90990929246607,23.194812151323863,215.71509714114217,4.391003334181805,72,paired by quarter
-conviction_tilt_max,Long holds vs short holds,>90d,<=40d,263.35852598579714,29.583133186356253,233.7753927994409,4.829957242676198,72,paired by quarter
-conviction_tilt_max,Early vs late period,1996-01,2008-13,122.29821581552604,10.916283214483501,111.38193260104254,2.584777740632129,24,different quarters (Welch)
-conviction_tilt_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,93.93884996552889,83.65738003264495,10.281469932883946,0.2592120369861227,72,paired by quarter
-conviction_tilt_max,Market rose vs fell during hold,market rose >5%,market fell >5%,25.735988373723643,6.989778677001968,-8.53952411973324,-0.04862706075766536,45,paired by quarter
-conviction_tilt_max,Calm vs stormy market at entry,calm market,stormy market,71.18662235480588,67.83265755431646,3.353964800489422,0.06424670757827246,35,different quarters (Welch)
-extreme_picks,Calm vs jumpy stocks,calm stocks,jumpy stocks,138.03072299467027,46.34636348061166,91.68435951405858,1.8326037922203084,71,paired by quarter
-extreme_picks,Small vs large companies,1,5,108.8435785474379,15.198318633545982,93.64525991389195,0.9733509790272983,72,paired by quarter
-extreme_picks,Thin vs heavily traded,1,5,369.7280490164445,10.118822694592552,359.60922632185196,4.034896775531732,72,paired by quarter
-extreme_picks,Long holds vs short holds,>90d,<=40d,446.4029372673064,79.62573152050082,366.7772057468055,3.604355299268618,72,paired by quarter
-extreme_picks,Early vs late period,1996-01,2008-13,135.32946389096307,22.069914098731775,113.2595497922313,1.5916895158433884,24,different quarters (Welch)
-extreme_picks,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,130.82551137013965,48.689053963885144,82.13645740625448,2.4143306368434945,72,paired by quarter
-extreme_picks,Market rose vs fell during hold,market rose >5%,market fell >5%,33.33187109710904,-8.158611319840206,-0.2410363634748991,-0.0009726292339348623,41,paired by quarter
-extreme_picks,Calm vs stormy market at entry,calm market,stormy market,157.35377050063838,122.51558138925401,34.83818911138437,0.38193516762225854,35,different quarters (Welch)
-extreme_picks_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,99.31539896096471,32.04298921190644,67.27240974905826,1.2240857594962693,71,paired by quarter
-extreme_picks_max,Small vs large companies,1,5,2.8821194894642557,14.496183602210133,-11.614064112745861,-0.09704259260676282,72,paired by quarter
-extreme_picks_max,Thin vs heavily traded,1,5,369.81241954802124,10.11426796408545,359.69815158393584,4.036133608081776,72,paired by quarter
-extreme_picks_max,Long holds vs short holds,>90d,<=40d,458.53867075832204,68.97111155763618,389.5675592006859,3.6857948352812238,72,paired by quarter
-extreme_picks_max,Early vs late period,1996-01,2008-13,108.51180613627089,-25.189065897299542,133.70087203357042,1.8243238142631808,24,different quarters (Welch)
-extreme_picks_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,63.581161141586136,76.66302872047757,-13.081867578891421,-0.3210388662799399,72,paired by quarter
-extreme_picks_max,Market rose vs fell during hold,market rose >5%,market fell >5%,14.40523375067468,-50.06502949293156,1.6436084941033076,0.007517936863245109,41,paired by quarter
-extreme_picks_max,Calm vs stormy market at entry,calm market,stormy market,165.7839769200185,64.62503786717313,101.15893905284535,1.2947131101943106,35,different quarters (Welch)
-graded_bets,Calm vs jumpy stocks,calm stocks,jumpy stocks,89.18448762477108,35.15725902294191,54.02722860182917,1.844784752246957,71,paired by quarter
-graded_bets,Small vs large companies,1,5,145.5383234203945,14.633207474304438,130.90511594609006,2.5700507403743815,72,paired by quarter
-graded_bets,Thin vs heavily traded,1,5,229.28475565913595,8.539168113231518,220.74558754590444,4.862651000795304,72,paired by quarter
-graded_bets,Long holds vs short holds,>90d,<=40d,332.3713590044081,11.970280890833273,320.40107811357484,6.644103508792782,72,paired by quarter
-graded_bets,Early vs late period,1996-01,2008-13,108.50538072084743,23.123897201726937,85.3814835191205,1.8949255973079484,24,different quarters (Welch)
-graded_bets,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,157.50051242415338,40.956785402853725,116.54372702129965,3.178517575671253,72,paired by quarter
-graded_bets,Market rose vs fell during hold,market rose >5%,market fell >5%,56.398220255432136,17.77360924814804,33.88381194186203,0.2449365709604052,45,paired by quarter
-graded_bets,Calm vs stormy market at entry,calm market,stormy market,51.24173218402244,67.98240541148002,-16.740673227457577,-0.2674985994134281,35,different quarters (Welch)
-graded_bets_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,66.89102474281034,22.13082637762303,44.7601983651873,1.4771655088516789,71,paired by quarter
-graded_bets_max,Small vs large companies,1,5,72.98924611227864,14.619332204133011,58.369913908145655,1.0064681108179474,72,paired by quarter
-graded_bets_max,Thin vs heavily traded,1,5,178.6102983837617,8.512913494670393,170.0973848890913,4.074501594787035,72,paired by quarter
-graded_bets_max,Long holds vs short holds,>90d,<=40d,238.43249696780666,6.074513065477314,232.35798390232938,5.3029185296116905,72,paired by quarter
-graded_bets_max,Early vs late period,1996-01,2008-13,92.75370219185682,-3.822736675900979,96.5764388677578,2.327034142520524,24,different quarters (Welch)
-graded_bets_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,86.5841773233811,69.32576696177654,17.25841036160456,0.4934023106056508,72,paired by quarter
-graded_bets_max,Market rose vs fell during hold,market rose >5%,market fell >5%,0.6265036950422715,-12.16227137667531,-12.851819462674886,-0.07728543273601576,45,paired by quarter
-graded_bets_max,Calm vs stormy market at entry,calm market,stormy market,37.57348351158386,44.27729112620416,-6.7038076146203025,-0.11588168964254324,35,different quarters (Welch)
-market_boost,Calm vs jumpy stocks,calm stocks,jumpy stocks,105.007356764135,46.43539806318185,58.57195870095314,1.8867065809125079,71,paired by quarter
-market_boost,Small vs large companies,1,5,210.76566119776476,30.839369706012796,179.92629149175193,2.771410211464193,72,paired by quarter
-market_boost,Thin vs heavily traded,1,5,266.23575514898505,28.219993775025902,238.01576137395912,4.9597981108878715,72,paired by quarter
-market_boost,Long holds vs short holds,>90d,<=40d,315.04715211887327,35.165478794610564,279.8816733242628,4.628527209253478,72,paired by quarter
-market_boost,Early vs late period,1996-01,2008-13,142.4151166364707,32.745632188993824,109.66948444747689,2.956365995509318,24,different quarters (Welch)
-market_boost,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,174.78803348091515,51.96486076397852,122.82317271693665,2.661932247314628,72,paired by quarter
-market_boost,Market rose vs fell during hold,market rose >5%,market fell >5%,60.86462953856405,42.7855256058185,6.480373963090829,0.034633819980165584,45,paired by quarter
-market_boost,Calm vs stormy market at entry,calm market,stormy market,64.19131182138273,77.98727337545598,-13.795961554073259,-0.24406174248013138,35,different quarters (Welch)
-market_boost_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,71.16122753665394,19.38705984954892,51.77416768710503,1.854572693079376,71,paired by quarter
-market_boost_max,Small vs large companies,1,5,119.52169299916227,24.81466878808349,94.70702421107876,1.1934970691930893,72,paired by quarter
-market_boost_max,Thin vs heavily traded,1,5,231.17233974421924,21.947874745778932,211.38002752153437,4.234047028780476,67,paired by quarter
-market_boost_max,Long holds vs short holds,>90d,<=40d,212.21070285097107,18.228866749676133,193.98183610129502,3.386872041434683,72,paired by quarter
-market_boost_max,Early vs late period,1996-01,2008-13,98.72015481400543,-2.368928216150865,101.08908303015629,3.2822786311485803,24,different quarters (Welch)
-market_boost_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,78.39399252956544,76.22069294415665,2.1732995854087864,0.04884411304881637,72,paired by quarter
-market_boost_max,Market rose vs fell during hold,market rose >5%,market fell >5%,-14.06331845720153,39.15424923680803,-85.91912919777178,-0.472998881992287,45,paired by quarter
-market_boost_max,Calm vs stormy market at entry,calm market,stormy market,54.02694341342789,42.209474560691554,11.817468852736333,0.23996133927633628,35,different quarters (Welch)
-market_exposed,Calm vs jumpy stocks,calm stocks,jumpy stocks,94.90410303511878,52.173162846130715,42.73094018898808,1.35932331702608,71,paired by quarter
-market_exposed,Small vs large companies,1,5,151.54048663558115,20.114436395144114,131.42605024043704,2.134139405357882,72,paired by quarter
-market_exposed,Thin vs heavily traded,1,5,250.72527085602985,23.946184033282137,226.77908682274776,4.802282691479816,72,paired by quarter
-market_exposed,Long holds vs short holds,>90d,<=40d,285.751633573849,27.668586622931667,258.0830469509174,4.48462721799682,72,paired by quarter
-market_exposed,Early vs late period,1996-01,2008-13,133.657059661914,15.586457728282523,118.07060193363147,2.691235568369136,24,different quarters (Welch)
-market_exposed,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,156.71501603446555,44.887062137391865,111.82795389707366,2.376742484188447,72,paired by quarter
-market_exposed,Market rose vs fell during hold,market rose >5%,market fell >5%,33.696412810972596,12.753322675681543,8.610861368642066,0.04428012117007652,45,paired by quarter
-market_exposed,Calm vs stormy market at entry,calm market,stormy market,84.49346174947951,68.2066718685353,16.286789880944212,0.2933775788786234,35,different quarters (Welch)
-market_exposed_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,78.39038874360529,33.20743179991995,45.18295694368532,1.525667904104191,71,paired by quarter
-market_exposed_max,Small vs large companies,1,5,105.55332810637762,20.016964805561464,85.53636330081616,1.2644155775354553,72,paired by quarter
-market_exposed_max,Thin vs heavily traded,1,5,239.86841990594843,19.33380868451526,220.5346112214332,4.883095207911981,72,paired by quarter
-market_exposed_max,Long holds vs short holds,>90d,<=40d,211.36404985935354,19.17431655162554,192.189733307728,3.3360097606682935,72,paired by quarter
-market_exposed_max,Early vs late period,1996-01,2008-13,117.49337186455875,-5.90171334663619,123.39508521119494,3.2715870713998636,24,different quarters (Welch)
-market_exposed_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,101.91062730939649,63.15391328613018,38.756714023266326,0.9411380899143403,72,paired by quarter
-market_exposed_max,Market rose vs fell during hold,market rose >5%,market fell >5%,4.281806721445376,14.567939551148081,-36.87136283434932,-0.20729162692398262,45,paired by quarter
-market_exposed_max,Calm vs stormy market at entry,calm market,stormy market,83.56107068068249,48.218289585374606,35.342781095307885,0.7429850077375597,35,different quarters (Welch)
-sector_balanced,Calm vs jumpy stocks,calm stocks,jumpy stocks,115.21842446430875,59.762824997381664,55.45559946692711,1.6116065951750078,71,paired by quarter
-sector_balanced,Small vs large companies,1,5,304.97145425958473,30.790113639128727,274.18134062045607,4.435130759859723,72,paired by quarter
-sector_balanced,Thin vs heavily traded,1,5,321.15421856321,28.223559305008223,292.9306592582018,5.84897655912647,72,paired by quarter
-sector_balanced,Long holds vs short holds,>90d,<=40d,408.6730845634764,38.58719668039936,370.0858878830771,5.856390796759528,72,paired by quarter
-sector_balanced,Early vs late period,1996-01,2008-13,157.43481791864338,49.28120178647456,108.15361613216882,2.474467308585447,24,different quarters (Welch)
-sector_balanced,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,234.06731086710826,12.607229718270396,221.46008114883782,3.620725244806263,72,paired by quarter
-sector_balanced,Market rose vs fell during hold,market rose >5%,market fell >5%,120.24614718793985,92.34422039249714,42.95127182079289,0.2571365714181473,45,paired by quarter
-sector_balanced,Calm vs stormy market at entry,calm market,stormy market,92.60796515380288,88.78464340536931,3.823321748433571,0.0624866732387357,35,different quarters (Welch)
-sector_balanced_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,71.16122753665394,19.38705984954892,51.77416768710503,1.854572693079376,71,paired by quarter
-sector_balanced_max,Small vs large companies,1,5,119.52169299916227,24.81466878808349,94.70702421107876,1.1934970691930893,72,paired by quarter
-sector_balanced_max,Thin vs heavily traded,1,5,231.17233974421924,21.947874745778932,211.38002752153437,4.234047028780476,67,paired by quarter
-sector_balanced_max,Long holds vs short holds,>90d,<=40d,212.21070285097107,18.228866749676133,193.98183610129502,3.386872041434683,72,paired by quarter
-sector_balanced_max,Early vs late period,1996-01,2008-13,98.72015481400543,-2.368928216150865,101.08908303015629,3.2822786311485803,24,different quarters (Welch)
-sector_balanced_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,78.39399252956544,76.22069294415665,2.1732995854087864,0.04884411304881637,72,paired by quarter
-sector_balanced_max,Market rose vs fell during hold,market rose >5%,market fell >5%,-14.06331845720153,39.15424923680803,-85.91912919777178,-0.472998881992287,45,paired by quarter
-sector_balanced_max,Calm vs stormy market at entry,calm market,stormy market,54.02694341342789,42.209474560691554,11.817468852736333,0.23996133927633628,35,different quarters (Welch)
-size_balanced,Calm vs jumpy stocks,calm stocks,jumpy stocks,153.63223002257817,65.78385789333612,87.84837212924205,1.7896022650309844,71,paired by quarter
-size_balanced,Small vs large companies,1,5,140.06055279243958,33.940634460102,106.11991833233755,0.9345169244593622,72,paired by quarter
-size_balanced,Thin vs heavily traded,1,5,369.99254933371026,28.717912978908526,341.27463635480177,3.978906016513301,72,paired by quarter
-size_balanced,Long holds vs short holds,>90d,<=40d,474.2656788732572,85.93846271828468,388.3272161549725,3.1372186884637876,72,paired by quarter
-size_balanced,Early vs late period,1996-01,2008-13,168.1091295383777,51.93912727319745,116.17000226518024,1.8158284373832756,24,different quarters (Welch)
-size_balanced,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,154.27991335449738,68.46083520194367,85.81907815255371,2.33716112510995,72,paired by quarter
-size_balanced,Market rose vs fell during hold,market rose >5%,market fell >5%,95.10839609038685,5.075800125793709,62.97084709073753,0.22814081888193233,41,paired by quarter
-size_balanced,Calm vs stormy market at entry,calm market,stormy market,126.04847922697117,142.0468143468743,-15.998335119903132,-0.1577415838201381,35,different quarters (Welch)
-size_balanced_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,110.78634202257578,41.71112457461923,69.07521744795658,1.3967776803327299,71,paired by quarter
-size_balanced_max,Small vs large companies,1,5,24.389093300337915,30.840540353378444,-6.451447053040511,-0.05315831610201537,72,paired by quarter
-size_balanced_max,Thin vs heavily traded,1,5,369.81241954802124,29.040409931257297,340.77200961676397,3.9752081602820137,72,paired by quarter
-size_balanced_max,Long holds vs short holds,>90d,<=40d,452.44266124907176,72.98059162525423,379.4620696238175,3.643644419252621,72,paired by quarter
-size_balanced_max,Early vs late period,1996-01,2008-13,130.45922621811158,5.117005327222668,125.34222089088891,1.9523912544051096,24,different quarters (Welch)
-size_balanced_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,75.60583291344331,90.2671234346046,-14.661290521161277,-0.3289402448756323,72,paired by quarter
-size_balanced_max,Market rose vs fell during hold,market rose >5%,market fell >5%,23.620615041887532,-26.29012816423379,-16.85166181984314,-0.07479547139585914,41,paired by quarter
-size_balanced_max,Calm vs stormy market at entry,calm market,stormy market,167.541157929823,85.75906535761719,81.7820925722058,1.102898298596713,35,different quarters (Welch)
-volatility_filter,Calm vs jumpy stocks,calm stocks,jumpy stocks,103.82844659292026,28.629279170489703,75.1991674224306,2.089561456461408,71,paired by quarter
-volatility_filter,Small vs large companies,1,5,208.47456407431426,29.07868517357267,179.39587890074162,2.7534711121395903,72,paired by quarter
-volatility_filter,Thin vs heavily traded,1,5,266.7611424912509,23.247974612296723,243.51316787895414,5.063651636768553,72,paired by quarter
-volatility_filter,Long holds vs short holds,>90d,<=40d,313.07193253417,30.65821417365483,282.4137183605152,4.61536106826368,72,paired by quarter
-volatility_filter,Early vs late period,1996-01,2008-13,136.02012994631727,33.582472559214956,102.43765738710232,2.6064093135882267,24,different quarters (Welch)
-volatility_filter,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,171.7425468390253,49.579053946832104,122.16349289219319,2.6363373977016877,72,paired by quarter
-volatility_filter,Market rose vs fell during hold,market rose >5%,market fell >5%,68.61841091338852,37.85687068287571,25.838927657054356,0.13783919459792923,45,paired by quarter
-volatility_filter,Calm vs stormy market at entry,calm market,stormy market,85.49647925352478,73.60171883309943,11.894760420425357,0.22494018158282322,35,different quarters (Welch)
+balanced_leverage,Calm vs jumpy stocks,calm stocks,jumpy stocks,95.05134445140537,29.70360345089412,65.34774100051128,2.0729061059918075,70,paired by quarter
+balanced_leverage,Small vs large companies,1,5,58.018984778477446,35.93516575717847,22.083819021298982,0.3220432779423414,71,paired by quarter
+balanced_leverage,Thin vs heavily traded,1,5,160.91207252054514,32.04179552216202,128.8702769983831,2.887117549135716,71,paired by quarter
+balanced_leverage,Long holds vs short holds,>90d,<=40d,199.63076094681117,57.668101974621905,141.96265897218927,2.2121681940004025,71,paired by quarter
+balanced_leverage,Early vs late period,1996-01,2008-13,127.48174191915578,23.21085992659511,104.27088199256067,2.582173462962623,23,different quarters (Welch)
+balanced_leverage,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,137.1312700098404,61.00513344358111,76.12613656625923,1.6564200040373898,71,paired by quarter
+balanced_leverage,Market rose vs fell during hold,market rose >5%,market fell >5%,161.99565688362262,226.7704214093177,-33.75024415658521,-0.17024655692445634,43,paired by quarter
+balanced_leverage,Calm vs stormy market at entry,calm market,stormy market,89.14695306590465,50.58277903093816,38.56417403496649,0.9254000907298172,35,different quarters (Welch)
+balanced_leverage_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,72.73818017509194,4.7588634320401475,67.97931674305178,2.431514514675206,70,paired by quarter
+balanced_leverage_max,Small vs large companies,1,5,1.6734152929591322,29.413781373396336,-27.74036608043723,-0.30366942394364116,71,paired by quarter
+balanced_leverage_max,Thin vs heavily traded,1,5,135.4263075527179,24.485894117335906,110.94041343538197,1.221927924631251,71,paired by quarter
+balanced_leverage_max,Long holds vs short holds,>90d,<=40d,128.51650168025856,43.98279067926903,84.5337110009895,1.1908405201515306,71,paired by quarter
+balanced_leverage_max,Early vs late period,1996-01,2008-13,90.19359036166551,-10.939662862845275,101.13325322451078,2.7988681346486577,23,different quarters (Welch)
+balanced_leverage_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,74.66628422292005,85.46598342105608,-10.799699198136056,-0.20542358151856044,71,paired by quarter
+balanced_leverage_max,Market rose vs fell during hold,market rose >5%,market fell >5%,158.84708631245195,268.66994930204993,-61.931764765627385,-0.31892694898323404,43,paired by quarter
+balanced_leverage_max,Calm vs stormy market at entry,calm market,stormy market,76.15317011690472,50.24775492262743,25.90541519427729,0.4481857697930365,35,different quarters (Welch)
+calm_rank_levered,Calm vs jumpy stocks,calm stocks,jumpy stocks,80.99513067434535,59.451402135670286,21.543728538675065,0.5317405795231874,70,paired by quarter
+calm_rank_levered,Small vs large companies,1,5,108.90661016749827,42.66894524391852,66.23766492357974,0.9551674128019774,71,paired by quarter
+calm_rank_levered,Thin vs heavily traded,1,5,150.7123144353461,41.74037039066902,108.97194404467706,2.6425452607332205,71,paired by quarter
+calm_rank_levered,Long holds vs short holds,>90d,<=40d,175.8871542107824,67.2769392123569,108.6102149984255,1.9716532431321556,71,paired by quarter
+calm_rank_levered,Early vs late period,1996-01,2008-13,141.53611874854377,21.36222644096274,120.17389230758103,3.9770837910958754,23,different quarters (Welch)
+calm_rank_levered,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,142.7334689652988,104.85389761610955,37.879571349189284,0.49319745935788956,71,paired by quarter
+calm_rank_levered,Market rose vs fell during hold,market rose >5%,market fell >5%,166.09475128284575,239.85125732769978,-21.65294442992683,-0.11445256507272977,43,paired by quarter
+calm_rank_levered,Calm vs stormy market at entry,calm market,stormy market,74.12132481086135,75.8615805011242,-1.7402556902628419,-0.04392286415487604,35,different quarters (Welch)
+calm_rank_tilt,Calm vs jumpy stocks,calm stocks,jumpy stocks,88.90533609544086,84.8321437235933,4.073192371847543,0.08121760553241658,70,paired by quarter
+calm_rank_tilt,Small vs large companies,1,5,127.00249802635574,42.77219244788352,84.2303055784722,1.2774536007905433,71,paired by quarter
+calm_rank_tilt,Thin vs heavily traded,1,5,148.47060108561917,42.22321391131392,106.2473871743053,2.564175310179338,71,paired by quarter
+calm_rank_tilt,Long holds vs short holds,>90d,<=40d,172.70889633498152,72.86566521098119,99.84323112400027,1.7190647053810637,71,paired by quarter
+calm_rank_tilt,Early vs late period,1996-01,2008-13,155.68157041475882,31.21059151028085,124.47097890447797,3.7914300187642365,23,different quarters (Welch)
+calm_rank_tilt,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,163.00149646685801,102.93260732981224,60.06888913704572,0.7870400529069569,71,paired by quarter
+calm_rank_tilt,Market rose vs fell during hold,market rose >5%,market fell >5%,170.5695567898498,238.70591227263415,-23.105323287692812,-0.11774739247823914,43,paired by quarter
+calm_rank_tilt,Calm vs stormy market at entry,calm market,stormy market,63.31751963214535,93.1003885679052,-29.78286893575985,-0.8126739735229969,35,different quarters (Welch)
+calm_weighted,Calm vs jumpy stocks,calm stocks,jumpy stocks,93.51144110829298,35.474622443418966,58.036818664874055,1.8156315763345205,70,paired by quarter
+calm_weighted,Small vs large companies,1,5,67.9060844270053,40.39341816350436,27.512666263500932,0.41945373925540586,71,paired by quarter
+calm_weighted,Thin vs heavily traded,1,5,154.3758526213834,39.409142771204365,114.96670985017909,2.723628330226175,71,paired by quarter
+calm_weighted,Long holds vs short holds,>90d,<=40d,198.07314707167058,65.36140516335705,132.7117419083135,2.3723032436914484,71,paired by quarter
+calm_weighted,Early vs late period,1996-01,2008-13,136.86935522192707,27.165933531869673,109.7034216900574,3.0063522327200136,23,different quarters (Welch)
+calm_weighted,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,149.60481802635064,62.274263477068516,87.33055454928214,1.7293442461364164,71,paired by quarter
+calm_weighted,Market rose vs fell during hold,market rose >5%,market fell >5%,164.33641187577823,236.57762916571497,-38.58810716527443,-0.19640277206572943,43,paired by quarter
+calm_weighted,Calm vs stormy market at entry,calm market,stormy market,80.44609182220634,66.33072414139231,14.115367680814032,0.3589874872067225,35,different quarters (Welch)
+calm_weighted_filter,Calm vs jumpy stocks,calm stocks,jumpy stocks,89.6442923403882,-47.79471464617125,137.43900698655946,2.7296862783435247,70,paired by quarter
+calm_weighted_filter,Small vs large companies,1,5,68.76252370957417,36.20451872404431,32.558004985529855,0.4183188064584787,71,paired by quarter
+calm_weighted_filter,Thin vs heavily traded,1,5,151.32317720158005,30.698646417546545,120.62453078403352,2.7467199714845547,71,paired by quarter
+calm_weighted_filter,Long holds vs short holds,>90d,<=40d,188.61647507710418,58.417466439493886,130.1990086376103,2.294510299655705,71,paired by quarter
+calm_weighted_filter,Early vs late period,1996-01,2008-13,128.5079116992757,27.29180295240248,101.21610874687322,2.5832404539815768,23,different quarters (Welch)
+calm_weighted_filter,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,141.52871498666747,57.8510136354621,83.67770135120533,1.6428222113491593,71,paired by quarter
+calm_weighted_filter,Market rose vs fell during hold,market rose >5%,market fell >5%,172.91724472642636,224.36696825003577,-10.001407521241985,-0.05010437821249053,43,paired by quarter
+calm_weighted_filter,Calm vs stormy market at entry,calm market,stormy market,80.51866008445569,62.56186028304349,17.956799801412203,0.4119665065310042,35,different quarters (Welch)
+calm_weighted_matched,Calm vs jumpy stocks,calm stocks,jumpy stocks,92.98577381228696,34.577363585034576,58.40841022725238,1.8362822404499215,70,paired by quarter
+calm_weighted_matched,Small vs large companies,1,5,79.72317065890965,40.149452394567255,39.57371826434237,0.5295773143906204,71,paired by quarter
+calm_weighted_matched,Thin vs heavily traded,1,5,187.80682578750324,38.74880075000981,149.05802503749348,2.867971061649406,71,paired by quarter
+calm_weighted_matched,Long holds vs short holds,>90d,<=40d,194.10811211733974,68.65407065071861,125.45404146662115,2.201647910760236,71,paired by quarter
+calm_weighted_matched,Early vs late period,1996-01,2008-13,135.08799834041264,28.2635529296842,106.82444541072844,2.9587889405121355,23,different quarters (Welch)
+calm_weighted_matched,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,143.6320909085878,63.71276569572972,79.91932521285808,1.5213348313600417,71,paired by quarter
+calm_weighted_matched,Market rose vs fell during hold,market rose >5%,market fell >5%,164.38405435809352,249.33057483246822,-48.210625980490654,-0.245144844605198,43,paired by quarter
+calm_weighted_matched,Calm vs stormy market at entry,calm market,stormy market,100.24954567685754,75.31344361179144,24.936102065066095,0.558861434052849,35,different quarters (Welch)
+conviction_tilt,Calm vs jumpy stocks,calm stocks,jumpy stocks,110.87307372673529,44.04967521342925,66.82339851330603,1.7880295676630078,70,paired by quarter
+conviction_tilt,Small vs large companies,1,5,76.97356579216408,32.62928985808336,44.344275934080706,0.7732212176691625,71,paired by quarter
+conviction_tilt,Thin vs heavily traded,1,5,165.7770186581461,31.641935340198113,134.13508331794793,2.5046071274448005,71,paired by quarter
+conviction_tilt,Long holds vs short holds,>90d,<=40d,293.3609285603874,93.09584236952996,200.2650861908574,3.117568764234452,71,paired by quarter
+conviction_tilt,Early vs late period,1996-01,2008-13,135.26524030841546,54.931975288628905,80.33326501978655,1.4518190207666641,23,different quarters (Welch)
+conviction_tilt,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,145.1650645757251,58.57045539943181,86.59460917629328,2.335905366982048,71,paired by quarter
+conviction_tilt,Market rose vs fell during hold,market rose >5%,market fell >5%,206.30445213398295,325.0755738151186,-102.49357893299461,-0.5383021274484503,43,paired by quarter
+conviction_tilt,Calm vs stormy market at entry,calm market,stormy market,111.66409276188301,97.48234983903914,14.181742922843867,0.28283716826705413,35,different quarters (Welch)
+conviction_tilt_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,76.04110442289986,20.919133625447085,55.121970797452796,1.6392766603778013,70,paired by quarter
+conviction_tilt_max,Small vs large companies,1,5,-18.445643131437066,31.773201921496174,-50.218845052933254,-0.6464163069706219,71,paired by quarter
+conviction_tilt_max,Thin vs heavily traded,1,5,131.03684522912218,25.094404240633956,105.94244098848822,2.300876986273485,71,paired by quarter
+conviction_tilt_max,Long holds vs short holds,>90d,<=40d,209.89267412248643,57.97428095834678,151.91839316413967,2.6434849743223765,71,paired by quarter
+conviction_tilt_max,Early vs late period,1996-01,2008-13,105.74805611053101,5.081604249474839,100.66645186105617,2.050137620533898,23,different quarters (Welch)
+conviction_tilt_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,91.13688359381864,80.46739415003714,10.669489443781494,0.26871762211652434,71,paired by quarter
+conviction_tilt_max,Market rose vs fell during hold,market rose >5%,market fell >5%,171.14517144319808,236.73289725069918,-26.717179269739066,-0.14112183050033067,43,paired by quarter
+conviction_tilt_max,Calm vs stormy market at entry,calm market,stormy market,79.87761842676596,55.28096073749578,24.59665768927018,0.5891013749191167,35,different quarters (Welch)
+extreme_picks,Calm vs jumpy stocks,calm stocks,jumpy stocks,133.55644626899718,27.980758921260264,105.57568734773689,1.7416530632276748,70,paired by quarter
+extreme_picks,Small vs large companies,1,5,-19.21239508426596,45.54708677027517,-64.75948185454114,-0.7341324896389002,71,paired by quarter
+extreme_picks,Thin vs heavily traded,1,5,230.15704591621872,41.68597084887461,188.4710750673441,2.446354414418962,71,paired by quarter
+extreme_picks,Long holds vs short holds,>90d,<=40d,453.6682888850823,127.88352050805037,325.7847683770318,3.065698137252199,71,paired by quarter
+extreme_picks,Early vs late period,1996-01,2008-13,111.42137071419697,32.05998862512748,79.36138208906948,1.2842355176405875,23,different quarters (Welch)
+extreme_picks,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,108.999129939272,60.84134591011249,48.157784029159515,1.44073058600943,71,paired by quarter
+extreme_picks,Market rose vs fell during hold,market rose >5%,market fell >5%,67.90464615428529,108.38675304977637,-74.21872951270237,-0.4513386293546197,38,paired by quarter
+extreme_picks,Calm vs stormy market at entry,calm market,stormy market,171.05823873369255,130.87897020744114,40.179268526251406,0.46021588522582463,35,different quarters (Welch)
+extreme_picks_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,120.12784756825417,25.697013077398687,94.43083449085542,1.3689377909225333,70,paired by quarter
+extreme_picks_max,Small vs large companies,1,5,-127.93847808588693,44.999799589230065,-172.93827767511698,-1.6354186314357744,71,paired by quarter
+extreme_picks_max,Thin vs heavily traded,1,5,229.54650460973514,41.97841087491034,187.56809373482477,2.4333802708203556,71,paired by quarter
+extreme_picks_max,Long holds vs short holds,>90d,<=40d,413.432481725889,126.32539210790954,287.1070896179795,2.439123451319283,71,paired by quarter
+extreme_picks_max,Early vs late period,1996-01,2008-13,102.93098909428116,7.616473646487454,95.31451544779371,1.4743630003089414,23,different quarters (Welch)
+extreme_picks_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,64.94891087182866,85.10382564775959,-20.154914775930916,-0.45271706309737614,71,paired by quarter
+extreme_picks_max,Market rose vs fell during hold,market rose >5%,market fell >5%,75.43188693257412,30.233555625052922,23.297762761454376,0.1569699159855546,38,paired by quarter
+extreme_picks_max,Calm vs stormy market at entry,calm market,stormy market,164.0877593114983,141.0037620121844,23.083997299313893,0.25008447192721833,35,different quarters (Welch)
+graded_bets,Calm vs jumpy stocks,calm stocks,jumpy stocks,86.22294830188783,12.869897190119673,73.35305111176817,2.0577599420167165,70,paired by quarter
+graded_bets,Small vs large companies,1,5,29.9670072184012,28.131624782547355,1.8353824358538353,0.031235769186464885,71,paired by quarter
+graded_bets,Thin vs heavily traded,1,5,136.90119612023378,18.253354321357506,118.64784179887629,2.737147380909479,71,paired by quarter
+graded_bets,Long holds vs short holds,>90d,<=40d,234.04650185353935,36.72979661092128,197.31670524261813,4.278559405034598,71,paired by quarter
+graded_bets,Early vs late period,1996-01,2008-13,91.5818547744184,12.381102191605839,79.20075258281257,1.6832259580804765,23,different quarters (Welch)
+graded_bets,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,123.5524560901051,55.053389152332414,68.4990669377727,2.0513777329998653,71,paired by quarter
+graded_bets,Market rose vs fell during hold,market rose >5%,market fell >5%,133.16727074665155,261.12300438463427,-101.55661732366335,-0.6328852643225769,45,paired by quarter
+graded_bets,Calm vs stormy market at entry,calm market,stormy market,156.70526328971866,48.49987668405513,108.20538660566353,1.5367134886192566,35,different quarters (Welch)
+graded_bets_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,69.62127234147532,12.569930620656853,57.051341720818414,1.5675461136017008,70,paired by quarter
+graded_bets_max,Small vs large companies,1,5,-23.171779985662834,28.109507970351697,-51.28128795601453,-0.7901099920604978,71,paired by quarter
+graded_bets_max,Thin vs heavily traded,1,5,107.86860699172378,18.19492345059405,89.6736835411297,2.2691358644790434,71,paired by quarter
+graded_bets_max,Long holds vs short holds,>90d,<=40d,186.06977905372045,28.693875977303083,157.37590307641742,3.394065672990644,71,paired by quarter
+graded_bets_max,Early vs late period,1996-01,2008-13,83.53056071848503,1.7130014007469778,81.81755931773806,1.821467844834118,23,different quarters (Welch)
+graded_bets_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,79.87601598008814,79.17310103466036,0.7029149454277787,0.017813790922491014,71,paired by quarter
+graded_bets_max,Market rose vs fell during hold,market rose >5%,market fell >5%,133.70682210319634,216.61874704319175,-46.07534982231487,-0.30392527517603235,45,paired by quarter
+graded_bets_max,Calm vs stormy market at entry,calm market,stormy market,138.18399099295226,44.49205873806715,93.6919322548851,1.3570201037605676,35,different quarters (Welch)
+market_boost,Calm vs jumpy stocks,calm stocks,jumpy stocks,95.05134445140537,29.70360345089412,65.34774100051128,2.0729061059918075,70,paired by quarter
+market_boost,Small vs large companies,1,5,58.018984778477446,35.93516575717847,22.083819021298982,0.3220432779423414,71,paired by quarter
+market_boost,Thin vs heavily traded,1,5,160.91207252054514,32.04179552216202,128.8702769983831,2.887117549135716,71,paired by quarter
+market_boost,Long holds vs short holds,>90d,<=40d,199.63076094681117,57.668101974621905,141.96265897218927,2.2121681940004025,71,paired by quarter
+market_boost,Early vs late period,1996-01,2008-13,127.48174191915578,23.21085992659511,104.27088199256067,2.582173462962623,23,different quarters (Welch)
+market_boost,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,137.1312700098404,61.00513344358111,76.12613656625923,1.6564200040373898,71,paired by quarter
+market_boost,Market rose vs fell during hold,market rose >5%,market fell >5%,161.99565688362262,226.7704214093177,-33.75024415658521,-0.17024655692445634,43,paired by quarter
+market_boost,Calm vs stormy market at entry,calm market,stormy market,89.14695306590465,50.58277903093816,38.56417403496649,0.9254000907298172,35,different quarters (Welch)
+market_boost_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,72.73818017509194,4.7588634320401475,67.97931674305178,2.431514514675206,70,paired by quarter
+market_boost_max,Small vs large companies,1,5,1.6734152929591322,29.413781373396336,-27.74036608043723,-0.30366942394364116,71,paired by quarter
+market_boost_max,Thin vs heavily traded,1,5,135.4263075527179,24.485894117335906,110.94041343538197,1.221927924631251,71,paired by quarter
+market_boost_max,Long holds vs short holds,>90d,<=40d,128.51650168025856,43.98279067926903,84.5337110009895,1.1908405201515306,71,paired by quarter
+market_boost_max,Early vs late period,1996-01,2008-13,90.19359036166551,-10.939662862845275,101.13325322451078,2.7988681346486577,23,different quarters (Welch)
+market_boost_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,74.66628422292005,85.46598342105608,-10.799699198136056,-0.20542358151856044,71,paired by quarter
+market_boost_max,Market rose vs fell during hold,market rose >5%,market fell >5%,158.84708631245195,268.66994930204993,-61.931764765627385,-0.31892694898323404,43,paired by quarter
+market_boost_max,Calm vs stormy market at entry,calm market,stormy market,76.15317011690472,50.24775492262743,25.90541519427729,0.4481857697930365,35,different quarters (Welch)
+market_exposed,Calm vs jumpy stocks,calm stocks,jumpy stocks,95.65684806903793,28.260591754224713,67.3962563148132,1.8160575070944212,70,paired by quarter
+market_exposed,Small vs large companies,1,5,2.6700096698528015,39.453812580506245,-36.78380291065345,-0.4866117424969078,71,paired by quarter
+market_exposed,Thin vs heavily traded,1,5,141.92419569038702,40.419831335094464,101.50436435529254,2.1892153069997167,71,paired by quarter
+market_exposed,Long holds vs short holds,>90d,<=40d,171.88002723215646,58.67446568262344,113.20556154953309,1.6760106481565595,71,paired by quarter
+market_exposed,Early vs late period,1996-01,2008-13,120.83946716695591,10.918440299429689,109.92102686752622,2.4928298663550166,23,different quarters (Welch)
+market_exposed,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,121.91933861587997,59.20671968853328,62.71261892734669,1.3878309142404819,71,paired by quarter
+market_exposed,Market rose vs fell during hold,market rose >5%,market fell >5%,148.70832156799923,262.1812439690514,-80.71501378226472,-0.41567140024872373,43,paired by quarter
+market_exposed,Calm vs stormy market at entry,calm market,stormy market,100.97379293518422,52.45803031941586,48.51576261576836,1.111625374252699,35,different quarters (Welch)
+market_exposed_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,85.719520807176,22.961105133731266,62.75841567344472,1.8129330641274628,70,paired by quarter
+market_exposed_max,Small vs large companies,1,5,-13.83303763540346,38.186140645299766,-52.01917828070323,-0.6920504041748535,71,paired by quarter
+market_exposed_max,Thin vs heavily traded,1,5,131.47553671002333,35.28619334025664,96.1893433697667,2.1935316676333456,71,paired by quarter
+market_exposed_max,Long holds vs short holds,>90d,<=40d,179.64097151034588,48.501631738828834,131.13933977151703,1.978061182906597,71,paired by quarter
+market_exposed_max,Early vs late period,1996-01,2008-13,108.3761570090896,0.7073912040217637,107.66876580506784,2.803519528202909,23,different quarters (Welch)
+market_exposed_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,93.93975771644638,75.20444841026419,18.735309306182177,0.43038568021288515,71,paired by quarter
+market_exposed_max,Market rose vs fell during hold,market rose >5%,market fell >5%,155.14743293514624,233.21940110777422,-31.76774010587653,-0.1663258452507307,43,paired by quarter
+market_exposed_max,Calm vs stormy market at entry,calm market,stormy market,91.72867964156436,60.095326848292956,31.6333527932714,0.6970211671533116,35,different quarters (Welch)
+sector_balanced,Calm vs jumpy stocks,calm stocks,jumpy stocks,98.36303594199724,30.791848142346744,67.5711877996505,1.9590097365135535,70,paired by quarter
+sector_balanced,Small vs large companies,1,5,108.98142363625243,35.182456709225754,73.79896692702665,1.1677954938606863,71,paired by quarter
+sector_balanced,Thin vs heavily traded,1,5,189.78929581806514,30.80997088640145,158.97932493166368,3.544483336967065,71,paired by quarter
+sector_balanced,Long holds vs short holds,>90d,<=40d,241.63047725238889,57.040463996488825,184.5900132559001,2.8251522084317293,71,paired by quarter
+sector_balanced,Early vs late period,1996-01,2008-13,127.41375909888045,34.80455536451639,92.60920373436406,2.049309624689218,23,different quarters (Welch)
+sector_balanced,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,157.42916572921462,40.6347860083721,116.79437972084247,2.3141118941899075,71,paired by quarter
+sector_balanced,Market rose vs fell during hold,market rose >5%,market fell >5%,149.06993028444234,231.35052784683015,-62.299832153233986,-0.3109597289050206,43,paired by quarter
+sector_balanced,Calm vs stormy market at entry,calm market,stormy market,111.94710968152978,45.487210740944384,66.45989894058539,1.474755669018989,35,different quarters (Welch)
+sector_balanced_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,72.73818017509194,4.7588634320401475,67.97931674305178,2.431514514675206,70,paired by quarter
+sector_balanced_max,Small vs large companies,1,5,1.6734152929591322,29.413781373396336,-27.74036608043723,-0.30366942394364116,71,paired by quarter
+sector_balanced_max,Thin vs heavily traded,1,5,135.4263075527179,24.485894117335906,110.94041343538197,1.221927924631251,71,paired by quarter
+sector_balanced_max,Long holds vs short holds,>90d,<=40d,128.51650168025856,43.98279067926903,84.5337110009895,1.1908405201515306,71,paired by quarter
+sector_balanced_max,Early vs late period,1996-01,2008-13,90.19359036166551,-10.939662862845275,101.13325322451078,2.7988681346486577,23,different quarters (Welch)
+sector_balanced_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,74.66628422292005,85.46598342105608,-10.799699198136056,-0.20542358151856044,71,paired by quarter
+sector_balanced_max,Market rose vs fell during hold,market rose >5%,market fell >5%,158.84708631245195,268.66994930204993,-61.931764765627385,-0.31892694898323404,43,paired by quarter
+sector_balanced_max,Calm vs stormy market at entry,calm market,stormy market,76.15317011690472,50.24775492262743,25.90541519427729,0.4481857697930365,35,different quarters (Welch)
+size_balanced,Calm vs jumpy stocks,calm stocks,jumpy stocks,136.64920057684313,35.39438405201343,101.2548165248297,2.0064042346757653,70,paired by quarter
+size_balanced,Small vs large companies,1,5,-2.154761791818471,48.02971003230485,-50.184471824123314,-0.6239823575157581,71,paired by quarter
+size_balanced,Thin vs heavily traded,1,5,231.45463796407765,49.91014666695465,181.544491297123,2.5713569521578066,71,paired by quarter
+size_balanced,Long holds vs short holds,>90d,<=40d,424.1155310948186,129.5885396558853,294.5269914389332,2.6086196798303867,71,paired by quarter
+size_balanced,Early vs late period,1996-01,2008-13,127.35580867834153,50.24889520559114,77.10691347275039,1.3177936272437412,23,different quarters (Welch)
+size_balanced,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,123.02827257583775,71.79240982653644,51.23586274930129,1.491470643101547,71,paired by quarter
+size_balanced,Market rose vs fell during hold,market rose >5%,market fell >5%,79.21802600743999,124.46104367961017,-83.87428331130396,-0.48319857460291404,38,paired by quarter
+size_balanced,Calm vs stormy market at entry,calm market,stormy market,160.36805338267177,129.75232087235096,30.61573251032081,0.3430173745831112,35,different quarters (Welch)
+size_balanced_max,Calm vs jumpy stocks,calm stocks,jumpy stocks,113.44521139916867,29.26498319822097,84.18022820094768,1.536083298404478,70,paired by quarter
+size_balanced_max,Small vs large companies,1,5,-114.66658169812206,45.205726647759775,-159.87230834588186,-1.5385761786269756,71,paired by quarter
+size_balanced_max,Thin vs heavily traded,1,5,229.54650460973514,50.08599601727899,179.4605085924561,2.529321566261671,71,paired by quarter
+size_balanced_max,Long holds vs short holds,>90d,<=40d,421.13266215513545,123.06356656620834,298.06909558892704,2.435359613936815,71,paired by quarter
+size_balanced_max,Early vs late period,1996-01,2008-13,115.18152033858026,19.68382221065701,95.49769812792324,1.6049208986265033,23,different quarters (Welch)
+size_balanced_max,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,77.3598365007309,85.71271624067968,-8.3528797399488,-0.19099165442940585,71,paired by quarter
+size_balanced_max,Market rose vs fell during hold,market rose >5%,market fell >5%,81.45726330871238,60.91214588164084,-4.5504726809805005,-0.029779828523772457,38,paired by quarter
+size_balanced_max,Calm vs stormy market at entry,calm market,stormy market,152.17545768193648,150.2652136179029,1.9102440640335772,0.02137106781629844,35,different quarters (Welch)
+volatility_filter,Calm vs jumpy stocks,calm stocks,jumpy stocks,89.17871002499945,-58.70123005097114,147.8799400759706,2.8462373856406895,70,paired by quarter
+volatility_filter,Small vs large companies,1,5,54.123509010529354,30.169270772982486,23.954238237546832,0.2966845120539427,71,paired by quarter
+volatility_filter,Thin vs heavily traded,1,5,152.90373697306666,18.534925182063468,134.3688117910032,2.918701637223938,71,paired by quarter
+volatility_filter,Long holds vs short holds,>90d,<=40d,187.31306744839551,50.37287718926128,136.94019025913423,2.1334478181135457,71,paired by quarter
+volatility_filter,Early vs late period,1996-01,2008-13,113.82985446982218,23.34381771089983,90.48603675892235,2.05318030187354,23,different quarters (Welch)
+volatility_filter,Biggest beats (long D10) vs biggest misses (short D01),long D10,short D01,126.16729315840026,51.25152805883244,74.9157650995678,1.6330618473556613,71,paired by quarter
+volatility_filter,Market rose vs fell during hold,market rose >5%,market fell >5%,169.73737051703915,211.15303093195357,-2.7208253842149515,-0.01334723472793549,43,paired by quarter
+volatility_filter,Calm vs stormy market at entry,calm market,stormy market,75.49904494545572,41.10976156560988,34.38928337984584,0.7295319669054281,35,different quarters (Welch)
