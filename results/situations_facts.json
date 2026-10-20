@@ -1,0 +1,17 @@
+{
+ "strategy": "balanced_leverage",
+ "quarters": 71,
+ "pct_quarters_positive": 0.7887323943661971,
+ "best10_share_of_alpha": 0.5605292848485793,
+ "worst_quarter": "2009Q1",
+ "worst_quarter_M": -2.8362207392113303,
+ "next_five_worst_M": -2.5302590039269357,
+ "q1_reports_bp": 12.165382316205362,
+ "q1_reports_bp_ex2009": 55.397996279630085,
+ "corr_size_liquidity": 0.8324826599091891,
+ "corr_vol_beta": 0.47162866136786985,
+ "pct_jumpy_high_beta": 0.5603631026797847,
+ "pct_calm_high_beta": 0.1325660232926896,
+ "corr_quarter_alpha_market": -0.10829957490156884,
+ "notes": "corr_quarter_alpha_market: quarterly alpha bp per $ vs the average market return over that quarter's holding windows"
+}

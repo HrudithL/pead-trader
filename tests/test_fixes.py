@@ -153,3 +153,22 @@ def test_prep_auto_device_resolves_to_a_concrete_value(monkeypatch):
     assert stages.resolve_device("auto") == "cpu"
     cmd = stages._cmd(stages.BY_NAME["optimal_contract_selector"], stages.resolve_device("auto"), 4, False)
     assert cmd[-2:] == ["--device", "cpu"]
+
+
+@pytest.mark.parametrize("quarterlog", ["empty", "missing", "normal"])
+def test_load_result_tolerates_empty_or_missing_quarterlog(tmp_path, monkeypatch, quarterlog):
+    """Portfolio (blend) results write an empty quarterlog.csv; reports must still load them."""
+    import json
+    from pead.core import store
+    d = tmp_path / "blend"
+    d.mkdir()
+    (d / "summary.json").write_text(json.dumps({"asset_class": "portfolio", "summary": {"sharpe": 1.0}, "run": {}}))
+    pd.DataFrame({"date": ["2000-01-03"], "daily_pnl": [0.0], "nav": [1.0], "daily_return": [0.0]}).to_csv(d / "daily.csv.gz", index=False)
+    if quarterlog == "empty":
+        (d / "quarterlog.csv").write_text("\n")
+    elif quarterlog == "normal":
+        pd.DataFrame({"quarter": ["2000Q1"], "x": [1]}).to_csv(d / "quarterlog.csv", index=False)
+    monkeypatch.setattr(store, "RUNS_DIR", tmp_path)
+    r = store.load_result("blend")
+    assert r.summary["sharpe"] == 1.0
+    assert len(r.quarterlog) == (1 if quarterlog == "normal" else 0)

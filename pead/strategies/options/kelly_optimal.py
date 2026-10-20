@@ -4,7 +4,7 @@ WHAT IT DOES. For every earnings announcement, look at the whole option chain (e
 puts, ~13 contracts/event on average, up to 60) on the announcement day and buy the single contract
 with the highest expected LOG growth under an empirical, walk-forward distribution of the stock's
 60-day return conditional on its SUE decile. The direction is never hard-coded: the math picks puts
-for bad surprises and calls for good ones on its own (32% puts in D1 vs 5% in D10).
+for bad surprises and calls for good ones on its own (in practice, on the corrected run, about 97% of funded trades are calls).
 
 WHY KELLY AND NOT EXPECTED VALUE. A naive "maximize E[return]" selector loves deep-OTM lottery
 tickets (huge payoff x tiny probability = big mean) that lose money on almost every draw. Scoring
@@ -17,23 +17,25 @@ Each such event's size is HALF its own Kelly fraction (full Kelly over-bets when
 itself an estimate), then the quarter's candidates share a premium budget (`max_premium_frac` of
 trailing NAV minus premium still outstanding from earlier quarters) in proportion to those fractions.
 
-WHERE THE RETURN COMES FROM (see the generated report): OTM calls on low-volatility, high-SUE stocks
--- the post-announcement upside tail is under-priced relative to the drift -- diversified across
-~1,200 mostly independent single-stock bets per quarter (Grinold's breadth), which is what turns a
-modest per-trade edge into a Sharpe of 3+.
+WHERE THE RETURN COMES FROM, AND HOW MUCH THERE IS. Filled at the quoted ask and sold at the quoted bid (the default
+since the 2026-10 fixes), the 20%-cap book earns about 0.3% a year at Sharpe 0.16: no measurable edge (see docs/FIXES.md
+and the generated report for the breakdown by moneyness, volatility and year). The pre-fix picture -- OTM calls on
+low-volatility, high-SUE stocks, ~1,200 single-stock bets per quarter, Sharpe above 3 -- came from the mid-fill and
+dead-quote conventions below, not from a real premium.
 
-THE BACKTEST CONVENTION THAT WAS WRONG, AND THE FIX. The original backtest valued a position at each
+THE BACKTEST CONVENTIONS THAT WERE WRONG, AND THE FIXES. The original backtest valued a position at each
 checkpoint (+1, 5, 10, 20, 40, 60 trading days) from the contract's mid quote and, when the quote was
-missing, CARRIED THE PREVIOUS QUOTE FORWARD. 22% of picks have no quote at 60 days, and 93% of those are not
+missing, CARRIED THE PREVIOUS QUOTE FORWARD. 22% of picks have no quote at 60 days, and 93% of those (a one-year pre-fix check, not repeated) are not
 missing at all: the bid is ZERO (best_offer ~ $0.10) -- the option has died and nobody will buy it. Carrying
 its last live price forward never marks a dying option down. The strategies below value a zero-bid checkpoint
 at half the ask (or at zero, for the conservative bound) using the quotes now kept by the forward-price prep
 stage. Effect on the 20%-premium-cap book: 8.58% / Sharpe 3.78 as originally reported -> 5.87% / 2.50 with
 the corrected mark -> 4.12% / 1.77 once each contract also pays at least one $0.05 tick round trip ->
-2.34% / 0.99 if dead options are worth nothing.
+2.34% / 0.99 if dead options are worth nothing (all four figures pre-fix). Buying at the real ask and selling at the
+real bid then takes the book to 0.28% / 0.16 (corrected run).
 
 REMAINING CAVEATS: no market impact; the early walk-forward distributions rest on only 8 quarters of
-history; ~4,600 trades a year would meet real capacity limits; most of the profit comes from 2003 and 2013.
+history; ~4,000 trades a year would meet real capacity limits; what little profit there is comes from 2003 and 2013.
 """
 import numpy as np
 

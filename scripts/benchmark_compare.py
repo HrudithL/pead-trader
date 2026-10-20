@@ -22,6 +22,7 @@ for n in NAMES:
             "thin": p["liq3"] == "thin", "low-beta": p["beta3"] == "low-beta", "smallest size quintile": p["size_quintile"] == 1,
             "largest size quintile": p["size_quintile"] == 5}
     for s in range(1, 6):
+        cuts[f"size {s}"] = p["size_quintile"] == s
         for leg in ("long", "short"):
             cuts[f"size {s} {leg}"] = (p["size_quintile"] == s) & (p["leg"] == leg)
     for k, m in cuts.items():

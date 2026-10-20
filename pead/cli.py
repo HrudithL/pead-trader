@@ -61,8 +61,15 @@ def main(argv=None):
     elif args.cmd == "report":
         from pead.core.store import load_result
         from pead.reporting.single import build_strategy_report
+        from pead.strategies import registry
         for n in args.names:
-            print("wrote", build_strategy_report(load_result(n)))
+            r = load_result(n)
+            try:   # descriptive text comes from the CURRENT strategy source, so edited docstrings reach the report
+                fresh = registry.get(n).meta()
+                r.meta.update({k: fresh[k] for k in ("module_doc", "description", "thesis") if k in fresh})
+            except KeyError:
+                pass
+            print("wrote", build_strategy_report(r))
     elif args.cmd == "compare":
         from pead.reporting.comprehensive import build_comprehensive_report
         print("wrote", build_comprehensive_report(args.names or None))
