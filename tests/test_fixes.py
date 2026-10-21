@@ -10,7 +10,6 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from pead.common.paths import DATA_DIR  # noqa: E402
 from pead.common.pit_rank import rank_pct  # noqa: E402
 from pead.core.data import EquityUniverse  # noqa: E402
 from pead.engines.equity import Sizing, run_equity_backtest  # noqa: E402
@@ -92,9 +91,13 @@ def test_pit_rank_mode_env_and_ties(monkeypatch):
     assert out.iloc[:2].isna().all() and out.iloc[2] == 0.5 and out.iloc[3] == 1.0
 
 
-@pytest.mark.skipif(not (DATA_DIR / "decile_events.parquet").exists(), reason="needs the committed decile events")
+PREFIX_EVENTS = REPO / "data" / "_prefix_vintage" / "decile_events.parquet"
+
+
+@pytest.mark.skipif(not PREFIX_EVENTS.exists(), reason="needs the stored pre-fix decile events (data/_prefix_vintage)")
 def test_within_quarter_reproduces_stored_sue_rank_pct_exactly():
-    ev = pd.read_parquet(DATA_DIR / "decile_events.parquet")
+    # the stored pre-fix sue_rank_pct was ranked within-quarter; the default data/ holds point-in-time ranks
+    ev = pd.read_parquet(PREFIX_EVENTS)
     got = rank_pct(ev["sue_analyst"].round(8), ev["ann_quarter"], "within_quarter")
     assert np.abs(got - ev["sue_rank_pct"]).max() == 0.0
 

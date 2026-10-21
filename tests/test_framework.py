@@ -16,7 +16,9 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / "tests"))
 
+import legacy_vintage as LV  # noqa: E402  (tests/ helper)
 from pead.common.paths import DATA_DIR  # noqa: E402
 from pead.core import kelly  # noqa: E402
 from pead.engines.equity import cap_notionals  # noqa: E402
@@ -112,53 +114,58 @@ def test_kelly_returns_none_without_edge():
 
 
 # ---------------------------------------------------------------------------- engines vs the originals
-@pytest.mark.skipif(not HAVE_EQUITY, reason="needs the WRDS-derived equity inputs")
+# These pin the ORIGINAL pre-fix numbers, so they run the `_legacy` strategies on data/_prefix_vintage in a
+# subprocess (tests/legacy_vintage.py) and skip when that folder is absent.
 @pytest.mark.parametrize("name,legacy", [("balanced_leverage_legacy", "strategy6"), ("sector_balanced_legacy", "strategy5"),
                                          ("market_exposed_legacy", "strategy7"), ("extreme_picks_legacy", "extreme"),
                                          ("graded_bets_legacy", "rankweighted"), ("size_balanced_legacy", "balanced")])
 def test_equity_engine_reproduces_original_script_nav(name, legacy):
-    from pead.strategies.base import RunContext
-    got = registry.get(name).run(RunContext()).daily["nav"].to_numpy()
-    ref = pd.read_csv(DATA_DIR / f"backtest_v2_{legacy}.csv")["nav"].to_numpy()
+    got = LV.legacy_run(name)[1]["nav"].to_numpy()
+    ref = pd.read_csv(LV.prefix_ref(f"backtest_v2_{legacy}.csv"))["nav"].to_numpy()
     assert np.abs(got - ref).max() < 1.0, "NAV differs from the original per-strategy script"
 
 
-@pytest.mark.skipif(not HAVE_EQUITY, reason="needs the WRDS-derived equity inputs")
 def test_strategy4_matches_original_script_on_current_data():
     # `_legacy` = the original (pre-fix) leverage cap, which is what those scripts implemented.
-    # the committed backtest_v2_strategy4.csv predates the current data (27.147M); the original script
-    # re-run on current data ends at 27.077M, which is what the engine must hit
-    from pead.strategies.base import RunContext
-    res = registry.get("conviction_tilt_legacy").run(RunContext())
-    assert abs(res.summary["final_nav"] - 27_077_291.9) < 1.0
+    # the committed backtest_v2_strategy4.csv predates the pre-fix data (27.147M); the original script
+    # re-run on the pre-fix data ends at 27.077M, which is what the engine must hit
+    assert abs(LV.legacy_run("conviction_tilt_legacy")[0]["final_nav"] - 27_077_291.9) < 1.0
 
 
-@pytest.mark.skipif(not (HAVE_EQUITY and (DATA_DIR / "backtest_v2_strategy9_strategy6_baseline.csv").exists()
-                            and (DATA_DIR / "equity_vol_panel.parquet").exists()),
-                    reason="needs equity inputs, the volatility panel and Strategy 9 outputs")
 def test_inverse_vol_matches_strategy9_script():
-    from pead.strategies.base import RunContext
-    got = registry.get("calm_weighted_legacy").run(RunContext()).daily["nav"].to_numpy()
-    ref = pd.read_csv(DATA_DIR / "backtest_v2_strategy9_9b_inverse_ivol.csv")["nav"].to_numpy()
+    got = LV.legacy_run("calm_weighted_legacy")[1]["nav"].to_numpy()
+    ref = pd.read_csv(LV.prefix_ref("backtest_v2_strategy9_9b_inverse_ivol.csv"))["nav"].to_numpy()
     assert np.abs(got - ref).max() < 1.0
 
 
-@pytest.mark.skipif(not HAVE_OPTIONS, reason="needs OptionMetrics-derived option inputs")
 @pytest.mark.parametrize("name,legacy", [("options_cap20_legacy", "options_optimal_h60d"), ("options_cap30_legacy", "options_optimal_cap30_h60d")])
 def test_options_engine_reproduces_original_final_nav(name, legacy):
-    from pead.strategies.base import RunContext
-    got = registry.get(name).run(RunContext()).summary["final_nav"]
-    ref = json.loads((DATA_DIR / f"backtest_{legacy}_summary.json").read_text())["final_nav"]
+    got = LV.legacy_run(name)[0]["final_nav"]
+    ref = json.loads(LV.prefix_ref(f"backtest_{legacy}_summary.json").read_text())["final_nav"]
     assert abs(got - ref) < 1.0
 
 
 # -------------------------------------------------------------- pre-fix numbers stay reproducible
-@pytest.mark.skipif(not HAVE_EQUITY, reason="needs the WRDS-derived equity inputs")
 def test_balanced_leverage_legacy_pins_published_nav():
+    s = LV.legacy_run("balanced_leverage_legacy")[0]
+    assert abs(s["final_nav"] - 34_048_037.4) < 1.0
+    assert s["exposure_cap"] == "entry_cohort"
+
+
+# ------------------------------------------------- corrected (default data/) vintage stays reproducible
+CORRECTED_NAVS = {"balanced_leverage": 27_729_591.5, "calm_weighted": 29_109_274.1, "calm_rank_tilt": 31_136_472.2,
+                  "options_cap20": 10_481_798.4, "options_cap30": 9_841_406.8}
+
+
+@pytest.mark.parametrize("name", list(CORRECTED_NAVS))
+def test_default_vintage_pins_corrected_final_nav(name):
+    if not (HAVE_OPTIONS if name.startswith("options") else HAVE_EQUITY):
+        pytest.skip("needs the derived inputs in data/")
+    if DATA_DIR != LV.DATA:
+        pytest.skip("default data/ vintage is not selected (PEAD_DATA_DIR override)")
     from pead.strategies.base import RunContext
-    res = registry.get("balanced_leverage_legacy").run(RunContext())
-    assert abs(res.summary["final_nav"] - 34_048_037.4) < 1.0
-    assert res.summary["exposure_cap"] == "entry_cohort"
+    got = registry.get(name).run(RunContext()).summary["final_nav"]
+    assert abs(got - CORRECTED_NAVS[name]) < 1.0
 
 
 def test_every_equity_strategy_has_a_legacy_twin():
@@ -171,11 +178,9 @@ def test_every_equity_strategy_has_a_legacy_twin():
             assert twin.sizing.base_unit_fraction == s.sizing.base_unit_fraction
 
 
-@pytest.mark.skipif(not HAVE_OPTIONS, reason="needs OptionMetrics-derived option inputs")
 @pytest.mark.parametrize("name,ann,sharpe", [("options_cap20_midfill", 0.04124, 1.769), ("options_cap20_legacy", 0.08581, 3.780)])
 def test_options_mid_conventions_stay_reproducible(name, ann, sharpe):
-    from pead.strategies.base import RunContext
-    s = registry.get(name).run(RunContext()).summary
+    s = LV.legacy_run(name)[0]
     assert abs(s["annualized_return"] - ann) < 5e-5 and abs(s["sharpe"] - sharpe) < 5e-3
 
 
