@@ -5,12 +5,12 @@
       "value": 1.465455062709722
     },
     "annualized_return": {
-      "strategy": "market_boost_max",
-      "value": 0.11615028447601428
+      "strategy": "steady_drift_plus",
+      "value": 0.12065694258350401
     },
     "calmar": {
-      "strategy": "calm_rank_tilt",
-      "value": 0.44176811333085825
+      "strategy": "steady_drift_calm",
+      "value": 0.6007028867597458
     }
   },
   "options": {

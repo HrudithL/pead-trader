@@ -1,0 +1,168 @@
+=== recipes t>=2 AND net-positive in all 3 eras, count across 9 strategies ===
+                                n       bp      t   qpos  real_bp  money
+recipe                                                                  
+long | mid | lo | long>60       9  423.385  3.666  0.658  642.334  0.016
+short | thin | lo | long>60     7  145.862  2.289  0.643 -156.523  0.024
+long | thin | mid | long>60     7  344.990  2.535  0.635  703.666  0.023
+short | mid | lo | long>60      7  210.895  2.422  0.587   44.725  0.015
+long | mid | mid | short<=60    6  106.933  2.652  0.607  219.082  0.023
+long | thin | lo | long>60      6  542.951  5.745  0.743  838.809  0.025
+long | liquid | mid | long>60   6  161.771  2.133  0.694  231.395  0.037
+short | thin | lo | short<=60   5  166.283  2.294  0.644  -93.296  0.031
+short | mid | mid | short<=60   4  108.871  2.245  0.569  -54.357  0.028
+long | liquid | lo | short<=60  2  155.574  2.234  0.604  225.577  0.039
+=== recipes with t<=-1.5 (consistent losers) count ===
+                              n       bp  real_bp  money
+recipe                                                  
+short | mid | hi | short<=60  2 -124.043 -257.544  0.024
+short | mid | mid | long>60   1  -74.037 -218.037  0.015
+=== key recipe per strategy ===
+              strategy  pct_money   bp_net    t_q  q_pos      e96      e02      e08  real_M   real_bp
+12       extreme_picks      0.022  489.993  4.835  0.708  767.586  444.139  192.015   2.843   763.779
+48         graded_bets      0.022  522.223  6.447  0.764  744.458  550.587  165.447   3.224   861.905
+84       size_balanced      0.024  528.562  4.859  0.681  810.027  465.528  200.844   2.978   788.338
+120    conviction_tilt      0.029  539.281  5.926  0.764  832.148  540.234  137.728   5.070   852.107
+156    sector_balanced      0.031  647.830  6.635  0.778  775.653  831.548  196.230   3.937   959.982
+192  balanced_leverage      0.021  529.818  5.765  0.764  778.577  714.750   16.697   5.764   806.741
+228      calm_weighted      0.022  489.067  5.390  0.750  738.323  680.711  -32.166   5.688   766.078
+264     calm_rank_tilt      0.021  406.267  4.122  0.708  650.394  646.366 -167.352   4.996   675.806
+300     market_exposed      0.019  526.918  5.719  0.764  778.752  706.569   -3.556   8.030  1165.060
+             strategy                    cut  pct_money  bp_net   t_q  q_pos     e96     e02     e08  real_M
+0       extreme_picks       long thin lo >60       0.02  489.99  4.84   0.71  767.59  444.14  192.02    2.84
+1       extreme_picks       long lo-beta >60       0.07  311.89  4.96   0.67  688.20  354.24  -35.83    6.22
+2       extreme_picks           long lo-beta       0.15  245.30  4.32   0.67  511.01  261.18  -35.17    9.53
+3       extreme_picks              all longs       0.52  141.97  6.14   0.79  256.51  171.70   73.40   22.84
+4       extreme_picks             all shorts       0.48   50.28  1.65   0.64   76.25   69.42   24.90   -7.80
+5       extreme_picks         shorts hi-beta       0.18  -40.26 -0.47   0.46   67.83   -0.16  -90.91   -6.10
+6       extreme_picks     shorts lo/mid beta       0.30  103.58  3.29   0.68   78.74  111.06  112.36   -1.70
+7       extreme_picks  ALL ex hi-beta shorts       0.82  127.73  6.22   0.79  180.24  149.20   86.78   21.14
+8       extreme_picks                    ALL       1.00   97.62  5.08   0.76  167.60  122.07   50.19   15.04
+45  balanced_leverage       long thin lo >60       0.02  529.82  5.77   0.76  778.58  714.75   16.70    5.76
+46  balanced_leverage       long lo-beta >60       0.06  326.97  5.03   0.72  590.30  396.03    0.46   10.96
+47  balanced_leverage           long lo-beta       0.15  188.51  3.64   0.68  312.43  249.81  -15.65   17.23
+48  balanced_leverage              all longs       0.49  109.68  7.18   0.79  178.81  132.27   63.58   39.45
+49  balanced_leverage             all shorts       0.51   49.77  2.89   0.68  119.28   53.81   15.83  -15.42
+50  balanced_leverage         shorts hi-beta       0.17    5.75  0.09   0.56  209.74   21.11  -43.43   -8.25
+51  balanced_leverage     shorts lo/mid beta       0.33   72.66  2.57   0.61  100.06   72.16   56.09   -7.16
+52  balanced_leverage  ALL ex hi-beta shorts       0.83   94.74  7.01   0.83  142.22  108.50   60.74   32.28
+53  balanced_leverage                    ALL       1.00   79.31  6.46   0.74  148.28   92.63   39.44   24.03
+54      calm_weighted       long thin lo >60       0.02  489.07  5.39   0.75  738.32  680.71  -32.17    5.69
+55      calm_weighted       long lo-beta >60       0.07  306.29  4.82   0.71  598.18  360.91   -7.31   11.30
+56      calm_weighted           long lo-beta       0.17  170.44  3.27   0.64  310.43  218.92  -27.55   17.81
+57      calm_weighted              all longs       0.49  108.49  6.29   0.72  211.86  122.77   54.98   39.70
+58      calm_weighted             all shorts       0.51   55.04  3.17   0.71  102.60   57.90   32.54  -14.34
+59      calm_weighted         shorts hi-beta       0.15   16.60  0.09   0.54  164.46   46.12  -28.00   -6.80
+60      calm_weighted     shorts lo/mid beta       0.35   71.76  2.40   0.62   92.01   63.43   66.44   -7.54
+61      calm_weighted  ALL ex hi-beta shorts       0.85   93.16  7.85   0.88  155.19   98.44   59.52   32.16
+62      calm_weighted                    ALL       1.00   81.40  7.21   0.78  155.89   90.00   43.63   25.36
+63     calm_rank_tilt       long thin lo >60       0.02  406.27  4.12   0.71  650.39  646.37 -167.35    5.00
+64     calm_rank_tilt       long lo-beta >60       0.07  280.37  4.33   0.69  632.12  327.42  -35.10   11.74
+65     calm_rank_tilt           long lo-beta       0.19  147.18  2.78   0.61  313.60  185.98  -50.46   18.76
+66     calm_rank_tilt              all longs       0.49  106.38  4.13   0.65  280.23  115.08   31.87   38.78
+67     calm_rank_tilt             all shorts       0.51   64.41  2.63   0.61   77.84   65.14   58.45  -11.00
+68     calm_rank_tilt         shorts hi-beta       0.11   47.14  0.02   0.56   43.24  102.91   10.00   -3.30
+69     calm_rank_tilt     shorts lo/mid beta       0.39   69.42  2.07   0.61   81.00   52.84   76.05   -7.70
+70     calm_rank_tilt  ALL ex hi-beta shorts       0.89   90.01  9.02   0.86  182.53   88.01   50.77   31.08
+71     calm_rank_tilt                    ALL       1.00   85.13  8.72   0.85  176.58   89.86   45.29   27.78
+=== (2) exposure & rescale ===
+            strategy  mean_active_gross    p99   peak    ret    vol  sharpe    mdd  k_peak  ret_peakcap  sharpe_peakcap  mdd_peakcap  ret_dailyclip  sharpe_clip  mdd_clip
+0      extreme_picks              1.233  1.968  2.095  0.049  0.053   0.922 -0.185   0.477        0.024           0.925       -0.092          0.041        0.965    -0.126
+1        graded_bets              1.288  1.900  2.123  0.039  0.039   1.005 -0.140   0.471        0.018           1.005       -0.068          0.033        1.166    -0.094
+2      size_balanced              1.171  1.753  1.879  0.047  0.053   0.901 -0.175   0.532        0.025           0.903       -0.097          0.041        0.944    -0.135
+3    conviction_tilt              1.347  1.945  2.088  0.052  0.044   1.189 -0.131   0.479        0.025           1.185       -0.064          0.042        1.312    -0.088
+4    sector_balanced              1.015  1.515  1.595  0.041  0.030   1.344 -0.108   0.627        0.025           1.340       -0.069          0.038        1.413    -0.093
+5  balanced_leverage              1.797  2.721  2.900  0.065  0.049   1.314 -0.166   0.345        0.022           1.304       -0.060          0.040        1.451    -0.084
+6      calm_weighted              1.757  2.656  2.852  0.067  0.045   1.495 -0.156   0.351        0.023           1.479       -0.057          0.042        1.634    -0.079
+7     calm_rank_tilt              1.635  2.470  2.679  0.071  0.038   1.855 -0.116   0.373        0.026           1.828       -0.045          0.046        1.925    -0.066
+8     market_exposed              1.754  2.706  2.875  0.073  0.066   1.113 -0.155   0.348        0.025           1.110       -0.056          0.045        1.196    -0.093
+options trades 65003 ; premium outstanding/NAV mean(active) 0.077 p99 0.138 peak 0.15
+=== (4) correlations ===
+cw opt20 daily -0.049 monthly -0.144 qtr -0.146
+cw optworst daily -0.046 monthly -0.143 qtr -0.139
+cw opt20_legacy daily -0.052 monthly -0.136 qtr -0.149
+crt opt20 daily -0.05 monthly -0.157 qtr -0.182
+crt optworst daily -0.047 monthly -0.153 qtr -0.172
+crt opt20_legacy daily -0.051 monthly -0.156 qtr -0.189
+cw 96-01: sh 2.40 ann 12.2% | 02-07: sh 1.63 ann 7.0% | 08-13: sh 0.59 ann 2.8%
+crt 96-01: sh 2.94 ann 13.4% | 02-07: sh 1.89 ann 7.0% | 08-13: sh 0.78 ann 3.1%
+opt20 96-01: sh 0.69 ann 0.9% | 02-07: sh 2.04 ann 6.0% | 08-13: sh 2.10 ann 4.6%
+optworst 96-01: sh 0.32 ann 0.4% | 02-07: sh 0.99 ann 3.0% | 08-13: sh 1.41 ann 3.1%
+opt30 96-01: sh 0.12 ann 0.2% | 02-07: sh 1.95 ann 8.9% | 08-13: sh 1.91 ann 6.9%
+hb 96-01: sh 2.41 ann 11.2% | 02-07: sh 2.70 ann 15.8% | 08-13: sh 1.91 ann 9.9%
+cb 96-01: sh 2.92 ann 13.5% | 02-07: sh 2.83 ann 16.7% | 08-13: sh 2.10 ann 10.4%
+date      1995  1996  1997  1998  1999  2000  2001  2002  2003  2004  2005  2006  2007  2008  2009  2010  2011  2012  2013  2014
+cw         0.0  14.0  14.4  14.8  12.0  11.3   6.8   5.7   2.5   7.6   8.5   4.9  12.9  10.6  -6.9   2.6   4.0   1.8   5.5   0.3
+crt        0.0  11.9  14.9  16.2  11.9  16.0   9.4   9.5   3.5   8.0   6.9   4.3  10.1   9.3  -3.5   2.5   2.1   2.6   5.9  -0.1
+opt20      0.0   0.0   0.0   2.9  -1.2   4.0  -0.3  -6.1  18.8  12.3  -0.5   4.2   9.3 -10.0   6.1   9.2   0.0  -1.7  27.8   0.0
+optworst   0.0   0.0   0.0   2.5  -1.8   3.5  -1.6  -8.9  16.1   9.6  -4.9   1.5   6.6 -10.9   4.9   6.7   0.0  -4.9  27.0   0.0
+annual corr cw/opt20 -0.17 ; cw<0 yrs [2009] opt20 then [6.1] ; opt20<0 yrs [1999, 2001, 2002, 2005, 2008, 2012] cw then [12.0, 6.8, 5.7, 8.5, 10.6, 1.8]
+opt20 net pnl $M by year: {1996: 0.0, 1997: 0.0, 1998: 0.29, 1999: -0.13, 2000: 0.41, 2001: -0.03, 2002: -0.64, 2003: 1.86, 2004: 1.45, 2005: -0.06, 2006: 0.55, 2007: 1.28, 2008: -1.49, 2009: 0.82, 2010: 1.32, 2012: -0.27, 2013: 4.27}  top2 share 0.64
+cw peak gross 2.85
+=== blends ===
+cw opt20 1 0 ann 6.7 sh 1.47 mdd -15.6 | peakgross 2.85 -> k 0.351 ann 2.32 sh 1.47 mdd -5.7
+cw opt20 0 1 ann 3.52 sh 1.63 mdd -13.8 | peakgross 0.15 -> k 1 ann 3.52 sh 1.63 mdd -13.8
+cw opt20 0.8 1.6 ann 11.31 sh 2.25 mdd -16.7 | peakgross 2.44 -> k 0.41 ann 4.53 sh 2.25 mdd -7.2
+cw opt20 0.5 1.0 ann 6.96 sh 2.25 mdd -10.8 | peakgross 1.52 -> k 0.657 ann 4.53 sh 2.25 mdd -7.2
+cw opt20 0.5 2.0 ann 10.67 sh 2.17 mdd -22.3 | peakgross 1.62 -> k 0.618 ann 6.49 sh 2.17 mdd -14.4
+cw optworst 1 0 ann 6.7 sh 1.47 mdd -15.6 | peakgross 2.85 -> k 0.351 ann 2.32 sh 1.47 mdd -5.7
+cw optworst 0 1 ann 1.99 sh 0.91 mdd -17.1 | peakgross 0.15 -> k 1 ann 1.99 sh 0.91 mdd -17.1
+cw optworst 0.8 1.6 ann 8.7 sh 1.73 mdd -21.1 | peakgross 2.44 -> k 0.41 ann 3.51 sh 1.73 mdd -9.2
+cw optworst 0.5 1.0 ann 5.38 sh 1.73 mdd -13.7 | peakgross 1.52 -> k 0.657 ann 3.51 sh 1.73 mdd -9.2
+cw optworst 0.5 2.0 ann 7.44 sh 1.51 mdd -27.5 | peakgross 1.62 -> k 0.618 ann 4.56 sh 1.51 mdd -17.9
+crt opt20 1 0 ann 7.1 sh 1.81 mdd -11.6 | peakgross 2.85 -> k 0.351 ann 2.45 sh 1.81 mdd -4.2
+crt opt20 0 1 ann 3.52 sh 1.63 mdd -13.8 | peakgross 0.15 -> k 1 ann 3.52 sh 1.63 mdd -13.8
+crt opt20 0.8 1.6 ann 11.64 sh 2.49 mdd -15.7 | peakgross 2.44 -> k 0.41 ann 4.65 sh 2.49 mdd -6.8
+crt opt20 0.5 1.0 ann 7.15 sh 2.49 mdd -10.1 | peakgross 1.52 -> k 0.657 ann 4.65 sh 2.49 mdd -6.8
+crt opt20 0.5 2.0 ann 10.87 sh 2.28 mdd -21.4 | peakgross 1.62 -> k 0.618 ann 6.61 sh 2.28 mdd -13.8
+crt optworst 1 0 ann 7.1 sh 1.81 mdd -11.6 | peakgross 2.85 -> k 0.351 ann 2.45 sh 1.81 mdd -4.2
+crt optworst 0 1 ann 1.99 sh 0.91 mdd -17.1 | peakgross 0.15 -> k 1 ann 1.99 sh 0.91 mdd -17.1
+crt optworst 0.8 1.6 ann 9.03 sh 1.92 mdd -19.7 | peakgross 2.44 -> k 0.41 ann 3.64 sh 1.92 mdd -8.6
+crt optworst 0.5 1.0 ann 5.58 sh 1.92 mdd -12.8 | peakgross 1.52 -> k 0.657 ann 3.64 sh 1.92 mdd -8.6
+crt optworst 0.5 2.0 ann 7.63 sh 1.59 mdd -26.8 | peakgross 1.62 -> k 0.618 ann 4.67 sh 1.59 mdd -17.4
+=== (3) capacity ===
+extreme_picks positions 1228 median pos $k 28.9 median ADV $M 0.58 share at 5%ADV cap 0.62
+graded_bets positions 4242 median pos $k 8.3 median ADV $M 0.52 share at 5%ADV cap 0.002
+calm_weighted positions 3339 median pos $k 17.3 median ADV $M 0.54 share at 5%ADV cap 0.594
+balanced_leverage positions 3339 median pos $k 16.9 median ADV $M 0.54 share at 5%ADV cap 0.572
+  yr   n  deployed  cap5     adv_med  net_alpha_M      bp      strategy
+1996  58      1.28  1.58   536169.05         0.07  563.41 extreme_picks
+1997 100      2.32  3.08   519670.54         0.21  911.45 extreme_picks
+1998 101      2.58  3.37   629003.96         0.16  638.07 extreme_picks
+1999 125      3.25  3.69   511991.96        -0.15 -462.48 extreme_picks
+2000  98      2.88  3.74   667767.26         0.52 1804.19 extreme_picks
+2001  80      1.88   2.0   412212.24         0.27 1445.10 extreme_picks
+2002  71      1.56  1.66   357714.46         0.13  814.61 extreme_picks
+2003  83      2.11  2.27   406568.95         0.09  435.67 extreme_picks
+2004  53      1.95  2.94  1044377.82         0.13  677.12 extreme_picks
+2005  46      1.55   2.0   626876.32         0.13  856.56 extreme_picks
+2006  53      1.90  2.74   784278.18         0.02   88.35 extreme_picks
+2007  69      2.52  4.34   544224.31         0.01   55.94 extreme_picks
+2008  65      3.09   4.6  1148179.83         0.20  651.18 extreme_picks
+2009  65      2.26   2.8   645903.32        -0.03 -142.37 extreme_picks
+2010  47      1.56  2.28    553959.1         0.03  206.49 extreme_picks
+2011  38      1.52  2.43   752651.26         0.06  377.10 extreme_picks
+2012  35      1.03  1.62   311350.69        -0.04 -421.79 extreme_picks
+2013  41      1.97  3.07  1123370.99         0.00   20.39 extreme_picks
+  yr   n  deployed   cap5    adv_med  net_alpha_M      bp    strategy
+1996 188      1.48   5.09  506025.62         0.06  421.42 graded_bets
+1997 348      2.66  11.06  575062.95         0.18  673.48 graded_bets
+1998 298      2.39   8.69  524498.78         0.06  245.87 graded_bets
+1999 411      3.37  11.85   491312.1         0.05  147.62 graded_bets
+2000 349      3.21   11.7  510944.07         0.51 1598.07 graded_bets
+2001 198      1.78   4.56  350880.76         0.25 1383.35 graded_bets
+2002 246      2.09   5.67  331057.56         0.17  796.37 graded_bets
+2003 251      2.43    6.7  406568.95         0.11  459.92 graded_bets
+2004 167      1.68   8.31   854154.9         0.09  508.54 graded_bets
+2005 177      1.68   6.96  530021.16         0.10  600.71 graded_bets
+2006 229      2.08  10.92  607687.69         0.16  772.01 graded_bets
+2007 258      2.31  15.24  609586.28         0.05  218.40 graded_bets
+2008 302      2.68  13.72  423941.28         0.09  348.18 graded_bets
+2009 187      1.74   6.95  449782.26        -0.10 -576.52 graded_bets
+2010 171      1.51   8.62  566580.97         0.07  451.16 graded_bets
+2011 138      1.31   7.98  608189.15         0.06  422.99 graded_bets
+2012 147      1.13   5.77   321632.9         0.04  357.72 graded_bets
+2013 177      1.88  13.26   883134.1         0.01   67.16 graded_bets
+D10 events/yr 67.4 5%ADV $M/yr 2.7 ; avg hold d 123
+D9-10 events/yr 111.1 5%ADV $M/yr 4.2 ; avg hold d 111
+D8-10 events/yr 174.1 5%ADV $M/yr 6.8 ; avg hold d 102
+lowbeta tercile cutoffs (calm_weighted): [0.82, 1.3]

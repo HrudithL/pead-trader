@@ -250,3 +250,18 @@ If the goal is to beat the S&P rather than to minimize risk, the equity side is 
   Balanced Leverage, alpha per $ by company size, both benchmarks (`results/profiles_benchmark_compare.csv`): largest quintile **29 bp** against all announcers / **31 bp** size-matched; second-smallest quintile 125 / 126 bp; smallest quintile 28 / 81 bp. The claim "large companies earn much less than the middle of the size range" holds under both benchmarks; any claim about the *smallest* companies depends on the benchmark (all-announcer 28 bp, size-matched 81 bp, real P&L only 4 bp per $).
 * **2011** (the OptionMetrics file is structurally corrupt) and the truncated **2013** in all options results.
 * **In-sample choices not re-selected after the fixes (decision D6):** Calm Weighted and Calm Rank Tilt parameters, the `_max` multipliers, the options caps and the blend weights were chosen on the same 1996-2013 sample they are reported on, with the pre-fix data. Re-selecting them on a search window is open work and would most likely lower the figures further.
+
+## 8. Long-only, never-borrowing books (added 2026-10-21)
+
+After the methodology fixes the market-neutral books shrink to 1-3% a year once short collateral is counted, and the options edge is gone at real bid/ask. The `steady_drift*` family keeps only the paid leg
+(long, top surprise decile), holds exactly 60 sessions, sizes by calmness, keeps idle money in T-bills and throttles exposure to a target volatility. Full evidence, the engine additions, the 31-variant search and the shuffled-surprise placebo
+are in `docs/STEADY_DRIFT.md`; open items (small-cap benchmark first) are in `docs/ROADMAP.md`.
+
+| Strategy | What it does | Return / vol / Sharpe / max DD (1995-2013) |
+|---|---|---|
+| `steady_drift` | base design, 10% risk target | 10.6% / 9.0% / 1.16 / -20.0% |
+| `steady_drift_calm` | 8% risk target | 9.6% / 7.8% / 1.21 / -15.9% |
+| `steady_drift_core` | no risk throttle | 12.0% / 13.1% / 0.93 / -40.5% |
+| `steady_drift_plus` | smaller, more numerous positions, 80% cap, 12% target | 12.1% / 10.0% / 1.19 / -22.1% |
+
+About 4 points of each book's return over its shuffled-surprise placebo is surprise skill; the rest is the small/mid-cap, low-volatility event universe.

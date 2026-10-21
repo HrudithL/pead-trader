@@ -46,11 +46,13 @@ class Sizing:
     max_gross_leverage: float = 2.5
     liquidity_cap_frac: float = 0.05
     return_basis: str = "mktadj"          # 'mktadj' (market-neutral books) | 'raw' (carries beta)
-    cap_mode: str = "priority"            # leverage-cap trimming: 'priority' (drop lowest conviction
+    cap_mode: str = "priority"            # leverage-cap trimming: 'chronological' (first come first served, causal) |
+                                          # 'priority' (drop lowest conviction
                                           # first) | 'proportional' (shave every new position equally;
                                           # how Strategies 1-3 were originally built)
     exposure_cap: str = "open_book"       # what the cap bounds: 'open_book' | 'open_book_qstart' | 'entry_cohort'
                                           # (legacy: new positions only). See the module docstring.
+    name_cap_frac: float = None           # optional: no single position larger than this fraction of the sizing NAV
 
 
 @dataclass
@@ -121,7 +123,10 @@ def cap_open_book(target, liq_cap, budget, mode, carry, ent, ext):
     used = np.zeros(L)                                                  # new gross admitted so far, per day
     out = np.zeros_like(target)
     n_drop, trimmed = 0, False
-    for j in np.argsort(-np.abs(target), kind="stable"):
+    # 'chronological' admits in announcement order (first come, first served) so no decision depends on events that
+    # have not happened yet; 'priority' admits the largest targets first, which is only knowable once the quarter is over.
+    order = np.argsort(ent, kind="stable") if mode == "chronological" else np.argsort(-np.abs(target), kind="stable")
+    for j in order:
         want = abs(target[j])
         if want == 0:
             continue
@@ -192,6 +197,8 @@ def run_equity_backtest(uni: EquityUniverse, weight: np.ndarray, sizing: Sizing)
             idx = np.flatnonzero(q_mask)
             budget = sizing.max_gross_leverage * trailing_nav
             tgt = weight[idx] * base_unit
+            if sizing.name_cap_frac:
+                tgt = np.clip(tgt, -sizing.name_cap_frac * trailing_nav, sizing.name_cap_frac * trailing_nav)
             if sizing.exposure_cap == "entry_cohort":                    # legacy: ignores what is already open
                 q_not, note, n_drop = cap_notionals(tgt, liq_cap[idx], budget, sizing.cap_mode)
             elif sizing.exposure_cap == "open_book_qstart":
@@ -262,7 +269,7 @@ def run_equity_backtest(uni: EquityUniverse, weight: np.ndarray, sizing: Sizing)
     liquidity_capped = (np.abs(weight * base_at_entry) > np.abs(notional) + 1e-6) & (base_at_entry > 0)
     summary.update(
         base_unit_fraction=sizing.base_unit_fraction, max_gross_leverage=sizing.max_gross_leverage,
-        exposure_cap=sizing.exposure_cap,
+        exposure_cap=sizing.exposure_cap, name_cap_frac=sizing.name_cap_frac,
         max_gross_over_nav=float(np.nanmax(gross_exp / nav)),             # realized, vs the stated cap
         pct_days_over_cap=float(np.mean(gross_exp / nav > sizing.max_gross_leverage + 1e-9)),
         n_positions=int((notional != 0).sum()), n_long=int((notional > 0).sum()), n_short=int((notional < 0).sum()),
@@ -301,4 +308,64 @@ def apply_beta_overlay(run: EquityRun, vwretd: np.ndarray, initial_capital: floa
     out["overlay_notional"], out["pnl_overlay"] = ov_arr, ov_pnl_arr
     out["pnl_alpha"] = alpha_pnl
     summary = {**run.summary, **summarize(out, initial_capital), "beta_overlay": beta, "overlay_cost_bps": cost_bps}
+    return EquityRun(daily=out, quarterlog=run.quarterlog, positions=run.positions, summary=summary)
+
+
+def with_fixed_hold(uni: EquityUniverse, hold_sessions: int) -> EquityUniverse:
+    """Same universe, but every event is held exactly `hold_sessions` trading sessions after day0 (entry at the day0 close, as
+    always), cut at the stock's last available row so a delisting stays in the P&L instead of silently dropping the event.
+    No holding window is fitted from data. Events with no row after day0 are dropped."""
+    if uni.panel_permno is None:
+        raise ValueError("fixed holds need the panel permno array (rebuild the panel cache)")
+    ev = uni.events
+    pp = uni.panel_permno
+    last = np.concatenate([np.flatnonzero(pp[1:] != pp[:-1]), [len(pp) - 1]])      # last row of every permno run
+    entry = ev["entry_row_idx"].to_numpy()
+    run_end = last[np.searchsorted(last, entry, side="left")]
+    exit_row = np.minimum(entry + hold_sessions, run_end)
+    ok = exit_row > entry
+    out = ev.loc[ok].copy()
+    out["exit_row_idx"] = exit_row[ok]
+    out["exit_date"] = pd.to_datetime(uni.panel_date[exit_row[ok]])
+    out["holding_days"] = exit_row[ok] - entry[ok]
+    return EquityUniverse(events=out.reset_index(drop=True), ret_mktadj=uni.ret_mktadj, ret_raw=uni.ret_raw,
+                          panel_date=uni.panel_date, calendar=uni.calendar, vwretd=uni.vwretd,
+                          initial_capital=uni.initial_capital, extras=uni.extras, panel_permno=uni.panel_permno)
+
+
+def apply_cash_and_risk_target(run: EquityRun, rf: np.ndarray, initial_capital: float, target_vol: float = None,
+                               lookback: int = 60, cost_bps: float = 10.0, cash_yield: bool = True) -> EquityRun:
+    """Long-only wrapper: idle cash earns `rf`, and total exposure is scaled to hold risk roughly constant.
+
+    * Idle cash = NAV not held in stock (prior-day NAV minus the book's gross exposure), earning the daily cash return `rf`.
+    * Risk target: exposure e_t = min(1, target_vol / realised_vol), where realised_vol is the annualised standard deviation of
+      the book's own daily returns over the previous `lookback` sessions, using data through t-1 only. The rest sits in cash.
+      e never exceeds 1, so the overlay can only reduce risk: it never borrows. `cost_bps` is charged on each day's change in e.
+      (Positions were sized off the un-overlaid NAV; the overlay is applied afterwards, as for the beta overlay.)"""
+    d = run.daily
+    nav0 = d["nav"].to_numpy()
+    prior = np.concatenate([[initial_capital], nav0[:-1]])
+    r = d["daily_return"].to_numpy().copy()
+    gross_prev = np.concatenate([[0.0], d["gross_exposure"].to_numpy()[:-1]])
+    idle = np.clip(1.0 - gross_prev / prior, 0.0, 1.0)
+    if cash_yield:
+        r = r + idle * rf
+    s = pd.Series(r)
+    if target_vol:
+        vol = s.rolling(lookback, min_periods=20).std().shift(1).to_numpy() * np.sqrt(252)
+        e = np.where(np.isfinite(vol) & (vol > 0), np.minimum(1.0, target_vol / np.where(vol > 0, vol, 1.0)), 1.0)
+    else:
+        e = np.ones(len(r))
+    de = np.abs(np.diff(e, prepend=1.0))
+    r2 = e * r + (1.0 - e) * rf - de * cost_bps / 1e4
+    nav = initial_capital * np.cumprod(1.0 + r2)
+    out = d.copy()
+    out["daily_return"] = r2
+    out["nav"] = nav
+    out["daily_pnl"] = np.diff(nav, prepend=initial_capital)
+    out["risk_exposure"] = e
+    out["idle_cash_frac"] = idle
+    summary = {**run.summary, **summarize(out, initial_capital), "risk_target_vol": target_vol, "risk_lookback": lookback,
+               "avg_risk_exposure": float(e.mean()),
+               "max_book_gross_over_nav": float(np.nanmax(d["gross_exposure"].to_numpy() / prior)), "cash_yield": bool(cash_yield)}
     return EquityRun(daily=out, quarterlog=run.quarterlog, positions=run.positions, summary=summary)

@@ -88,3 +88,36 @@ def neutralized_tilt(events: pd.DataFrame, d_centered: np.ndarray, trim: float, 
     if len(nz):
         out[out != 0] = out[out != 0] / np.abs(nz).mean() * 0.5
     return out
+
+
+def causal_inverse_variance(events: pd.DataFrame, mask: np.ndarray, col: str = "ivol_252d", fallback: str = "tvol_60d",
+                            window_days: int = 365, min_pool: int = 200) -> np.ndarray:
+    """Long-only inverse-variance weights that use ONLY what is known on each event's own day0.
+
+    weight_i = (1 / clipped ivol_i^2) / (median of that quantity over ALL events whose day0 fell in the previous
+    `window_days`), for events where `mask` is True, else 0. A weight of 1.0 is the typical-risk stock; calmer stocks get
+    more, jumpier ones less. Unlike the quarter-normalised weights of the market-neutral books, nothing here depends on
+    how many events arrive later in the quarter. Events with fewer than `min_pool` prior events in the window get 0."""
+    vol = events[col].fillna(events[fallback]).to_numpy(dtype=float)
+    lo, hi = IVOL_CLIP
+    inv = 1.0 / np.clip(vol, lo, hi) ** 2
+    inv = np.where(np.isfinite(vol), inv, np.nan)
+    d0 = events["day0_date"].to_numpy("datetime64[D]")
+    order = np.argsort(d0, kind="stable")
+    ds, vs = d0[order], inv[order]
+    ref = np.full(len(events), np.nan)
+    days = np.unique(ds)
+    a = np.searchsorted(ds, days - np.timedelta64(window_days, "D"), "left")
+    b = np.searchsorted(ds, days, "left")                 # strictly earlier day0s only
+    for k, day in enumerate(days):
+        if b[k] - a[k] < min_pool:
+            continue
+        m = np.nanmedian(vs[a[k]:b[k]])
+        ref[np.searchsorted(ds, day, "left"):np.searchsorted(ds, day, "right")] = m
+    ref_ev = np.empty(len(events))
+    ref_ev[order] = ref
+    w = np.where(np.asarray(mask, bool) & np.isfinite(ref_ev) & np.isfinite(inv), inv / ref_ev, 0.0)
+    return w
+
+
+IVOL_CLIP = (0.008, 0.08)          # daily; same clip as strategies.vol

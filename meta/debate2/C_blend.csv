@@ -1,0 +1,7 @@
+strategy,scenario,ann_ret_nav,avgT,maxT,scale,unlev_acct_ret,tbill,roi_per_avg_tied
+hedged_blend,engine cost,0.049,1.8221,2.8154,0.3552,0.0293,0.0268,0.0268
+hedged_blend,realistic cost,0.0292,1.8221,2.8154,0.3552,0.0224,0.0268,0.0164
+hedged_blend,realistic + graded fee,0.0137,1.8221,2.8154,0.3552,0.0169,0.0268,0.008
+calm_blend,engine cost,0.0579,1.9446,3.0544,0.3274,0.0311,0.0268,0.0295
+calm_blend,realistic cost,0.0372,1.9446,3.0544,0.3274,0.0244,0.0268,0.0193
+calm_blend,realistic + graded fee,0.0212,1.9446,3.0544,0.3274,0.0193,0.0268,0.0113

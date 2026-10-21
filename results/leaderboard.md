@@ -2,7 +2,7 @@
 
 Best so far (validated + research strategies):
 
-- **equity** -- best sharpe: `calm_rank_tilt` (1.47); best annualized_return: `market_boost_max` (0.116); best calmar: `calm_rank_tilt` (0.442)
+- **equity** -- best sharpe: `calm_rank_tilt` (1.47); best annualized_return: `steady_drift_plus` (0.121); best calmar: `steady_drift_calm` (0.601)
 - **options** -- best sharpe: `options_cap20` (0.156); best annualized_return: `options_cap20` (0.00282); best calmar: `options_cap20` (0.015)
 - **portfolio** -- best sharpe: `calm_blend` (1.28); best annualized_return: `calm_blend` (0.058); best calmar: `calm_blend` (0.288)
 
@@ -19,8 +19,11 @@ Best so far (validated + research strategies):
 | balanced_leverage_legacy | equity | reference | 6.49% | 4.94% | 1.30 | -16.63% | 0.39 |
 | calm_weighted | equity | validated | 5.64% | 4.51% | 1.24 | -17.53% | 0.32 |
 | volatility_filter_legacy | equity | reference | 6.27% | 5.05% | 1.23 | -16.68% | 0.38 |
+| steady_drift_calm | equity | research | 9.55% | 7.81% | 1.21 | -15.90% | 0.60 |
+| steady_drift_plus | equity | research | 12.07% | 9.97% | 1.19 | -22.07% | 0.55 |
 | calm_weighted_matched | equity | validated | 5.83% | 4.88% | 1.18 | -18.65% | 0.31 |
 | conviction_tilt_legacy | equity | reference | 5.25% | 4.41% | 1.18 | -13.07% | 0.40 |
+| steady_drift | equity | research | 10.59% | 9.01% | 1.16 | -20.00% | 0.53 |
 | market_exposed_legacy | equity | reference | 7.30% | 6.56% | 1.11 | -15.54% | 0.47 |
 | balanced_leverage | equity | validated | 5.38% | 4.91% | 1.09 | -18.56% | 0.29 |
 | market_boost_max_legacy | equity | reference | 15.01% | 13.70% | 1.09 | -36.98% | 0.41 |
@@ -32,6 +35,7 @@ Best so far (validated + research strategies):
 | market_exposed_max_legacy | equity | reference | 11.78% | 11.85% | 1.00 | -32.97% | 0.36 |
 | conviction_tilt | equity | validated | 3.84% | 3.97% | 0.97 | -14.51% | 0.26 |
 | market_boost_legacy | equity | reference | 10.08% | 10.51% | 0.97 | -23.23% | 0.43 |
+| steady_drift_core | equity | research | 11.99% | 13.14% | 0.93 | -40.47% | 0.30 |
 | extreme_picks_legacy | equity | reference | 4.91% | 5.32% | 0.93 | -18.48% | 0.27 |
 | size_balanced_legacy | equity | reference | 4.74% | 5.26% | 0.91 | -17.53% | 0.27 |
 | market_boost | equity | validated | 9.15% | 10.39% | 0.90 | -25.08% | 0.36 |

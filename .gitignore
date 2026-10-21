@@ -41,6 +41,9 @@ Thumbs.db
 # Pipeline run logs (operational, not a research finding) -- see scripts/options_strategy/run_pipeline.py
 logs/
 
+# meta-strategy outputs (regenerable)
+meta/out/
+
 # Strategy-framework outputs that are large and fully regenerable
 results/*/positions.parquet
 data/cache/
@@ -59,6 +62,13 @@ docs/paper/*.aux
 docs/paper/*.log
 docs/paper/*.out
 docs/paper/*.toc
+
+# regenerable analysis caches from the perspective sub-agents
+meta/debate2/*.npz
+meta/debate2/*.npy
+meta/debate2/*.pkl
+meta/debate2/*.parquet
+meta/debate2/*.csv.gz
 
 # Complete pre-fix derived data vintage (kept for the *_legacy strategies and their tests); regenerable, large
 data/_prefix_vintage/

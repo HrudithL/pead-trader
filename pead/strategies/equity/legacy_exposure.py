@@ -7,7 +7,8 @@ reproduction tests against the original scripts' committed NAVs) stay reproducib
 for anything new. Status is "reference", same convention as `options_cap20_legacy`.
 
 The twins are generated from the live registry, so this module imports every sibling strategy module first
-(importing is idempotent) and then copies each equity strategy."""
+(importing is idempotent) and then copies each equity strategy that has not opted out with `legacy_twin = False`
+(strategies born after the fix have no pre-fix numbers to reproduce)."""
 import copy
 import importlib
 import pkgutil
@@ -21,7 +22,7 @@ for _m in pkgutil.iter_modules(_pkg.__path__):
         importlib.import_module(f"{_pkg.__name__}.{_m.name}")
 
 for _base in [s for s in registry._REGISTRY.values()
-              if s.asset_class == "equity" and not s.name.endswith("_legacy")]:
+              if s.asset_class == "equity" and not s.name.endswith("_legacy") and getattr(s, "legacy_twin", True)]:
     _twin = copy.copy(_base)
     _twin.name = f"{_base.name}_legacy"
     _twin.parent = _base.name

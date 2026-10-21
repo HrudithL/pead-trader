@@ -20,7 +20,8 @@ import numpy as np
 import pandas as pd
 
 from pead.core.data import EquityUniverse, OptionsUniverse, load_equity_universe, load_options_universe
-from pead.engines.equity import EquityRun, Sizing, run_equity_backtest, apply_beta_overlay
+from pead.engines.equity import (EquityRun, Sizing, run_equity_backtest, apply_beta_overlay, with_fixed_hold,
+                                 apply_cash_and_risk_target)
 
 
 @dataclass
@@ -83,6 +84,9 @@ class EquityStrategy(Strategy):
     asset_class = "equity"
     sizing: Sizing = Sizing()
     beta_overlay: float = 0.0              # market-index position as a multiple of NAV, 0 = none
+    hold_sessions: int = None              # fixed holding window in trading sessions (None = per-cell windows from the events)
+    long_only_cash: bool = False           # idle NAV earns the cash rate (long-only books)
+    risk_target_vol: float = None          # scale exposure so trailing book volatility ~ this (never above 100%, never levered)
     required_columns: tuple = ("ann_quarter", "sue_rank_pct", "size_quintile", "ff12_sector")
 
     def weights(self, events: pd.DataFrame) -> np.ndarray:
@@ -92,10 +96,18 @@ class EquityStrategy(Strategy):
         s = self.sizing
         return dict(base_unit_fraction=s.base_unit_fraction, max_gross_leverage=s.max_gross_leverage,
                     liquidity_cap_frac=s.liquidity_cap_frac, return_basis=s.return_basis,
-                    cap_mode=s.cap_mode, exposure_cap=s.exposure_cap, beta_overlay=self.beta_overlay)
+                    cap_mode=s.cap_mode, exposure_cap=s.exposure_cap, beta_overlay=self.beta_overlay,
+                    hold_sessions=self.hold_sessions, long_only_cash=self.long_only_cash,
+                    risk_target_vol=self.risk_target_vol, name_cap_frac=s.name_cap_frac)
 
     def backtest(self, uni: EquityUniverse) -> EquityRun:
+        if self.hold_sessions:
+            uni = with_fixed_hold(uni, self.hold_sessions)
         run = run_equity_backtest(uni, self.weights(uni.events), self.sizing)
+        if self.long_only_cash or self.risk_target_vol:
+            from pead.core.rates import daily_rf
+            run = apply_cash_and_risk_target(run, daily_rf(uni.calendar), uni.initial_capital,
+                                             target_vol=self.risk_target_vol, cash_yield=self.long_only_cash)
         if self.beta_overlay:
             run = apply_beta_overlay(run, uni.vwretd, uni.initial_capital, beta=self.beta_overlay)
         return run
