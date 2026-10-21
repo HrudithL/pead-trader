@@ -61,7 +61,7 @@ def prepare(ev, paths, mkt):
 
 def run(ev, P, mkt_ret, cal, *, start="2000-01-01", gross_cap=0.85, theta=0.015, name_cap=0.02, adv_cap=0.05,
         cost_mult=1.0, fill="index", model="ridge", sue_min=0.0, init=1e7, refit_lam=50.0, longs_only=True,
-        min_train=20000, risk_power=1.0, return_detail=False, sel_fn=None):
+        min_train=20000, risk_power=1.0, return_detail=False, sel_fn=None, sector_cap=None):
     n_days = len(cal)
     X = make_features(ev)
     y = np.clip(ev["excess_hold"].to_numpy(float), *np.nanpercentile(ev["excess_hold"], [1, 99]))
@@ -113,6 +113,15 @@ def run(ev, P, mkt_ret, cal, *, start="2000-01-01", gross_cap=0.85, theta=0.015,
                     risk = np.clip(ivol[cand], 0.008, 0.08) ** (2 * risk_power) if risk_power else np.ones(len(cand))
                     w = net / risk
                     w = w / w.sum()
+                    if sector_cap:                       # no FF12 sector may take more than sector_cap of the quarter's budget
+                        sec = ev["ff12_sector"].astype(str).to_numpy()[cand]
+                        for _ in range(20):
+                            tot = pd.Series(w).groupby(sec).transform("sum").to_numpy()
+                            over = tot > sector_cap + 1e-12
+                            if not over.any():
+                                break
+                            w = np.where(over, w * sector_cap / tot, w)
+                            w = w / w.sum()
                     # raw target sizing: quarter budget = gross_cap x NAV, per-name caps, liquidity cap
                     tgt = np.minimum(w * gross_cap * nav_start * 1.0, name_cap * nav_start)
                     tgt = np.minimum(tgt, np.where(np.isfinite(adv[cand]), adv[cand] * adv_cap, np.inf))

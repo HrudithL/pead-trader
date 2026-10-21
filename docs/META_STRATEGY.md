@@ -116,3 +116,5 @@ python meta/combine.py        # sleeve correlations; walk-forward sleeve allocat
 options results were ever tested at, so it is reported but not adopted. It also shows the unlevered long/short sleeve earns only 1.3% per
 dollar of capital (Sharpe 1.1) against 10.8% for the long-event book, which is why the final strategy has no short sleeve.
 Debate sub-agent scripts and outputs: `meta/debate/` (advocate, skeptic, audit).
+
+> **Update (same day, after merging the consolidation):** the options satellite in this document is superseded. With real bid/ask fills `options_cap20` earns 0.28%/yr, so the 14-15% figures above do not stand. See `docs/STEADY_DRIFT.md` for the post-fix design (cash fill, sector cap, volatility target) and its placebo-adjusted numbers.

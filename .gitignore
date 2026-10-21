@@ -62,3 +62,10 @@ docs/paper/*.aux
 docs/paper/*.log
 docs/paper/*.out
 docs/paper/*.toc
+
+# regenerable analysis caches from the perspective sub-agents
+meta/debate2/*.npz
+meta/debate2/*.npy
+meta/debate2/*.pkl
+meta/debate2/*.parquet
+meta/debate2/*.csv.gz
