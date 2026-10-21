@@ -21,7 +21,9 @@ Current numbers are in `results/leaderboard.md`. Old numbers are kept as `*_lega
 | #10 | One research paper (`docs/paper/`), rebuilt from the corrected results; replaces #5. | merged |
 | #8 | Archive of the 2026-08 optimization line + this map. | merged |
 | #11 | `options_cap20/30` and `hedged_blend` relabelled `research`; what `validated` means made explicit. | merged |
-| #12 | Paper rebuilt on corrected deciles: SUE reversal, volatility sweeps, capacity sweep. The option-spread tables are still pre-correction (see section 8). | merged |
+| #12 | Paper rebuilt on corrected deciles: SUE reversal, volatility sweeps, capacity sweep. | merged |
+| #14 | One complete `data/`: raw master (hash-verified identical to the `D:` master) + the corrected derived vintage; the pre-fix vintage kept at `data/_prefix_vintage/`; legacy tests run against it. | merged |
+| #15 | Paper: option-spread and coverage tables rebuilt on corrected deciles from the OptionMetrics files. Nothing in the paper is pre-correction any more except the kept `*_legacy` comparison runs. | merged |
 | #5 | Old plain-language paper PR. Superseded by #10; closed, tag `archive/pr5-strategies-explained` keeps its commit. | closed |
 
 ## 3. Layout
@@ -109,8 +111,8 @@ Eighteen merged local branch labels were deleted with `git branch -d`. Still pre
 ## 8. Open decisions
 
 1. **Re-select the strategy constants and blend weights on a search window** (pick the dials on early history, test on later history). Expected to lower the numbers further.
-2. **Option-spread and option-coverage tables in the paper are still pre-correction.** Rebuilding them needs the raw OptionMetrics files (`D:\OptionMetrics\parquet`): with `D:` mounted (or `OPTIONMETRICS_DIR` set), run `select_entry_contracts` and `forward_option_prices` into a new data folder, then `pead/research/options_evidence/37_decile_summary_options.py`, and add the outputs to `docs/paper/cache/`.
-3. **Delete remote branches** that are merged or tagged (`claude/*` from the old PRs, `consolidation/*`, `claude/options-strategy`, `claude/trading-strategies-research-a9f3ee`). Push the `archive/*` tags first if you want them off this machine.
+2. **Copy the OptionMetrics extract (131 files, 32.9 GB) onto `C:`?** The options stages read it from the external drive `D:\OptionMetrics\parquet`, and that drive was unplugged twice on 2026-10-20. Earlier policy was "never copied"; this is the owner's call.
+3. **Remote branches:** merged ones were deleted on 2026-10-20. Two unmerged branches remain on GitHub, `claude/options-strategy` and `claude/trading-strategies-research-a9f3ee`, both tagged locally as `archive/*`. Push those tags first if you want them off this machine, then delete the branches.
 4. Port the vol-targeted overlay / dispersion filter as registered strategies after re-testing on the corrected data.
 5. Turn the live workflow back on only after adding the three secrets (`ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `FINNHUB_API_KEY`).
 6. Delete `C:\Users\hrudi\Documents\BEI\_pead_archived_worktrees\` only when sure nothing in it is needed.
