@@ -1,5 +1,8 @@
 # PEAD Trading
 
+> **Current state (2026-10-21):** start at `docs/REPO_MAP.md`. The methodology fixes are in `docs/FIXES.md`; the best equity strategy that never borrows and never looks ahead is `steady_drift_plus` (`docs/STEADY_DRIFT.md`); open items are in `docs/ROADMAP.md`. The text below is the original project history and uses pre-correction numbers.
+
+
 Post-earnings-announcement drift (PEAD) strategies on WRDS (IBES / CRSP / Compustat) and OptionMetrics data:
 equity long/short books, a Kelly-selected options book, volatility-aware variants, and the blend of the two --
 all run through one framework: **a strategy is one file; a runner backtests any strategy; reports and live

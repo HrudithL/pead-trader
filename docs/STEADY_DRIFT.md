@@ -74,7 +74,7 @@ Shuffling SUE ranks within each quarter and re-running the identical machine giv
 ## 7. Reproduce
 
 ```
-python meta/build_events.py && python meta/steady.py          # frontier (meta/out/steady_frontier.csv)
+python meta/build_events.py && python meta/steady.py          # prototype frontier (meta/out/steady_frontier.csv); the framework versions are `python -m pead run steady_drift*`
 python meta/steady_validate.py                                # eras, costs, placebo, years
 python meta/steady_universe.py                                # size-group robustness
 ```
@@ -108,7 +108,7 @@ Two honest corrections came out of the port:
 
 Reconciliation, framework vs prototype (same signal, 1995-2013): `steady_drift` 10.59% / vol 9.0% / Sharpe 1.16 / max DD -20.0% against 10.81% / 9.3% / 1.15 / -20.5%;
 `steady_drift_core` (no throttle) 11.99% / 13.1% / 0.93 / -40.5% against 11.70% / 12.7% / 0.94 / -36.2%.
-To reproduce, set `PEAD_DATA_DIR` to a folder holding the corrected `equity_vol_panel.parquet` (the `vintage_fixed` build) and `PEAD_RAW_EQUITY_DIR` to the raw `normalized_equity` folder.
+To reproduce: with the complete corrected `data/` of `docs/REPO_MAP.md` section 6 in place, `python -m pead run steady_drift steady_drift_calm steady_drift_core steady_drift_plus`. (The figures in this document were first produced with `PEAD_DATA_DIR` pointing at a copy of the corrected `equity_vol_panel.parquet` and `PEAD_RAW_EQUITY_DIR` at the raw `normalized_equity` folder, the same files.)
 
 | Registered | What differs | Return | Vol | Sharpe | Max DD |
 |---|---|---|---|---|---|

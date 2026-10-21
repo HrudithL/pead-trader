@@ -8,7 +8,7 @@ Post-earnings-announcement drift (PEAD) research: stocks keep moving in the dire
 (1996-2013, WRDS IBES/CRSP/Compustat), an options version (OptionMetrics), a combined portfolio, and a live paper-trading engine. Everything runs through one command:
 `python -m pead list | run | report | compare | portfolio | prep | live | paper`.
 
-**Read this first:** `docs/FIXES.md`. Four methodology defects were found and fixed in this consolidation; the previously published headline numbers were overstated
+**Read this first:** `docs/FIXES.md`; then `docs/STEADY_DRIFT.md` for the current best equity strategy and `docs/ROADMAP.md` for what is still missing. Four methodology defects were found and fixed in this consolidation; the previously published headline numbers were overstated
 (for example the reference book `balanced_leverage` went 6.49% -> 5.38%, Sharpe 1.30 -> 1.09, and the options books lost essentially their whole edge once filled at real bid/ask).
 Current numbers are in `results/leaderboard.md`. Old numbers are kept as `*_legacy` / `*_prefix_fix`.
 
@@ -24,6 +24,7 @@ Current numbers are in `results/leaderboard.md`. Old numbers are kept as `*_lega
 | #12 | Paper rebuilt on corrected deciles: SUE reversal, volatility sweeps, capacity sweep. | merged |
 | #14 | One complete `data/`: raw master (hash-verified identical to the `D:` master) + the corrected derived vintage; the pre-fix vintage kept at `data/_prefix_vintage/`; legacy tests run against it. | merged |
 | #15 | Paper: option-spread and coverage tables rebuilt on corrected deciles from the OptionMetrics files. Nothing in the paper is pre-correction any more except the kept `*_legacy` comparison runs. | merged |
+| #17 | Steady Drift: the long-only, never-borrowing, risk-throttled strategy family (`steady_drift`, `_calm`, `_core`, `_plus`), the engine additions behind it, its research (`meta/`, `docs/META_STRATEGY.md`, `docs/STEADY_DRIFT.md`) and `docs/ROADMAP.md`. | merged |
 | #5 | Old plain-language paper PR. Superseded by #10; closed, tag `archive/pr5-strategies-explained` keeps its commit. | closed |
 
 ## 3. Layout
@@ -45,7 +46,7 @@ reports/ reference/      legacy PDFs (pre-framework, pre-correction numbers) and
 tests/                   test_framework.py (engine reproduces the original scripts), test_fixes.py (the four fixes)
 ```
 
-## 4. Strategy catalog (55 registered; numbers live in `results/leaderboard.md`, not here)
+## 4. Strategy catalog (59 registered; numbers live in `results/leaderboard.md`, not here)
 
 `status`: `validated` = the engine reproduces the original script exactly (NOT "has an edge"); `research` = chosen/tuned in-sample or exploratory; `reference` = kept for comparison.
 
@@ -56,6 +57,8 @@ tests/                   test_framework.py (engine reproduces the original scrip
 - Volatility: `calm_weighted`, `calm_weighted_matched`, `calm_rank_tilt` (research), `calm_rank_levered` (research); negative results kept: `volatility_filter`, `calm_weighted_filter`
 - Max-size variants (6x cap, research; checked against a -40% drawdown screen several now breach): `*_max` for balanced_leverage (identical book to `sector_balanced_max`), conviction_tilt, extreme_picks, graded_bets, size_balanced, market_exposed, market_boost
 - `<name>_legacy` twins reproduce the *published* runs to the dollar (the original, wrong leverage cap on the original data).
+
+**Long-only (4, no legacy twin):** `steady_drift` (top surprise decile, 60-session holds, calm stocks sized up, idle money in T-bills, exposure throttled to ~10% volatility), `steady_drift_calm` (8% target), `steady_drift_core` (no throttle), `steady_drift_plus` (smaller, more numerous positions, 80% cap, 12% target; **the best equity strategy that obeys no-borrowing and no look-ahead**, status research). Evidence and limits: `docs/STEADY_DRIFT.md`; open items: `docs/ROADMAP.md`.
 
 **Options (8):** `options_cap20`, `options_cap30`, `options_worst_case` (corrected: ask in / bid out); `options_cap20_midfill`, `options_cap30_midfill` (the previous mid-fill convention); `options_cap20_legacy`, `options_cap30_legacy`, `options_cap40_legacy` (the originally reported, overstated numbers).
 
@@ -88,7 +91,7 @@ tests/                   test_framework.py (engine reproduces the original scrip
 
 ## 7. Where every old branch and worktree went
 
-**State at the end of 2026-10-20.** Worktrees: `main`, `strategy-analysis-backtest-481b86` (now on a short-lived branch; kept because its git-ignored `results/*/positions.parquet` are the corrected position files the paper builder reads), and `strategy-evaluation-roi-74c7dd` (the owner's, protected).
+**State at the end of 2026-10-20.** Worktrees: `main`, `strategy-analysis-backtest-481b86` (now on a short-lived branch; kept because its git-ignored `results/*/positions.parquet` are the corrected position files the paper builder reads), and `strategy-evaluation-roi-74c7dd` (the Steady Drift work; merged in #17 and then moved aside, see the table).
 Ten former worktrees (the eight old ones plus the two temporary `consolidation-paper` / `consolidation-archive` checkouts) were **moved, not deleted**, to `C:\Users\hrudi\Documents\BEI\_pead_archived_worktrees\` and git's registrations were pruned; their git-ignored derived data is still in those folders.
 Eighteen merged local branch labels were deleted with `git branch -d`. Still present locally: `rescue/*` (4, same commits as the `archive/*` tags), `claude/options-strategy` and `claude/trading-strategies-research-a9f3ee` (unmerged, tagged), the short-lived working branch, and the ROI branch. **No remote branch has been deleted** (that needs the owner's approval).
 
@@ -104,7 +107,7 @@ Eighteen merged local branch labels were deleted with `git branch -d`. Still pre
 | `origin-check/main` (stale remote-tracking ref) | an old line of main | tag `archive/origin-check-main`, then delete |
 | worktrees `equity-strategies-overview-b81011`, `gpu-options-master-script-888a09`, `live-paper-trading-earnings-acf39f`, `scripts-reorganize-refactor-4ab9db` | nothing unique except git-ignored derived data (kept in the folders and the backup) | remove by moving the folder aside, never by `git worktree remove` |
 | `claude/aggressive-equities-variants-c8d42a`, `claude/gpu-equity-trading-strategy-a87ac6`, `claude/gpu-options-master-script-888a09`, `claude/scripts-reorganize-refactor-4ab9db`, `claude/options-strategy-gpu-compute-131625`, `claude/pead-options-market-aec53d`, `claude/pead-strategy-optimization-634f65`, `claude/kelly-options-equity-research-070ed7`, `claude/equity-strategies-overview-b81011`, `claude/paper-strategy-mechanics-29026a`, `claude/fund-leverage-backtest-assumptions-3d4dc8`, remote `origin/options-risk-cap-and-results` | each verified as an ancestor of `main` (nothing unmerged) | delete the branch labels after the PRs merge |
-| worktree `strategy-evaluation-roi-74c7dd` | **another agent is building new equity strategies here** | **untouched on purpose. Do not prune, move, or delete it.** |
+| worktree `strategy-evaluation-roi-74c7dd` (branch of the same name) | Steady Drift research and port | merged in #17. Folder **moved, not deleted**, to `C:\Users\hrudi\Documents\BEI\_pead_archived_worktrees\strategy-evaluation-roi-74c7dd` (its git-ignored `meta/out` and `meta/debate2` caches regenerate with `meta/build_events.py`); registration pruned; branch label deleted with `git branch -d` |
 
 **Rule for removing a worktree:** never `git worktree remove` (git treats git-ignored data folders as disposable and `--force` deletes them recursively). Verify the backup, move the folder aside (a rename deletes nothing), then `git worktree prune`. Delete a branch only with `git branch -d`, which refuses unmerged work.
 
@@ -112,7 +115,7 @@ Eighteen merged local branch labels were deleted with `git branch -d`. Still pre
 
 1. **Re-select the strategy constants and blend weights on a search window** (pick the dials on early history, test on later history). Expected to lower the numbers further.
 2. **Copy the OptionMetrics extract (131 files, 32.9 GB) onto `C:`?** The options stages read it from the external drive `D:\OptionMetrics\parquet`, and that drive was unplugged twice on 2026-10-20. Earlier policy was "never copied"; this is the owner's call.
-3. **Remote branches:** merged ones were deleted on 2026-10-20. Two unmerged branches remain on GitHub, `claude/options-strategy` and `claude/trading-strategies-research-a9f3ee`, both tagged locally as `archive/*`. Push those tags first if you want them off this machine, then delete the branches.
+3. **Remote branches:** all remote branches are deleted (2026-10-21). The two that were unmerged, `claude/options-strategy` and `claude/trading-strategies-research-a9f3ee`, survive as pushed tags `archive/options-strategy-risk-reversal` and `archive/pr5-strategies-explained`.
 4. Port the vol-targeted overlay / dispersion filter as registered strategies after re-testing on the corrected data.
 5. Turn the live workflow back on only after adding the three secrets (`ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `FINNHUB_API_KEY`).
 6. Delete `C:\Users\hrudi\Documents\BEI\_pead_archived_worktrees\` only when sure nothing in it is needed.
