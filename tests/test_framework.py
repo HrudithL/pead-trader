@@ -164,7 +164,7 @@ def test_balanced_leverage_legacy_pins_published_nav():
 def test_every_equity_strategy_has_a_legacy_twin():
     allr = registry.all_strategies()
     for n, s in allr.items():
-        if s.asset_class == "equity" and not n.endswith("_legacy"):
+        if s.asset_class == "equity" and not n.endswith("_legacy") and getattr(s, "legacy_twin", True):
             twin = allr[f"{n}_legacy"]
             assert twin.status == "reference" and twin.parent == n
             assert twin.sizing.exposure_cap == "entry_cohort" and s.sizing.exposure_cap == "open_book"

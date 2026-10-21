@@ -78,3 +78,75 @@ python meta/build_events.py && python meta/steady.py          # frontier (meta/o
 python meta/steady_validate.py                                # eras, costs, placebo, years
 python meta/steady_universe.py                                # size-group robustness
 ```
+
+---
+
+# Part 2: the strategy inside the `pead` framework, and how to get more return without paying for it in Sharpe or alpha
+
+## 8. What was ported (and what changed in the engine)
+
+Steady Drift is now an ordinary framework strategy: `pead/strategies/equity/steady_drift.py` (four registered variants), run with
+`python -m pead run steady_drift` like any other, with the usual per-strategy report, leaderboard row and tests. It needed five
+small, general additions to the shared machinery (none changes an existing strategy's numbers; the old tests still pass):
+
+| Addition | Where | What it does |
+|---|---|---|
+| Fixed holding window | `with_fixed_hold`, `EquityStrategy.hold_sessions` | Holds exactly N sessions, cut at the stock's last row so delistings stay in. Needs the panel's permno array, now stored in the panel cache (`EquityUniverse.panel_permno`; old caches rebuild once). |
+| Per-name cap | `Sizing.name_cap_frac` | No position above a fraction of NAV. |
+| First-come-first-served cap | `cap_mode="chronological"` | When the cash/gross budget binds, positions are admitted in announcement order. The older "priority" mode keeps the biggest bets of the quarter, which can only be known once the quarter is over. |
+| Causal weights | `weights.causal_inverse_variance` | Inverse-variance weight relative to the median of the previous 365 days' events; nothing depends on later announcements. |
+| Cash yield + risk throttle | `apply_cash_and_risk_target`, `pead/core/rates.py` | Idle NAV earns the T-bill rate; exposure = min(1, target vol / trailing 60-day vol of the book, data through t-1); never above 100%. The T-bill series is an assumption (typed from memory). |
+
+`legacy_twin = False` on the new strategies (they have no pre-fix numbers to reproduce, so `*_legacy` twins are not generated).
+Tests: `tests/test_steady_drift.py` (a fixed hold never crosses into the next stock; causal weights do not change when the future is rewritten; the
+throttle's exposure through day t does not change when later returns change; cash yield; per-name cap; chronological vs priority). Full suite: 29 passed, 14 skipped (they need data).
+
+Two honest corrections came out of the port:
+1. The `meta/` prototype normalised each quarter's weights by the whole quarter's total and admitted the largest bets first. Both use events that
+   had not happened yet. The framework version removes both; the effect is small (10.81% -> 10.57%, Sharpe 1.15 -> 1.16 over the full window).
+2. The sector cap was dropped. It made no difference in the prototype (13.15% vs 12.93%) and a causal version needs sector-aware admission in the engine (roadmap item 8).
+
+Reconciliation, framework vs prototype (same signal, 1995-2013): `steady_drift` 10.59% / vol 9.0% / Sharpe 1.16 / max DD -20.0% against 10.81% / 9.3% / 1.15 / -20.5%;
+`steady_drift_core` (no throttle) 11.99% / 13.1% / 0.93 / -40.5% against 11.70% / 12.7% / 0.94 / -36.2%.
+To reproduce, set `PEAD_DATA_DIR` to a folder holding the corrected `equity_vol_panel.parquet` (the `vintage_fixed` build) and `PEAD_RAW_EQUITY_DIR` to the raw `normalized_equity` folder.
+
+| Registered | What differs | Return | Vol | Sharpe | Max DD |
+|---|---|---|---|---|---|
+| `steady_drift` | the base design (10% target) | 10.6% | 9.0% | 1.16 | -20.0% |
+| `steady_drift_calm` | 8% target | 9.6% | 7.8% | 1.21 | -15.9% |
+| `steady_drift_core` | no throttle | 12.0% | 13.1% | 0.93 | -40.5% |
+| `steady_drift_plus` | breadth + 80% cap + 12% target (section 9) | 12.1% | 10.0% | 1.19 | -22.1% |
+
+(Framework summaries, full window 1995-2013, which includes the flat pre-trading months; section 9 measures from 1997-07.)
+
+## 9. Getting more return without giving up Sharpe or alpha
+
+Rule fixed before looking at the second grid: accept a change only if Sharpe >= baseline, alpha t >= 5.5, 2008-13 Sharpe >= 0.75 and the marked value of the holdings stays under 95% of NAV (the no-borrowing check, computed from the actual positions rather than cost basis). 31 variants were run (`meta/steady_grid.py`, `meta/steady_grid2.py`; tables in `meta/out/steady_grid*.csv`). Baseline from 1997-07: 10.6% / Sharpe 1.09 / DD -20.0% / alpha 6.9% (t 5.9) / 2008-13 Sharpe 0.75.
+
+| Lever | Result | Verdict |
+|---|---|---|
+| Smaller positions, more names (base size 0.4% -> 0.3% -> 0.25% of NAV, name cap 1%) | positions 8.5k -> 12-14k; share hitting the 5%-of-volume cap 56% -> 20-40%; Sharpe 1.09 -> 1.17-1.20; 2000-06 Sharpe 1.20 -> 1.36-1.43; 2007-13 Sharpe 0.77 -> 0.78-0.81 | **Adopt.** The only change that raised Sharpe. Almost all of it is in the early period; 2007-13 barely moves. |
+| Raise the invested cap 70% -> 80% | +0.4 to +0.6 pt return, Sharpe flat | Adopt, 80% at most. 85% and 95% **fail the no-borrow check** in 7 of 8 configurations (marked holdings reach 1.01-1.66x NAV after drawdowns; the one pass is 0.92), so they are rejected despite 11.5-13.2% returns. |
+| Risk target 10% -> 12% | +0.7 pt return, -0.03 to -0.06 Sharpe, deeper drawdown (-19% -> -22%) | Adopt as `steady_drift_plus`: Sharpe is still >= baseline once combined with breadth. The 10% sibling (`bu0.003_cap0.8_vol0.1` in the grid) gets 11.7% / Sharpe 1.19 / DD -19.1%. |
+| Top two deciles instead of top decile | return -1.5 to -2 pts, Sharpe -0.2 | Reject: dilutes the signal and hits the volume cap more. |
+| Hold 40 or 90 sessions | 8.7% / 7.9% | Reject: 60 stays. |
+| Dollar-volume floor $0.5M / $5M | 10.9% / 10.3% | No effect; $2M stays. |
+
+`steady_drift_plus` (base size 0.3%, cap 80%, name cap 1%, target 12%): 12.4% / Sharpe 1.14 / DD -22.1% / alpha 8.2% (t 6.4); 2008-13 return 9.0%, Sharpe 0.79; marked holdings <= 75% of NAV.
+
+**The honest part.** I re-ran the shuffled-surprise placebo (SUE ranks permuted within each quarter, everything else identical, 3 seeds, `meta/steady_placebo.py`) on both:
+`steady_drift` real 10.6% vs placebo 5.6-7.3% (surprise skill = +4.3 pts return, +3.9 pts alpha, +0.40 Sharpe); `steady_drift_plus` real 12.4% vs placebo 7.3-8.8%
+(skill = +4.3 pts, +3.9 pts alpha, +0.36 Sharpe). So the extra return of `plus` is more exposure to the event universe (small/mid-cap, low-vol), **not more surprise skill**: its skill-adjusted alpha is identical. Taking a higher risk target at an unchanged Sharpe is a legitimate way to earn more, but the new return is as exposed to a regime change in that universe as the old.
+Nothing in 31 variants raised the surprise-specific part, consistent with the earlier 35-variant search.
+
+## 10. What it would take to raise the skill itself (not tried, ranked)
+
+1. **New information, not new tuning.** Analyst revisions, forecast dispersion and the earnings-day return are the usual add-ons to SUE; none are in the event table (IBES detail would have to be pulled from WRDS). Only a signal that carries different information can lift the 3.9-point skill alpha.
+2. **A decay-aware throttle.** Skill alpha fell 9.4 -> 7.9 -> 4.1 points across the three eras. A strictly-past rolling estimate of the current D10 spread could scale the whole book: more exposure when the trailing spread is healthy, less when it fades. Needs its own placebo.
+3. **Real T-bill series** instead of the typed-from-memory path.
+4. **Out-of-sample year or the live signal.** Everything here is 1997-2013 and in-sample for the design; the live trader's yfinance surprise signal has not been run through this engine.
+5. **Capacity.** 56% of the base design's positions hit the 5% volume cap at $10M; breadth cuts that to ~39%. The return-vs-NAV curve for the new strategies has not been re-measured.
+
+## 11. Open item: investable small-cap benchmark (TO BUILD LATER)
+
+Not built now, by agreement. Why it matters: Steady Drift's "alpha vs the cap-weighted index" mixes surprise skill with the small/mid-cap premium this universe earned in 1997-2013. The shuffled-surprise placebo is a proxy. A proper benchmark would be a transparent, investable stand-in built from the same data: the same announcing stocks (or CRSP small-cap deciles) with the same dollar-volume floor, value-weighted, rebalanced monthly, with the same cost model. Run `steady_drift*` against it and report alpha versus that. Tracked as item 1 in `docs/ROADMAP.md`.

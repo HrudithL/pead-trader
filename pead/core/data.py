@@ -33,6 +33,7 @@ class EquityUniverse:
     vwretd: np.ndarray
     initial_capital: float = INITIAL_CAPITAL
     extras: dict = field(default_factory=dict)
+    panel_permno: np.ndarray = None       # permno of every panel row; needed to cut a fixed holding window at a stock's last row
 
 
 def _panel_sources():
@@ -40,7 +41,7 @@ def _panel_sources():
 
 
 def _load_panel():
-    """(ret_mktadj, ret_raw, panel_date, calendar, vwretd) for the (permno, date)-sorted daily panel.
+    """(ret_mktadj, ret_raw, panel_date, calendar, vwretd, permno) for the (permno, date)-sorted daily panel.
     Cached as one .npz keyed on the source files' sizes and mtimes: the first load takes ~12s of
     parquet reading, every later one ~1s."""
     cache = DATA_DIR / "cache" / "equity_panel.npz"
@@ -48,8 +49,8 @@ def _load_panel():
     key = ";".join(f"{p.name}:{p.stat().st_size}:{int(p.stat().st_mtime)}" for p in srcs)
     if cache.exists():
         z = np.load(cache, allow_pickle=False)
-        if str(z["key"]) == key:
-            return (z["ret_mktadj"], z["ret_raw"], z["panel_date"], pd.DatetimeIndex(z["calendar"]), z["vwretd"])
+        if str(z["key"]) == key and "permno" in z.files:
+            return (z["ret_mktadj"], z["ret_raw"], z["panel_date"], pd.DatetimeIndex(z["calendar"]), z["vwretd"], z["permno"])
     frames = [pd.read_parquet(p, columns=["permno", "date", "ret"]) for p in srcs[:-1]]
     eq = pd.concat(frames, ignore_index=True)
     mkt = pd.read_parquet(srcs[-1], columns=["date", "vwretd"])
@@ -60,11 +61,12 @@ def _load_panel():
     mkt = mkt.drop_duplicates("date").sort_values("date")
     calendar = pd.DatetimeIndex(sorted(mkt["date"].unique()))
     vw = mkt.set_index("date")["vwretd"].reindex(calendar).fillna(0.0).to_numpy()
-    out = (eq["ret_mktadj"].to_numpy(), eq["ret_raw"].to_numpy(), eq["date"].to_numpy(), calendar, vw)
+    out = (eq["ret_mktadj"].to_numpy(), eq["ret_raw"].to_numpy(), eq["date"].to_numpy(), calendar, vw,
+           eq["permno"].to_numpy())
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
         np.savez(cache, key=key, ret_mktadj=out[0], ret_raw=out[1], panel_date=out[2],
-                 calendar=calendar.to_numpy(), vwretd=vw)
+                 calendar=calendar.to_numpy(), vwretd=vw, permno=out[5])
     except OSError:
         pass
     return out
@@ -88,9 +90,9 @@ def _load_events():
 
 @lru_cache(maxsize=1)
 def load_equity_universe() -> EquityUniverse:
-    ret_mktadj, ret_raw, panel_date, calendar, vw = _load_panel()
+    ret_mktadj, ret_raw, panel_date, calendar, vw, permno = _load_panel()
     return EquityUniverse(events=_load_events(), ret_mktadj=ret_mktadj, ret_raw=ret_raw,
-                          panel_date=panel_date, calendar=calendar, vwretd=vw)
+                          panel_date=panel_date, calendar=calendar, vwretd=vw, panel_permno=permno)
 
 
 @dataclass
