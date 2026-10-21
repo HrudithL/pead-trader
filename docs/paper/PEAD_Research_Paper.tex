@@ -282,14 +282,14 @@ that have a complete price path in the daily panel, on \stv{n_firms} firms (Tabl
 
 \begin{table}[t]\centering\small
 \caption{Sample construction. Counts are read from \texttt{data/ff\_coverage\_stats.csv},
-\texttt{data/option\_coverage\_stats.csv}, the saved options runs and the corrected event panel. The option-evidence rows use the pre-correction option tables.}\label{tab:sample}
+\texttt{data/option\_coverage\_stats.csv}, the saved options runs and the corrected event panel. The option-evidence rows are rebuilt on the point-in-time deciles (near-the-money entry contracts and forward prices from the OptionMetrics files).}\label{tab:sample}
 \begin{tabular}{lr}
 \toprule
 Earnings events in the signal sample (analyst-based surprise, point-in-time deciles), 1996--2013 & \stv{n_events} \\
 \quad with book equity (Compustat \texttt{ceq}$>0$, $\ge130$-day reporting lag) & \stv{n_events_bookeq} \\
 \quad with both size and book-to-market (characteristic-adjusted sample) & \stv{n_events_sizebm} \\
 \quad with a complete daily price path (equity backtests) & \stv{n_tradeable_events} \\
-Events with a selected near-the-money call (option evidence, pre-correction) & \stv{n_events_call_atm} \\
+Events with a selected near-the-money call (option evidence) & \stv{n_events_call_atm} \\
 \quad of which priced at $+60$ trading days & \stv{n_events_call_priced60} \\
 Events eligible for the Kelly options book (\sn{options_cap20}) & \stv{options_cap20.nelig} \\
 \quad of which funded & \stv{options_cap20.nsized} \\
@@ -385,7 +385,7 @@ size/value premium sitting on top of the drift (Table~\ref{tab:spreads}, Figure~
 
 \begin{table}[t]\centering
 \caption{Top-minus-bottom decile spread by horizon (\%), with quarter-clustered $t$-statistics.
-Equity columns use the full sample with point-in-time deciles. Option columns are from the pre-correction option tables (within-quarter deciles): they use the option-matched subsample
+Equity columns use the full sample with point-in-time deciles. Option columns also use point-in-time deciles and the option-matched subsample
 (\stv{Q_opt} quarters; \stv{Q_opt60} at $+60$d) and measure the percentage return on premium of a
 buy-and-hold near-the-money contract at its mid price.}\label{tab:spreads}
 \input{generated/tab_spreads.tex}
@@ -443,10 +443,10 @@ a given surprise is worth (Section~\ref{sec:calm}). Walk-forward filters that dr
 (Section~\ref{sec:calm}); the negative result is kept as \sn{volatility_filter} and
 \sn{calm_weighted_filter}.
 
-\subsection{The signal in option premia (mid prices, pre-correction deciles)}
+\subsection{The signal in option premia (mid prices)}
 
 If PEAD is a real mispricing of the stock, it should appear in the price of a leveraged claim on that
-stock. This section measures the signal in option premia at mid prices and with the earlier within-quarter deciles (the option tables were not rebuilt); it says nothing about what an option trader pays, which Section~\ref{sec:options} measures. For each event with listed options we take, on the announcement day, the call (put) with delta
+stock. This section measures the signal in option premia at mid prices and with the point-in-time deciles; it says nothing about what an option trader pays, which Section~\ref{sec:options} measures. For each event with listed options we take, on the announcement day, the call (put) with delta
 nearest $+0.5$ ($-0.5$) and at least 95 calendar days to expiry. We hold it at its mid price to each
 horizon. The call spread is $+$\stv{call60} of premium at 60 days ($t=\stv{call60.t}$) and the put
 spread is \stv{put60} ($t=\stv{put60.t}$), the mirror image (Table~\ref{tab:spreads},
@@ -454,7 +454,12 @@ Figure~\ref{fig:spreads}).
 
 \paragraph{Magnitude check.} The ratio of the 60-day call spread to the stock spread is
 $\stv{call60}/\stv{spread.mkt.h60}\approx\stv{amp_ratio}$. This is \stv{sent.ampband} the
-elasticity band $\Omega\in[\stv{omega_lo},\stv{omega_hi}]$ from equation~\eqref{eq:omega}. These are returns on premium between mid prices, before the bid/ask spread.
+elasticity band $\Omega\in[\stv{omega_lo},\stv{omega_hi}]$ from equation~\eqref{eq:omega}. These are returns on premium between mid prices, before the bid/ask spread. Table~\ref{tab:optpit} compares them with the earlier within-quarter deciles: the 60-day call spread moves from \stv{pre.call60} to \stv{call60}, the put spread from \stv{pre.put60} to \stv{put60} and the straddle spread from \stv{pre.straddle60} to \stv{str60}.
+
+\begin{table}[t]\centering
+\caption{Option-premium D10$-$D1 spreads (\% of premium, quarter-clustered $t$) under the earlier within-quarter ranking (committed \texttt{data/} tables) and under the point-in-time ranking (near-the-money contracts re-selected and re-priced from the OptionMetrics files; \texttt{docs/paper/cache/pit3/}).}\label{tab:optpit}
+\input{generated/tab_opt_pit_compare.tex}
+\end{table}
 
 \paragraph{Direction versus volatility.} A long straddle has roughly zero delta and isolates the
 non-directional component. Its 60-day spread is $+$\stv{str60} ($t=\stv{str60.t}$), a fraction
@@ -1124,7 +1129,7 @@ We list these without softening. Each is either a reason realized performance wo
 \item \textbf{Sample period and decay.} All results are for 1996--2013, and alpha per dollar was lower in the last era in \stv{era.all.fade.n} of nine profiled books (to between \stv{era.all.CA.min} and \stv{era.all.CA.max} of its first-era level). A data extension and a post-publication
       decay adjustment \citep{McLeanPontiff2016} are required before any capital is allocated.
 \item \textbf{Residual look-ahead.} The corrections remove the decile look-ahead and the full-sample decay-day fit, not every use of future information: the hold-period back-off thresholds, the leave-one-out risk benchmark and the weight normalisation still see the full sample, and the
-      signal tables of Sections~\ref{sec:data}--\ref{sec:evidence} that depend on the option chain (the option spreads of Section~\ref{sec:evidence}) were not rebuilt on point-in-time deciles, because the OptionMetrics source files were not available when the corrected vintage was rebuilt for this paper.
+      option-premium evidence of Section~\ref{sec:evidence}, although rebuilt on point-in-time deciles, rests on near-the-money contracts valued at the mid.
 \item \textbf{Borrow fees and financing (equity).} Neither is modelled, and the short leg is small-cap-heavy. The short side averages \stv{calm_weighted.short_avg}$\times$ NAV for \sn{calm_weighted}, so each 1\% a year of borrow cost removes \stv{calm_weighted.borrow_1pct} of
       return; a fee of \stv{calm_weighted.borrow_breakeven} would remove all of it, and a uniform 5\% would leave \stv{calm_weighted.ret_at5} (for \sn{balanced_leverage}: \stv{balanced_leverage.ret_at5}). Hard-to-borrow names cost more, and the model of
       Section~\ref{sec:mechanism} predicts they are the names with the most drift. Gross exposure above NAV and the stacked blend multiples also need financing.
@@ -1191,7 +1196,7 @@ model design, and the modeling assumptions in Section~\ref{sec:limits} omit cost
 \paragraph{Holding windows.} Per-cell decay days (Section~\ref{sec:decay}), from \stv{decay.min} to \stv{decay.max} trading days.
 \paragraph{Runs.} The \stv{n_runs} saved runs in \texttt{results/} were produced between \stv{runs.first} and \stv{runs.last} at git revision(s) \stv{runs.revs} under pandas \stv{runs.pandas}; results reproduce only under the pinned pandas 3 (see \texttt{requirements.txt}). \texttt{results/<name>} holds the run with all four corrections of \texttt{docs/FIXES.md}; \texttt{*\_legacy} (equity) and \texttt{*\_prefix\_fix} (options, blends) keep the pre-correction numbers, and \texttt{*\_midfill} the mid-fill options references.
 
-\paragraph{Data vintages.} The committed \texttt{data/} tables are the pre-correction vintage (within-quarter deciles). The corrected vintage was built in an isolated directory (\texttt{PEAD\_FIXED\_DATA}, default \texttt{../vintage\_fixed/data} beside the worktree) and is not committed. From it the builder recomputes the point-in-time decile tables and subsample spreads (Fama--MacBeth means, validated by reproducing the committed tables exactly from the old event file) and copies the size/book-to-market tables and the decay-day table into \texttt{docs/paper/cache/pit/}. The attribution ladders are copied from the fixes work into \texttt{docs/paper/cache/ladders/} with a provenance note. The volatility diagnostic and the volatility sweeps are read from \texttt{results/} (recomputed on the corrected vintage). The SUE-reversal summary and the capacity sweep were recomputed on the corrected vintage in a separate folder (\texttt{PEAD\_PAPER\_VINTAGE}, default \texttt{../vintage\_paper}; \texttt{pead/research/equity\_strategy\_history/28\_sue\_reversal\_test.py} and \texttt{scripts/capacity\_sweep.py}) and are committed in \texttt{docs/paper/cache/pit2/}. Only the option-spread and option-coverage tables remain pre-correction: rebuilding them needs the OptionMetrics source files, which were not attached when this was done, and they are labelled as such wherever they appear.
+\paragraph{Data vintages.} The committed \texttt{data/} tables are the pre-correction vintage (within-quarter deciles). The corrected vintage was built in an isolated directory (\texttt{PEAD\_FIXED\_DATA}, default \texttt{../vintage\_fixed/data} beside the worktree) and is not committed. From it the builder recomputes the point-in-time decile tables and subsample spreads (Fama--MacBeth means, validated by reproducing the committed tables exactly from the old event file) and copies the size/book-to-market tables and the decay-day table into \texttt{docs/paper/cache/pit/}. The attribution ladders are copied from the fixes work into \texttt{docs/paper/cache/ladders/} with a provenance note. The volatility diagnostic and the volatility sweeps are read from \texttt{results/} (recomputed on the corrected vintage). The SUE-reversal summary and the capacity sweep were recomputed on the corrected vintage in a separate folder (\texttt{PEAD\_PAPER\_VINTAGE}, default \texttt{../vintage\_paper}; \texttt{pead/research/equity\_strategy\_history/28\_sue\_reversal\_test.py} and \texttt{scripts/capacity\_sweep.py}) and are committed in \texttt{docs/paper/cache/pit2/}. The option-spread and option-coverage tables were rebuilt on the corrected deciles by running the near-the-money entry-contract and forward-price stages (\texttt{pead/prep/options/select\_entry\_contracts.py}, \texttt{forward\_option\_prices.py}) and \texttt{37\_decile\_summary\_options.py} against the OptionMetrics files in the same isolated folder; the three output CSVs are committed in \texttt{docs/paper/cache/pit3/}.
 
 \paragraph{Where every number comes from.}\begin{sloppypar}
 Per-book statistics: \texttt{results/<name>/summary.json} and \texttt{daily.csv.gz} (realized leverage, active-period Sharpe, calendar returns, correlations, deflated Sharpe ratios). Leaderboard checks: \texttt{results/leaderboard.json} and \texttt{leaderboard.md}.

@@ -53,6 +53,7 @@ MAIN_REPO = Path(os.environ.get(
 FIXED_DATA = Path(os.environ.get("PEAD_FIXED_DATA", str(ROOT.parent / "vintage_fixed" / "data")))   # corrected data vintage
 PAPER_VINT = Path(os.environ.get("PEAD_PAPER_VINTAGE", str(ROOT.parent / "vintage_paper")))       # corrected-vintage paper inputs
 PIT2 = CACHE / "pit2"
+PIT3 = CACHE / "pit3"        # option-spread tables rebuilt on point-in-time deciles (near-ATM entry contracts + forward prices)
 HORIZONS = [1, 5, 10, 20, 40, 60]
 TRADING_DAYS = 252
 # Assumptions of the stylized model in Section 2 (not estimated from data): used only to evaluate the elasticity band.
@@ -255,6 +256,10 @@ def sync_pit2():
     """Copy the corrected-vintage inputs produced for the paper (SUE-reversal summary from the corrected event file, capacity sweep
     from the current engine) into docs/paper/cache/pit2/ when they are reachable; otherwise the committed copies are used."""
     PIT2.mkdir(parents=True, exist_ok=True)
+    PIT3.mkdir(parents=True, exist_ok=True)
+    for name in ("option_spread_horizon_stats.csv", "option_decile_horizon_stats.csv", "option_coverage_stats.csv"):
+        if (PAPER_VINT / "data2" / name).exists():
+            shutil.copyfile(PAPER_VINT / "data2" / name, PIT3 / name)
     for src, name in ((PAPER_VINT / "data" / "sue_reversal_summary.json", "sue_reversal_summary.json"),
                       (PAPER_VINT / "data" / "sue_reversal_by_decile.csv", "sue_reversal_by_decile.csv"),
                       (PAPER_VINT / "capacity_sweep.csv", "capacity_sweep.csv")):
@@ -569,8 +574,22 @@ def signal_evidence(S, ctx):
     ffs = pd.read_csv(PIT / "ff_spread_horizon_stats.csv").set_index("horizon")
     pre_spr = read_csv("spread_horizon_stats.csv").set_index("horizon")
     pre_ffs = read_csv("ff_spread_horizon_stats.csv").set_index("horizon")
-    osp = read_csv("option_spread_horizon_stats.csv")
-    ocov = read_csv("option_coverage_stats.csv")
+    osp = pd.read_csv(PIT3 / "option_spread_horizon_stats.csv")
+    ocov = pd.read_csv(PIT3 / "option_coverage_stats.csv")
+    pre_osp = read_csv("option_spread_horizon_stats.csv")      # committed data/: within-quarter deciles
+    ctx["pre_osp"] = pre_osp
+    rows = []
+    for cp in ("call", "put", "straddle"):
+        for h in (20, 60):
+            a = pre_osp[(pre_osp.cp_type == cp) & (pre_osp.horizon == h)].iloc[0]
+            b = osp[(osp.cp_type == cp) & (osp.horizon == h)].iloc[0]
+            rows.append([cp, f"$+{h}$d", f2(a["mean_spread"] * 100), f2(a["t_stat"]), f2(b["mean_spread"] * 100), f2(b["t_stat"]), str(int(b["n_quarters"]))])
+    write_fragment("tab_opt_pit_compare.tex", table("llrrrrr", ["Contract", "Horizon", r"$\hat\mu$", "$t$", r"$\hat\mu$", "$t$", "Quarters"], rows, size=r"\small")
+                   .replace(r"\toprule" + "\n", r"\toprule" + "\n & & \\multicolumn{2}{c}{Within-quarter deciles} & \\multicolumn{2}{c}{Point-in-time deciles} & \\\\\n\\cmidrule(lr){3-4}\\cmidrule(lr){5-6}\n"))
+    for cp in ("call", "put", "straddle"):
+        a = pre_osp[(pre_osp.cp_type == cp) & (pre_osp.horizon == 60)].iloc[0]["mean_spread"]
+        b = osp[(osp.cp_type == cp) & (osp.horizon == 60)].iloc[0]["mean_spread"]
+        S.put(f"pre.{cp}60", float(a * 100), pp(a * 100, 2))
     cov = pd.read_csv(PIT / "ff_coverage_stats.csv").iloc[0]
     size = pd.DataFrame(pit["subs"]["size"]).assign(group=lambda d: d["group"].astype(float).astype(int)).sort_values("group")
     era = pd.DataFrame(pit["subs"]["era"])
