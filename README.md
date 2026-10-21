@@ -67,10 +67,11 @@ docs/            STRATEGIES, ARCHITECTURE, LIVE_TRADING, HISTORY
 ## Data
 
 The licensed inputs are not tracked: the WRDS pull (`data/raw_wrds`, `data/normalized_equity`, `data/earnings`,
-`data/events`, `data/metadata`, `data/results`) and the OptionMetrics extract (31GB `parquet/` folder on an external
+`data/events`, `data/metadata`, `data/results`) and the OptionMetrics extract (32.9GB, 131-file `parquet/` folder on an external
 drive, `OPTIONMETRICS_DIR`, default `D:/OptionMetrics/parquet`, never copied). Derived inputs the backtests read
 (`data/*.parquet`, `data/event_options/`) are rebuilt by `python -m pead prep --all` (or `--list` to see what is built).
-Small result files and `data/raw_data_manifest.json` (sha256 of the raw pull; `python pead/prep/verify_raw_data.py --check`)
+`data/` holds the corrected point-in-time derived vintage; the complete pre-fix one is kept, git-ignored, in
+`data/_prefix_vintage/` (how to select it: `docs/FIXES.md`). Small result files and `data/raw_data_manifest.json` (sha256 of the raw pull; `python pead/prep/verify_raw_data.py --check`)
 are tracked.
 
 * **Never symlink or junction data into this repo** (a tracked symlink once deleted a real local copy; `scripts/git-hooks/pre-commit`

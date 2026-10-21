@@ -28,7 +28,7 @@ pool), so decile sizes are uneven per quarter. Trailing-window and same-day-or-e
 
 ## Measured effect: equity, one fix at a time
 
-Ladder (annualized return). *Published* = committed data with the original cap. *+fix 1* = open-book cap on the published data. *+fix 2* = also point-in-time deciles
+Ladder (annualized return). *Published* = pre-fix data with the original cap. *+fix 1* = open-book cap on the published data. *+fix 2* = also point-in-time deciles
 (decay days still fitted on the full sample, `PEAD_DECAY_SEARCH_FRAC=1.0`). *+fix 4 (all)* = also search-window decay days = the current default.
 Published numbers are reproduced exactly by the `_legacy` twins (final NAV difference 0.0 for all 22 strategies). Alpha is vs the CRSP market (`scripts/alpha_benchmark.py` method).
 "Max gross/NAV" is gross exposure divided by the NAV the quarter was SIZED on.
@@ -80,11 +80,13 @@ Reading it:
 
 ## Where the old numbers are kept (decision D7)
 
-* Equity: `results/<name>_legacy/` (the `_legacy` twin run on the committed data; final NAV identical to the published one). The old report files were copied in.
+* Equity: `results/<name>_legacy/` (the `_legacy` twin run on the pre-fix vintage `data/_prefix_vintage/`; final NAV identical to the published one). The old report files were copied in.
 * Options and blends: `results/options_cap20_prefix_fix`, `options_cap30_prefix_fix`, `options_worst_case_prefix_fix`, `hedged_blend_prefix_fix`, `calm_blend_prefix_fix` are verbatim copies of the pre-fix result folders. `options_cap20_legacy`, `options_cap30_legacy`, `options_cap40_legacy`, `legacy_blend` are unchanged.
 * `results/portfolio/` was regenerated on the new data, so its `*_legacy` combinations use `options_cap20_legacy` re-run on the new deciles (9.17% / 3.93), not the published 8.58% / 3.78.
-* The tests pin the legacy numbers on the committed data (`tests/test_framework.py`, `tests/test_fixes.py`). The committed `data/` is the PRE-fix vintage; the corrected data vintage was built in an isolated directory (`_pead_consolidation/vintage_fixed`) and is not committed (gitignored parquet). To rebuild it run `python -m pead prep vol_features --with-deps --force` and the options chain (`link_events_secid return_distributions scan_full_chain attach_underlying_price event_vol_features optimal_contract_selector forward_prices_optimal`, `--force`) with `PEAD_DATA_DIR` / `PEAD_METADATA_DIR` pointed at a new folder. The contract selector ran on CPU in 93 s.
-* With the corrected default, `options_cap20` etc. cannot run against the old committed data (it has no horizon-0 quotes); they raise a clear error.
+* The default `data/` is now the CORRECTED point-in-time vintage (raw master plus corrected derived files), so `python -m pead run <name>` reproduces the committed corrected results (final NAVs: `balanced_leverage` 27,729,591.5; `calm_weighted` 29,109,274.1; `calm_rank_tilt` 31,136,472.2; `options_cap20` 10,481,798.4; `options_cap30` 9,841,406.8). The complete PRE-fix derived vintage (537 files) is kept, git-ignored, in `data/_prefix_vintage/` (see its `README.txt`).
+* To reproduce the legacy numbers, run in a process started with these environment variables: `PEAD_DATA_DIR=<repo>/data/_prefix_vintage`, `PEAD_METADATA_DIR=<repo>/data/_prefix_vintage/metadata`, `PEAD_RAW_WRDS_DIR=<repo>/data/raw_wrds`, `PEAD_RAW_EQUITY_DIR=<repo>/data/normalized_equity`, `PEAD_EVENTS_DIR=<repo>/data/events`, `PEAD_EARNINGS_DIR=<repo>/data/earnings`, `PEAD_RESULTS_DIR=<repo>/data/results`, plus `PEAD_RUNS_DIR=<temp folder>` so the repo's `results/` is not overwritten. Example: `python -m pead run balanced_leverage_legacy calm_weighted_legacy --no-report` gives final NAV 34,048,037.4 and 35,421,134.4; `options_cap20_legacy` gives 8.58% / Sharpe 3.78. The variables are read at import time, so set them before starting Python.
+* The tests pin both vintages: the legacy pins (`tests/test_framework.py`, `test_within_quarter_reproduces_stored_sue_rank_pct_exactly` in `tests/test_fixes.py`) run the `_legacy` strategies in one subprocess with the recipe above via `tests/legacy_vintage.py` and are skipped when `data/_prefix_vintage/` is absent; `test_default_vintage_pins_corrected_final_nav` pins the five corrected NAVs on the default `data/`.
+* The corrected options defaults need horizon-0 quotes, which only the corrected vintage has: pointed at `data/_prefix_vintage/` they raise a clear error, so use the `*_legacy` options strategies there.
 
 ## Not fixed / residual issues
 
@@ -101,4 +103,4 @@ Residual look-ahead / leakage that remains:
 
 ## Reproducing this table
 
-Isolated vintages under `C:\Users\hrudi\Documents\BEI\_pead_consolidation\`: `vintage_old` (committed data, open-book cap), `vintage_fix2only` (`PEAD_DECAY_SEARCH_FRAC=1.0`), `vintage_fix3only` (fix 3 on the committed contracts), `vintage_fixed` (all fixes). Ladder CSVs `equity_ladder.csv` and `options_ladder.csv` sit in the same folder.
+Isolated vintages under `C:\Users\hrudi\Documents\BEI\_pead_consolidation\`: `vintage_old` (pre-fix data, open-book cap), `vintage_fix2only` (`PEAD_DECAY_SEARCH_FRAC=1.0`), `vintage_fix3only` (fix 3 on the pre-fix contracts), `vintage_fixed` (all fixes). Ladder CSVs `equity_ladder.csv` and `options_ladder.csv` sit in the same folder.
