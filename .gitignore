@@ -59,3 +59,6 @@ docs/paper/*.aux
 docs/paper/*.log
 docs/paper/*.out
 docs/paper/*.toc
+
+# Complete pre-fix derived data vintage (kept for the *_legacy strategies and their tests); regenerable, large
+data/_prefix_vintage/
