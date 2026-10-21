@@ -13,7 +13,7 @@ A **recipe** is a specific kind of trade: side (long / short) x how easily the s
 
 **Long leg vs short leg.** Earlier docs said the surprise signal earns the same on both legs, and a first correction said the long leg earns about twice the short leg. On the corrected data and the size-matched benchmark the long leg earns **1.8 to 3.0 times** the short leg per dollar in every strategy (Balanced Leverage: long 103 bp per $, $15.0M; short 34 bp, $5.1M). By company size the long leg is ahead in the four middle-to-large fifths in every strategy, but **not in the smallest fifth**: there the long leg leads in only 5 of the 9 books (Balanced Leverage: long 73 bp, short 88 bp; largest fifth: long 71, short -10). The short leg also carries unmodelled borrow fees.
 
-The 3 x 3 volatility-by-beta table at the end of the common section and the card figures all use this size-matched alpha. To reproduce the profile tables, point `PEAD_DATA_DIR` / `PEAD_RAW_EQUITY_DIR` at the corrected data vintage (the committed `data/` is pre-fix; see FIXES.md).
+The 3 x 3 volatility-by-beta table at the end of the common section and the card figures all use this size-matched alpha. The default `data/` is the corrected data vintage, so the profile tables reproduce with no environment variables (the pre-fix vintage is `data/_prefix_vintage/`; see FIXES.md).
 
 ## What every strategy has in common
 

@@ -1,0 +1,46 @@
+{\footnotesize
+\begin{adjustbox}{max width=\linewidth}
+\begin{tabular}{llrrrr}
+\toprule
+Experiment & Setting & Return & Sharpe & Max DD & Sharpe by era \\
+\midrule
+baseline (matches saved run) & calm\_weighted & 5.6\% & 1.24 & $-$17.5\% & 2.03 / 1.54 / 0.29 \\
+baseline (matches saved run) & calm\_rank\_tilt & 6.0\% & 1.47 & $-$13.6\% & 2.31 / 1.63 / 0.51 \\
+\midrule
+trim (calm\_weighted, default 0.15) & 0.05 & 5.6\% & 1.18 & $-$16.1\% & 1.78 / 1.54 / 0.34 \\
+trim (calm\_weighted, default 0.15) & 0.1 & 5.7\% & 1.20 & $-$16.6\% & 1.87 / 1.52 / 0.36 \\
+trim (calm\_weighted, default 0.15) & 0.2 & 5.5\% & 1.24 & $-$18.5\% & 2.02 / 1.48 / 0.39 \\
+trim (calm\_weighted, default 0.15) & 0.3 & 4.5\% & 1.17 & $-$15.8\% & 1.72 / 1.44 / 0.50 \\
+\midrule
+tilt exponent (calm\_weighted, default 1.0) & 0.5 & 5.3\% & 1.20 & $-$17.3\% & 2.00 / 1.51 / 0.22 \\
+tilt exponent (calm\_weighted, default 1.0) & 1.5 & 5.9\% & 1.27 & $-$17.7\% & 2.04 / 1.57 / 0.34 \\
+tilt exponent (calm\_weighted, default 1.0) & 2.0 & 6.1\% & 1.29 & $-$17.8\% & 2.03 / 1.59 / 0.39 \\
+tilt exponent (calm\_weighted, default 1.0) & 3.0 & 6.3\% & 1.29 & $-$18.4\% & 1.98 / 1.63 / 0.42 \\
+\midrule
+drop deciles (calm\_weighted) & D7 & 5.5\% & 1.22 & $-$18.7\% & 2.02 / 1.48 / 0.34 \\
+drop deciles (calm\_weighted) & D9 & 4.6\% & 1.11 & $-$17.4\% & 1.94 / 1.35 / 0.18 \\
+drop deciles (calm\_weighted) & D7+D9 & 4.5\% & 1.09 & $-$18.0\% & 1.96 / 1.28 / 0.21 \\
+\midrule
+drop short holds (calm\_weighted) & hold <= 40d & 4.5\% & 1.12 & $-$17.8\% & 2.08 / 1.63 / -0.14 \\
+drop short holds (calm\_weighted) & hold <= 60d & 3.3\% & 0.96 & $-$15.4\% & 1.75 / 1.55 / -0.21 \\
+\midrule
+1/ivol\^{}k (calm\_weighted) & 1 & 5.6\% & 1.24 & $-$17.5\% & 2.03 / 1.54 / 0.29 \\
+1/ivol\^{}k (calm\_weighted) & 1.5 & 5.7\% & 1.29 & $-$17.0\% & 2.13 / 1.56 / 0.34 \\
+1/ivol\^{}k (calm\_weighted) & 2 & 5.7\% & 1.34 & $-$16.2\% & 2.19 / 1.58 / 0.39 \\
+1/ivol\^{}k (calm\_weighted) & 3 & 5.7\% & 1.38 & $-$14.8\% & 2.23 / 1.54 / 0.50 \\
+1/ivol\^{}k (calm\_weighted) & 4 & 5.5\% & 1.38 & $-$13.8\% & 2.20 / 1.49 / 0.55 \\
+\midrule
+(1.02 - vol pct)\^{}k (calm\_rank\_tilt) & 1 & 6.0\% & 1.39 & $-$15.3\% & 2.20 / 1.64 / 0.42 \\
+(1.02 - vol pct)\^{}k (calm\_rank\_tilt) & 2 & 6.0\% & 1.47 & $-$13.6\% & 2.31 / 1.63 / 0.51 \\
+(1.02 - vol pct)\^{}k (calm\_rank\_tilt) & 3 & 5.8\% & 1.45 & $-$13.2\% & 2.28 / 1.56 / 0.53 \\
+\midrule
+sizing (calm\_rank\_tilt) & base unit 0.003, gross cap 2.5x & 6.0\% & 1.47 & $-$13.6\% & 2.31 / 1.63 / 0.51 \\
+sizing (calm\_rank\_tilt) & base unit 0.004, gross cap 2.5x & 6.3\% & 1.32 & $-$16.9\% & 2.10 / 1.56 / 0.29 \\
+sizing (calm\_rank\_tilt) & base unit 0.004, gross cap 4.0x & 7.2\% & 1.43 & $-$17.3\% & 2.25 / 1.66 / 0.44 \\
+sizing (calm\_rank\_tilt) & base unit 0.005, gross cap 4.0x & 8.1\% & 1.39 & $-$19.6\% & 2.17 / 1.66 / 0.38 \\
+sizing (calm\_rank\_tilt) & base unit 0.005, gross cap 6.0x & 8.1\% & 1.39 & $-$19.6\% & 2.17 / 1.66 / 0.38 \\
+sizing (calm\_rank\_tilt) & base unit 0.006, gross cap 6.0x & 8.8\% & 1.35 & $-$21.9\% & 2.08 / 1.67 / 0.33 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+}

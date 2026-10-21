@@ -282,14 +282,14 @@ that have a complete price path in the daily panel, on \stv{n_firms} firms (Tabl
 
 \begin{table}[t]\centering\small
 \caption{Sample construction. Counts are read from \texttt{data/ff\_coverage\_stats.csv},
-\texttt{data/option\_coverage\_stats.csv}, the saved options runs and the corrected event panel. The option-evidence rows use the pre-correction option tables.}\label{tab:sample}
+\texttt{data/option\_coverage\_stats.csv}, the saved options runs and the corrected event panel. The option-evidence rows are rebuilt on the point-in-time deciles (near-the-money entry contracts and forward prices from the OptionMetrics files).}\label{tab:sample}
 \begin{tabular}{lr}
 \toprule
 Earnings events in the signal sample (analyst-based surprise, point-in-time deciles), 1996--2013 & \stv{n_events} \\
 \quad with book equity (Compustat \texttt{ceq}$>0$, $\ge130$-day reporting lag) & \stv{n_events_bookeq} \\
 \quad with both size and book-to-market (characteristic-adjusted sample) & \stv{n_events_sizebm} \\
 \quad with a complete daily price path (equity backtests) & \stv{n_tradeable_events} \\
-Events with a selected near-the-money call (option evidence, pre-correction) & \stv{n_events_call_atm} \\
+Events with a selected near-the-money call (option evidence) & \stv{n_events_call_atm} \\
 \quad of which priced at $+60$ trading days & \stv{n_events_call_priced60} \\
 Events eligible for the Kelly options book (\sn{options_cap20}) & \stv{options_cap20.nelig} \\
 \quad of which funded & \stv{options_cap20.nsized} \\
@@ -385,7 +385,7 @@ size/value premium sitting on top of the drift (Table~\ref{tab:spreads}, Figure~
 
 \begin{table}[t]\centering
 \caption{Top-minus-bottom decile spread by horizon (\%), with quarter-clustered $t$-statistics.
-Equity columns use the full sample with point-in-time deciles. Option columns are from the pre-correction option tables (within-quarter deciles): they use the option-matched subsample
+Equity columns use the full sample with point-in-time deciles. Option columns also use point-in-time deciles and the option-matched subsample
 (\stv{Q_opt} quarters; \stv{Q_opt60} at $+60$d) and measure the percentage return on premium of a
 buy-and-hold near-the-money contract at its mid price.}\label{tab:spreads}
 \input{generated/tab_spreads.tex}
@@ -443,10 +443,10 @@ a given surprise is worth (Section~\ref{sec:calm}). Walk-forward filters that dr
 (Section~\ref{sec:calm}); the negative result is kept as \sn{volatility_filter} and
 \sn{calm_weighted_filter}.
 
-\subsection{The signal in option premia (mid prices, pre-correction deciles)}
+\subsection{The signal in option premia (mid prices)}
 
 If PEAD is a real mispricing of the stock, it should appear in the price of a leveraged claim on that
-stock. This section measures the signal in option premia at mid prices and with the earlier within-quarter deciles (the option tables were not rebuilt); it says nothing about what an option trader pays, which Section~\ref{sec:options} measures. For each event with listed options we take, on the announcement day, the call (put) with delta
+stock. This section measures the signal in option premia at mid prices and with the point-in-time deciles; it says nothing about what an option trader pays, which Section~\ref{sec:options} measures. For each event with listed options we take, on the announcement day, the call (put) with delta
 nearest $+0.5$ ($-0.5$) and at least 95 calendar days to expiry. We hold it at its mid price to each
 horizon. The call spread is $+$\stv{call60} of premium at 60 days ($t=\stv{call60.t}$) and the put
 spread is \stv{put60} ($t=\stv{put60.t}$), the mirror image (Table~\ref{tab:spreads},
@@ -454,7 +454,12 @@ Figure~\ref{fig:spreads}).
 
 \paragraph{Magnitude check.} The ratio of the 60-day call spread to the stock spread is
 $\stv{call60}/\stv{spread.mkt.h60}\approx\stv{amp_ratio}$. This is \stv{sent.ampband} the
-elasticity band $\Omega\in[\stv{omega_lo},\stv{omega_hi}]$ from equation~\eqref{eq:omega}. These are returns on premium between mid prices, before the bid/ask spread.
+elasticity band $\Omega\in[\stv{omega_lo},\stv{omega_hi}]$ from equation~\eqref{eq:omega}. These are returns on premium between mid prices, before the bid/ask spread. Table~\ref{tab:optpit} compares them with the earlier within-quarter deciles: the 60-day call spread moves from \stv{pre.call60} to \stv{call60}, the put spread from \stv{pre.put60} to \stv{put60} and the straddle spread from \stv{pre.straddle60} to \stv{str60}.
+
+\begin{table}[t]\centering
+\caption{Option-premium D10$-$D1 spreads (\% of premium, quarter-clustered $t$) under the earlier within-quarter ranking (committed \texttt{data/} tables) and under the point-in-time ranking (near-the-money contracts re-selected and re-priced from the OptionMetrics files; \texttt{docs/paper/cache/pit3/}).}\label{tab:optpit}
+\input{generated/tab_opt_pit_compare.tex}
+\end{table}
 
 \paragraph{Direction versus volatility.} A long straddle has roughly zero delta and isolates the
 non-directional component. Its 60-day spread is $+$\stv{str60} ($t=\stv{str60.t}$), a fraction
@@ -744,7 +749,7 @@ predicts such decay if arbitrage capital has grown; the data are consistent with
 
 \subsection{Is the calm edge a volatility effect or a beta effect?}\label{sec:calm}
 
-The volatility books rest on a finding about the signal (computed with the earlier within-quarter deciles, which this diagnostic was not rebuilt on): the D10$-$D1 spread is $+$\stv{vd.low} in the lowest tercile of stock-specific volatility, $+$\stv{vd.mid} in the middle and $+$\stv{vd.high} in the highest
+The volatility books rest on a finding about the signal (recomputed on the corrected data, \texttt{results/vol\_decile\_diagnostic\_summary.json}): the D10$-$D1 spread is $+$\stv{vd.low} in the lowest tercile of stock-specific volatility, $+$\stv{vd.mid} in the middle and $+$\stv{vd.high} in the highest
 ($t$-statistics \stv{vd.low.t}, \stv{vd.mid.t}, \stv{vd.high.t}; difference between the extremes $t=\stv{vd.diff.t}$). Volatility alone does not change average returns, so it works as a \emph{sizing} input, not a filter; the
 walk-forward filters \sn{volatility_filter} and \sn{calm_weighted_filter} (Sharpe \ssh{volatility_filter} and \ssh{calm_weighted_filter}) \stv{sent.filter_vs_sizing} sizing (\ssh{calm_weighted}).
 
@@ -770,9 +775,16 @@ gives (volatility \stv{drv.vol.bp} basis points per standard deviation with beta
 
 \subsection{Selecting the sizing: what was tried}\label{sec:tried}
 
-The volatility-sizing family was chosen from a search whose results are recorded in \texttt{docs/STRATEGIES.md} (\stv{trials.volrows} experiment rows, each with several parameter values: trim, tilt exponent, dropping deciles or holding cells,
-a small-cap tilt, inverse-volatility powers, the rank-based tilt, and larger base units). The relevant fact for this paper is that the search was run on the full sample, so \sn{calm_weighted}'s construction and \sn{calm_rank_tilt}'s exponent are in-sample
-choices, with the single split-sample check noted above. Section~\ref{sec:multiple} counts the trials that can be counted from files and deflates the Sharpe ratios accordingly.
+The volatility-sizing family was chosen from a search on the full sample. We re-ran that search on the corrected data and engine (\texttt{scripts/vol\_sweeps.py}, \stv{vs.total} settings counting the baselines; Table~\ref{tab:volsweeps}). With the
+corrections, the Sharpe ratio of the inverse-volatility book \stv{sent.ivolk} (from \stv{vs.ivolk.first.sh} at $k=1$ to \stv{vs.ivolk.best.sh} at $k=\stv{vs.ivolk.best.k}$); for the rank-based tilt the best exponent in the grid is $k=\stv{vs.rank.best.k}$ (Sharpe \stv{vs.rank.best.sh};
+\stv{vs.rank.k2.sh} at the chosen $k=2$); the Sharpe ratios of the trim and tilt-exponent variants range over \stv{vs.trim.range} and \stv{vs.tilt.range}; \stv{sent.vs.drop} (the best has a Sharpe ratio of \stv{vs.drop.max}); and the larger sizing variants of \sn{calm_rank_tilt} raise the return
+as far as \stv{vs.sizing.best.ret}. The search was run on the full sample, so \sn{calm_weighted}'s construction and \sn{calm_rank_tilt}'s exponent remain in-sample choices, with the single split-sample check noted above. Section~\ref{sec:multiple} counts the trials that can be counted from files and
+deflates the Sharpe ratios accordingly.
+
+\begin{table}[t]\centering
+\caption{The section's parameter search re-run on the corrected data and engine: return, Sharpe ratio, maximum drawdown and Sharpe ratio by era (1996--2001 / 2002--07 / 2008--13) for each setting. Source: \texttt{results/vol\_sweeps.csv}.}\label{tab:volsweeps}
+\input{generated/tab_vol_sweeps.tex}
+\end{table}
 
 %=====================================================================================
 \section{The options strategy}\label{sec:options}
@@ -981,13 +993,13 @@ Holding the volatility cost fixed, expected arithmetic return is concave in $b$,
 \end{proposition}
 
 Economically, as capital grows, the stocks with the highest drift saturate their liquidity limits first. Additional capital flows to larger, lower-drift names, while risk rises in proportion to gross exposure. The return of
-the \sn{balanced_leverage} construction at a six-times cap, swept over the base unit $b$ (Table~\ref{tab:frontier}, Figure~\ref{fig:frontiers}a; a pre-correction sweep file), \stv{sent.sweep_peak}; the maximum is at $b=\stv{sweep.peak.b}\times10^{-3}$ with a return of
+the \sn{balanced_leverage} construction at a six-times cap, swept over the base unit $b$ (Table~\ref{tab:frontier}, Figure~\ref{fig:frontiers}a), \stv{sent.sweep_peak}; the maximum is at $b=\stv{sweep.peak.b}\times10^{-3}$ with a return of
 \stv{sweep.peak.ret}, where \stv{sweep.peak.cap} of positions are volume-capped, and falls to \stv{sweep.last.ret} at $b=\stv{sweep.last.b}\times10^{-3}$ with \stv{sweep.last.cap} capped. The rule used to choose $b$ for the \sn{*_max}
-books (highest return subject to a Sharpe ratio of at least \stv{rule.sharpe} and a drawdown no worse than $-$\stv{rule.dd}) selects $b=\stv{sweep.rule.b}\times10^{-3}$ from this grid, in sample. \stv{sent.sweepnote}
+books (highest return subject to a Sharpe ratio of at least \stv{rule.sharpe} and a drawdown no worse than $-$\stv{rule.dd}) selects $b=\stv{sweep.rule.b}\times10^{-3}$ from this corrected grid, whereas the \sn{*_max} books keep the unit chosen before the corrections ($b=\stv{balanced_leverage_max.base}$ of NAV per unit weight); the chosen unit is therefore not what the rule would now select. \stv{sent.sweepnote}
 
 \begin{table}[t]\centering
-\caption{Equity capacity frontier: sweep over the base-unit fraction $b$ at a six-times gross cap (all other parameters fixed); the row used for \sn{balanced_leverage_max} is in bold. This is the pre-correction sweep, shown for the shape of the frontier only; the saved corrected run at the chosen unit earns \sret{balanced_leverage_max}. Source:
-\texttt{data/sweep\_aggressive\_strategy6.csv}.}\label{tab:frontier}
+\caption{Equity capacity frontier: sweep over the base-unit fraction $b$ at a six-times gross cap (all other parameters fixed); the row used for \sn{balanced_leverage_max} is in bold. Re-run on the corrected data and engine; the bold row reproduces the saved \sn{balanced_leverage_max} run. Source:
+\texttt{docs/paper/cache/pit2/capacity\_sweep.csv} (\texttt{scripts/capacity\_sweep.py}).}\label{tab:frontier}
 \input{generated/tab_frontier.tex}
 \end{table}
 
@@ -1018,10 +1030,10 @@ kurtosis $\hat\gamma_4$ of the returns:
 with Sharpe ratios in per-period units and $T$ the number of active days.
 
 \paragraph{How the trials were counted.} Every count is a count of entries in a committed file. For equity, $N=\stv{trials.eq}$: the \stv{trials.eq.runs} equity runs in \texttt{results/} (the \stv{n_registered_equity} registered strategies, with their pre-correction \texttt{*\_legacy} twins, which were trials too) plus the
-\stv{trials.eq.sweeprows} rows in the \stv{trials.eq.sweepfiles} sweep files \texttt{data/sweep\_*.csv} (base unit, liquidity cap, leverage and trim sweeps for the numbered designs). The standard deviation of their Sharpe ratios is
+\stv{trials.eq.sweeprows} rows in the \stv{trials.eq.sweepfiles} sweep files \texttt{data/sweep\_*.csv} (base unit, liquidity cap, leverage and trim sweeps for the numbered designs), plus \stv{trials.volsweeps} settings of the corrected volatility sweeps and \stv{trials.capsweep} of the corrected capacity sweep. The standard deviation of their Sharpe ratios is
 \stv{trials.eq.sd}. For options, $N=\stv{trials.op}$: the \stv{trials.op.runs} options runs in \texttt{results/} plus the \stv{trials.op.oldrows} rows of the \stv{trials.op.oldfiles} horizon-by-budget comparison files from before the correction (four constructions $\times$ six
-holding horizons); the standard deviation of their Sharpe ratios is \stv{trials.op.sd}, but across only the \stv{trials.op.n_corr} runs not under the original convention it is \stv{trials.op.sd_corr}. These counts are lower bounds. The experiment tables recorded in \texttt{docs/STRATEGIES.md}
-(\stv{trials.volrows} rows of several parameter values each) are not files with Sharpe ratios and are not counted, nor are discarded designs that left no file. Table~\ref{tab:dsrsens} therefore shows how the answer moves with $N$.
+holding horizons); the standard deviation of their Sharpe ratios is \stv{trials.op.sd}, but across only the \stv{trials.op.n_corr} runs not under the original convention it is \stv{trials.op.sd_corr}. These counts are lower bounds. The pre-correction experiment tables recorded in \texttt{docs/STRATEGIES.md}
+(\stv{trials.volrows} rows of several parameter values each) are not files with Sharpe ratios and are not counted separately (their corrected re-run is), nor are discarded designs that left no file. Table~\ref{tab:dsrsens} therefore shows how the answer moves with $N$.
 
 \begin{table}[t]\centering
 \caption{Probabilistic and deflated Sharpe ratios on active-period daily returns. $N$ is the counted number of trials; $\widehat{\mathrm{SR}}_0$ is the expected maximum Sharpe ratio under the null for that $N$ and the dispersion of the counted trials;
@@ -1117,7 +1129,7 @@ We list these without softening. Each is either a reason realized performance wo
 \item \textbf{Sample period and decay.} All results are for 1996--2013, and alpha per dollar was lower in the last era in \stv{era.all.fade.n} of nine profiled books (to between \stv{era.all.CA.min} and \stv{era.all.CA.max} of its first-era level). A data extension and a post-publication
       decay adjustment \citep{McLeanPontiff2016} are required before any capital is allocated.
 \item \textbf{Residual look-ahead.} The corrections remove the decile look-ahead and the full-sample decay-day fit, not every use of future information: the hold-period back-off thresholds, the leave-one-out risk benchmark and the weight normalisation still see the full sample, and the
-      signal tables of Sections~\ref{sec:data}--\ref{sec:evidence} that depend on the option chain or on volatility terciles (option spreads, the volatility diagnostic) were not rebuilt on point-in-time deciles.
+      option-premium evidence of Section~\ref{sec:evidence}, although rebuilt on point-in-time deciles, rests on near-the-money contracts valued at the mid.
 \item \textbf{Borrow fees and financing (equity).} Neither is modelled, and the short leg is small-cap-heavy. The short side averages \stv{calm_weighted.short_avg}$\times$ NAV for \sn{calm_weighted}, so each 1\% a year of borrow cost removes \stv{calm_weighted.borrow_1pct} of
       return; a fee of \stv{calm_weighted.borrow_breakeven} would remove all of it, and a uniform 5\% would leave \stv{calm_weighted.ret_at5} (for \sn{balanced_leverage}: \stv{balanced_leverage.ret_at5}). Hard-to-borrow names cost more, and the model of
       Section~\ref{sec:mechanism} predicts they are the names with the most drift. Gross exposure above NAV and the stacked blend multiples also need financing.
@@ -1184,7 +1196,7 @@ model design, and the modeling assumptions in Section~\ref{sec:limits} omit cost
 \paragraph{Holding windows.} Per-cell decay days (Section~\ref{sec:decay}), from \stv{decay.min} to \stv{decay.max} trading days.
 \paragraph{Runs.} The \stv{n_runs} saved runs in \texttt{results/} were produced between \stv{runs.first} and \stv{runs.last} at git revision(s) \stv{runs.revs} under pandas \stv{runs.pandas}; results reproduce only under the pinned pandas 3 (see \texttt{requirements.txt}). \texttt{results/<name>} holds the run with all four corrections of \texttt{docs/FIXES.md}; \texttt{*\_legacy} (equity) and \texttt{*\_prefix\_fix} (options, blends) keep the pre-correction numbers, and \texttt{*\_midfill} the mid-fill options references.
 
-\paragraph{Data vintages.} The committed \texttt{data/} tables are the pre-correction vintage (within-quarter deciles). The corrected vintage was built in an isolated directory (\texttt{PEAD\_FIXED\_DATA}, default \texttt{../vintage\_fixed/data} beside the worktree) and is not committed. From it the builder recomputes the point-in-time decile tables and subsample spreads (Fama--MacBeth means, validated by reproducing the committed tables exactly from the old event file) and copies the size/book-to-market tables and the decay-day table into \texttt{docs/paper/cache/pit/}. The attribution ladders are copied from the fixes work into \texttt{docs/paper/cache/ladders/} with a provenance note. The option-spread tables, the volatility diagnostic and the SUE-reversal summary exist only in the pre-correction vintage and are labelled as such.
+\paragraph{Data vintages.} The committed \texttt{data/} tables are the pre-correction vintage (within-quarter deciles). The corrected vintage was built in an isolated directory (\texttt{PEAD\_FIXED\_DATA}, default \texttt{../vintage\_fixed/data} beside the worktree) and is not committed. From it the builder recomputes the point-in-time decile tables and subsample spreads (Fama--MacBeth means, validated by reproducing the committed tables exactly from the old event file) and copies the size/book-to-market tables and the decay-day table into \texttt{docs/paper/cache/pit/}. The attribution ladders are copied from the fixes work into \texttt{docs/paper/cache/ladders/} with a provenance note. The volatility diagnostic and the volatility sweeps are read from \texttt{results/} (recomputed on the corrected vintage). The SUE-reversal summary and the capacity sweep were recomputed on the corrected vintage in a separate folder (\texttt{PEAD\_PAPER\_VINTAGE}, default \texttt{../vintage\_paper}; \texttt{pead/research/equity\_strategy\_history/28\_sue\_reversal\_test.py} and \texttt{scripts/capacity\_sweep.py}) and are committed in \texttt{docs/paper/cache/pit2/}. The option-spread and option-coverage tables were rebuilt on the corrected deciles by running the near-the-money entry-contract and forward-price stages (\texttt{pead/prep/options/select\_entry\_contracts.py}, \texttt{forward\_option\_prices.py}) and \texttt{37\_decile\_summary\_options.py} against the OptionMetrics files in the same isolated folder; the three output CSVs are committed in \texttt{docs/paper/cache/pit3/}.
 
 \paragraph{Where every number comes from.}\begin{sloppypar}
 Per-book statistics: \texttt{results/<name>/summary.json} and \texttt{daily.csv.gz} (realized leverage, active-period Sharpe, calendar returns, correlations, deflated Sharpe ratios). Leaderboard checks: \texttt{results/leaderboard.json} and \texttt{leaderboard.md}.
