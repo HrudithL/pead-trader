@@ -18,7 +18,7 @@ OPPRCD_COLS = ["secid", "date", "exdate", "cp_flag", "strike_price", "best_bid",
 
 
 def scan_year_for_keys(year, needed_keys, columns=OPPRCD_COLS, batch_size=1_000_000,
-                        max_retries=4, retry_wait_sec=15):
+                        max_retries=4, retry_wait_sec=15, optionmetrics_dir=None):
     """Stream opprcd{year}.parquet in batches, keeping only rows whose (secid, date) pair
     appears in needed_keys (a DataFrame with columns ['secid','date']). Low peak memory: only
     one batch (~1M rows x len(columns)) is materialized at a time before being filtered down.
@@ -31,7 +31,7 @@ def scan_year_for_keys(year, needed_keys, columns=OPPRCD_COLS, batch_size=1_000_
     pipeline section of the README). Retrying the whole year's scan from scratch after a short
     pause clears it every time it's been observed; this matters most for an unattended multi-day
     run where nobody is there to notice and re-launch it."""
-    path = f"{OM_DIR}/opprcd{year}.parquet"
+    path = f"{optionmetrics_dir or OM_DIR}/opprcd{year}.parquet"
     keys = needed_keys[["secid", "date"]].drop_duplicates()
     last_err = None
     for attempt in range(1, max_retries + 1):

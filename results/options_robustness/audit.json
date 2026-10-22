@@ -1,0 +1,35 @@
+{
+  "20": {
+    "input": 113927,
+    "invalid_calendar": 938,
+    "coverage_gap": 111,
+    "missing_entry_ask": 0,
+    "missing_exit_bid": 2437,
+    "expiry_before_exit": 110,
+    "missing_contract_metadata": 0,
+    "zero_exit_bid": 8279,
+    "eligible": 112878
+  },
+  "40": {
+    "input": 113927,
+    "invalid_calendar": 2469,
+    "coverage_gap": 955,
+    "missing_entry_ask": 0,
+    "missing_exit_bid": 5417,
+    "expiry_before_exit": 953,
+    "missing_contract_metadata": 0,
+    "zero_exit_bid": 12995,
+    "eligible": 110503
+  },
+  "60": {
+    "input": 113927,
+    "invalid_calendar": 2571,
+    "coverage_gap": 2339,
+    "missing_entry_ask": 0,
+    "missing_exit_bid": 7238,
+    "expiry_before_exit": 2339,
+    "missing_contract_metadata": 0,
+    "zero_exit_bid": 18403,
+    "eligible": 109017
+  }
+}
