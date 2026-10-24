@@ -67,8 +67,8 @@ The strongest *research candidate* is the 60-day, low-volatility, moderately OTM
 From the retained worktree, use its `.venv` and point `--data-dir` to the existing derived data in the original checkout:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pead.research.options_robustness --data-dir 'C:\Users\hrudi\Documents\BEI\PEAD_Trading\data' --output-dir 'results\options_robustness'
-.\.venv\Scripts\python.exe -m pead.research.options_expiry_grid --data-dir 'C:\Users\hrudi\Documents\BEI\PEAD_Trading\data' --optionmetrics-dir 'D:\OptionMetrics\parquet' --output-dir 'results\options_expiry_grid_final'
+ .\.venv\Scripts\python.exe -m pead.research.options_robustness --data-dir $env:PEAD_DATA_DIR --output-dir 'results\options_robustness'
+ .\.venv\Scripts\python.exe -m pead.research.options_expiry_grid --data-dir $env:PEAD_DATA_DIR --optionmetrics-dir $env:OPTIONMETRICS_DIR --output-dir 'results\options_expiry_grid_final'
 ```
 
 The grid streams yearly OptionMetrics files in place and writes only aggregate tables; it does not copy raw options data. Keep this worktree: deleting it may erase future ignored `data/` contents. Local compute completed the scan, so a Google Cloud VM is not required; a VM would also lack the physically attached drive without a licensed transfer or remote mount.

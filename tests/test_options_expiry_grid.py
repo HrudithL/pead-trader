@@ -3,9 +3,46 @@ import pandas as pd
 from pead.research.options_expiry_grid import (
     select_entry_grid, attach_exit_dates, scan_exit_quotes, aggregate_outcomes,
     load_underlying_spot, paired_cell_comparisons, portfolio_outcomes,
+    exclude_duplicate_event_dates, prepare_strategy_events,
 )
 from pead.prep.options.lib.options import scan_year_for_keys
 
+
+def test_duplicate_event_dates_are_excluded_and_audited():
+    date = pd.Timestamp("2003-04-01")
+    events = pd.DataFrame({
+        "secid": [1, 1, 2, 2, 3],
+        "day0_date": [date] * 5,
+        "decile": [9, 1, 1, 2, 10],
+    })
+    clean, audit = exclude_duplicate_event_dates(events)
+    assert clean.secid.tolist() == [3]
+    assert audit["input_events"] == 5
+    assert audit["duplicate_event_date_groups"] == 2
+    assert audit["duplicate_extra_rows"] == 2
+    assert audit["duplicate_event_rows_excluded"] == 4
+    assert audit["opposing_signal_groups"] == 1
+    assert audit["multiple_decile_groups"] == 2
+
+
+def test_strategy_preparation_excludes_full_source_collision_before_decile_filter():
+    date = pd.Timestamp("2003-04-01")
+    events = pd.DataFrame({
+        "secid": [1, 1, 2],
+        "day0_date": [date, date, date],
+        "decile": [9, 5, 1],
+    })
+
+    clean, audit = prepare_strategy_events(events, years=[2003])
+
+    assert clean[["secid", "decile"]].to_records(index=False).tolist() == [(2, 1)]
+    assert audit["input_events"] == 3
+    assert audit["duplicate_event_date_groups"] == 1
+    assert audit["duplicate_event_rows_excluded"] == 2
+    assert audit["eligible_signal_rows_before_exclusion"] == 2
+    assert audit["eligible_signal_rows_excluded_by_duplicates"] == 1
+    assert audit["eligible_signal_rows_after_exclusion"] == 1
+    assert audit["opposing_signal_groups"] == 0
 
 def test_entry_grid_uses_direction_delta_expiry_and_live_quotes():
     date = pd.Timestamp("2003-04-01")

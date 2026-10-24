@@ -1,0 +1,2 @@
+direction,dte_target,delta_target,hold,funded_trades,premium_paid,net_pnl,roi_on_premium,calendar_cagr_from_settlements,quoted_zero_bid_funded,missing_bid_funded
+C,120,0.5,60,6016,74270175.5,4217157.5,0.05678130516872146,0.02274268212621866,779,47

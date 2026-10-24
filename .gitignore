@@ -47,6 +47,7 @@ meta/out/
 # Strategy-framework outputs that are large and fully regenerable
 results/*/positions.parquet
 data/cache/
+data/factor/
 
 # test/tool caches, mock-run outputs, live run log, LaTeX build files
 .pytest_cache/
