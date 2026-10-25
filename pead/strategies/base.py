@@ -42,6 +42,18 @@ class RunContext:
     def __init__(self, mock: bool = False):
         self.mock = mock
 
+    def earnings_options(self):
+        from pead.common.paths import DATA_DIR
+        from pead.earnings_options.cli import load_prepared
+        cache = DATA_DIR / "selective_earnings"
+        years = sorted(int(p.stem.split("_")[-1]) for p in cache.glob("prepared_*.json"))
+        if not years:
+            raise FileNotFoundError("Prepare inputs with python -m pead earnings-options prepare first")
+        if years[-1] >= 2012:
+            raise ValueError("Final holdout cannot be consumed through the generic strategy runner")
+        e, q, b, _ = load_prepared(cache, years[0], years[-1])
+        return e, q, b
+
     def equity(self) -> EquityUniverse:
         return load_equity_universe()
 

@@ -15,6 +15,9 @@ import sys
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "earnings-options":
+        from pead.earnings_options.cli import main as earnings_main
+        return earnings_main(argv[1:])
     if argv and argv[0] == "paper":
         from pead.reporting.paper import main as paper_main
         return paper_main(argv[1:])
