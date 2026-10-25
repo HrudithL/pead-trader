@@ -75,3 +75,6 @@ data/_prefix_vintage/
 
 # Independent earnings-options research caches (never remove with worktree cleanup)
 data/selective_earnings/
+
+# Version-two raw-entry research cache; preserve with worktree
+data/selective_earnings_v2/

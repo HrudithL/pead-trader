@@ -27,19 +27,21 @@ class Config:
     require_price_edge: bool = True
     min_edge_fraction: float = .05
     strict: bool = True
+    expiry_buffer_days: int = 7
+    condor_stops: bool = True
     sleeves: tuple = ("directional", "condor", "reversal")
 
     def __post_init__(self):
         numbers=[v for v in asdict(self).values() if isinstance(v,(float,int))]
         if not all(np.isfinite(x) for x in numbers):
             raise ValueError("config must be finite")
-        if self.initial_nav<=0 or self.hold_sessions<1 or self.commission<0:
+        if self.initial_nav<=0 or self.hold_sessions<1 or self.commission<0 or self.expiry_buffer_days<1:
             raise ValueError("invalid capital, holding period or commission")
         for name in ("directional_risk","condor_risk","reversal_risk","issuer_risk",
                      "sector_risk","aggregate_risk","cohort_risk","participation"):
             if not 0<getattr(self,name)<=1:
                 raise ValueError(f"invalid risk fraction: {name}")
-        if not 0<self.rank_tail<.5 or self.iv_rv_threshold<=0 or self.min_adv<0 or self.min_edge_fraction<0:
+        if not 0<self.rank_tail<.5 or self.iv_rv_threshold<0 or self.min_adv<0 or self.min_edge_fraction<0:
             raise ValueError("invalid signal parameters")
         if not self.sleeves or set(self.sleeves)-{"directional","condor","reversal"}:
             raise ValueError("unsupported sleeves")
@@ -56,7 +58,7 @@ class Result:
     diagnostics: dict
 
 
-def run(events, quotes, benchmark, config=Config()):
+def run(events, quotes, benchmark, config=Config(), selector=None, selector_context=False):
     """Entries and exits occur at EOD; same-close fills use lagged liquidity only.
 
     Benchmark date rows are the authoritative session calendar. Missing quotes are
@@ -87,10 +89,14 @@ def run(events, quotes, benchmark, config=Config()):
         raise ValueError("event dates must be nonmissing")
     if not e.entry_date.isin(b.date).all():
         raise ValueError("entry date outside calendar")
-    qgroups={k:v for k,v in q.groupby(["date","secid"],sort=False)}
+    quote_lookup={(r.date,r.secid,int(r.optionid)):r for r in q.itertuples(index=False)}
+    entry_keys=pd.MultiIndex.from_frame(e[["entry_date","secid"]].rename(columns={"entry_date":"date"}))
+    entry_quotes=q[pd.MultiIndex.from_frame(q[["date","secid"]]).isin(entry_keys)]
+    qgroups={k:v for k,v in entry_quotes.groupby(["date","secid"],sort=False)}
     egroups={k:v for k,v in e.groupby("entry_date",sort=False)}
     calendar=b.date.tolist()
     open_book=[]; trades=[]; skips=[]; daily=[]
+    entry_leg_usage={}
     cash=float(cfg.initial_nav); prior_nav=cash
     diag=dict(missing_marks=0,execution_valid=True,unverified_events=0,
               assignment_unverified=0,calendar_unverified=0,forced_reserves=0,
@@ -101,20 +107,22 @@ def run(events, quotes, benchmark, config=Config()):
 
     def mark(position,date):
         nonlocal diag
-        frame=qgroups.get((date,position["secid"]))
-        value=0.
-        if frame is not None:
-            frame=frame.set_index("optionid")
-            valid=True
-            for leg in position["structure"].legs:
-                if leg.optionid not in frame.index:
-                    valid=False; break
-                row=frame.loc[leg.optionid]
-                if not (np.isfinite(row.bid) and np.isfinite(row.ask) and 0<=row.bid<=row.ask and row.standard_contract):
-                    valid=False; break
-                value+=leg.quantity*(row.bid if leg.quantity>0 else row.ask)
-            if valid:
-                return value*100*position["contracts"],False
+        value=0.;valid=True
+        for leg in position["structure"].legs:
+            row=quote_lookup.get((date,position["secid"],leg.optionid))
+            if row is None or not (np.isfinite(row.bid) and np.isfinite(row.ask) and 0<=row.bid<=row.ask and row.standard_contract):
+                valid=False;break
+            current_factor=float(getattr(row,"cfadj",1.))
+            entry_factor=position["adjustment_factors"].get(leg.optionid,1.)
+            ratio=current_factor/entry_factor
+            if not np.isfinite(ratio) or ratio<=0:
+                valid=False;break
+            value+=leg.quantity*(row.bid if leg.quantity>0 else row.ask)*ratio
+        if valid:
+            st=position["structure"]
+            upper=abs(st.legs[0].strike-st.legs[1].strike) if st.cashflow<0 else 0.
+            if value>upper+.01:valid=False
+        if valid:return value*100*position["contracts"],False
         diag["missing_marks"]+=1
         diag["execution_valid"]=False
         s=position["structure"]
@@ -133,7 +141,7 @@ def run(events, quotes, benchmark, config=Config()):
             if idx>=p["exit_idx"]: exit_reason="time"
             if date>=p["expiry_stop"]: exit_reason="expiry_buffer"
             if pd.notna(p["scheduled_date"]) and date>=p["scheduled_stop"]: exit_reason="known_next_earnings"
-            if p["sleeve"]=="condor":
+            if p["sleeve"]=="condor" and cfg.condor_stops:
                 pnl=p["entry_cashflow"]+liquidation-p["entry_fee"]
                 credit=p["entry_cashflow"]
                 if pnl>=.5*credit: exit_reason="profit"
@@ -145,7 +153,8 @@ def run(events, quotes, benchmark, config=Config()):
                 trades.append({k:p[k] for k in ("event_id","secid","sector","sleeve","entry_date","contracts","entry_cashflow","entry_fee","risk")}
                     |dict(exit_date=date,exit_value=value,exit_fee=p["exit_fee"],pnl=p["entry_cashflow"]+liquidation-p["entry_fee"],
                           reason=exit_reason,exit_is_worst_loss_reserve=missing,age_sessions=age,
-                          optionids=",".join(str(x.optionid) for x in p["structure"].legs)))
+                          optionids=",".join(str(x.optionid) for x in p["structure"].legs),
+                          selection_key=p.get("selection_key"),direction=p.get("direction")))
             else:
                 retained.append(p)
         open_book=retained
@@ -154,7 +163,8 @@ def run(events, quotes, benchmark, config=Config()):
         if nav<=0: raise ValueError("portfolio insolvent")
         today=egroups.get(date)
         if today is not None and idx<len(b)-1:
-            for row in today.sort_values("event_id").itertuples():
+            ordered=today.sort_values(["entry_priority","event_id"],ascending=[False,True]) if "entry_priority" in today else today.sort_values("event_id")
+            for row in ordered.itertuples():
                 flags=("timing_verified","consensus_verified","identity_verified","corporate_actions_verified")
                 verified=all(getattr(row,k,False) is True or getattr(row,k,False)==True for k in flags)
                 for sleeve in cfg.sleeves:
@@ -177,7 +187,9 @@ def run(events, quotes, benchmark, config=Config()):
                             if not np.isfinite(row.rank) or not np.isfinite(row.reaction):
                                 skip(row,sleeve,"missing_signal");continue
                             direction=1 if row.rank>=1-cfg.rank_tail else -1 if row.rank<=cfg.rank_tail else 0
-                            if not direction or direction*row.reaction<=0:
+                            learned=selector is not None and hasattr(row,"trade_direction")
+                            if learned:direction=int(row.trade_direction)
+                            if direction not in (-1,1) or (not learned and direction*row.reaction<=0):
                                 skip(row,sleeve,"unconfirmed_direction");continue
                         else:
                             if not np.isfinite(row.rv) or row.rv<=0:
@@ -187,10 +199,48 @@ def run(events, quotes, benchmark, config=Config()):
                     if ch is None:
                         skip(row,sleeve,"no_chain");continue
                     ch=ch[ch.standard_contract.eq(True)]
-                    structure=select_structure(ch,sleeve,direction)
+                    choice_cap=None
+                    planned_exit=None
+                    selection_key=None
+                    if selector is None:
+                        structure=select_structure(ch,sleeve,direction)
+                        edge=getattr(row,sleeve+"_edge",np.nan)
+                    else:
+                        if selector_context:
+                            fraction=getattr(cfg,sleeve+"_risk")
+                            room=min(nav*fraction,
+                                nav*cfg.aggregate_risk-sum(p["risk"] for p in open_book),
+                                nav*cfg.issuer_risk-sum(p["risk"] for p in open_book if p["secid"]==row.secid),
+                                nav*cfg.sector_risk-sum(p["risk"] for p in open_book if p["sector"]==row.sector),
+                                nav*cfg.cohort_risk-sum(p["risk"] for p in open_book if p["entry_date"]==date))
+                            context=dict(nav=nav,risk_budget=room,free_cash=cash-sum(p["collateral"] for p in open_book),
+                                         commission=cfg.commission,used_lots=entry_leg_usage,date=date)
+                            choice=selector(ch,sleeve,direction,row,context)
+                        else:choice=selector(ch,sleeve,direction,row)
+                        if choice is None:structure,edge,choice_cap=None,np.nan,0
+                        else:
+                            structure,edge,choice_cap=choice[:3]
+                            planned_exit=pd.Timestamp(choice[3]) if len(choice)>3 else None
+                            if len(choice)>4:direction=int(choice[4])
+                            if len(choice)>5:selection_key=str(choice[5])
                     if structure is None:
                         skip(row,sleeve,"no_liquid_structure");continue
-                    edge=getattr(row,sleeve+"_edge",np.nan)
+                    if selector is not None:
+                        actual=0.
+                        for leg in structure.legs:
+                            matched=ch[ch.optionid==leg.optionid]
+                            if len(matched)!=1:raise ValueError("selector references unquoted contract")
+                            quote=matched.iloc[0]
+                            if not (np.isclose(quote.bid,leg.bid) and np.isclose(quote.ask,leg.ask)):
+                                raise ValueError("selector entry cashflow uses mismatched quotes")
+                            actual-=leg.quantity*(quote.ask if leg.quantity>0 else quote.bid)
+                        if not np.isclose(actual,structure.cashflow):
+                            raise ValueError("selector entry cashflow differs from quoted execution")
+                        width=max(x.strike for x in structure.legs)-min(x.strike for x in structure.legs)
+                        if sleeve=="condor":
+                            width=max(structure.legs[1].strike-structure.legs[0].strike,structure.legs[3].strike-structure.legs[2].strike)
+                        risk=width-actual if actual>0 else -actual
+                        if risk<=0 or not np.isclose(risk,structure.max_loss):raise ValueError("selector maximum loss differs from payoff")
                     if cfg.require_price_edge and (not np.isfinite(edge) or edge<cfg.min_edge_fraction):
                         skip(row,sleeve,"forecast_does_not_cover_option_cost");continue
                     if sleeve=="condor":
@@ -212,8 +262,9 @@ def run(events, quotes, benchmark, config=Config()):
                     collateral_unit=(structure.max_loss+structure.cashflow)*100 if structure.cashflow>0 else 0.
                     free=cash-sum(p["collateral"] for p in open_book)
                     cash_unit=collateral_unit-structure.cashflow*100+2*fee
-                    capacity=int(min(x.volume for x in structure.legs)*cfg.participation)
-                    contracts=max(0,min(int(budget//risk_unit),int(free//cash_unit),capacity))
+                    capacity=int(min(x.volume for x in structure.legs)*cfg.participation) if choice_cap is None else int(choice_cap)
+                    available=max(0,min(capacity-entry_leg_usage.get((date,leg.optionid),0) for leg in structure.legs))
+                    contracts=max(0,min(int(budget//risk_unit),int(free//cash_unit),available))
                     if contracts<1:
                         skip(row,sleeve,"risk_cash_or_capacity");continue
                     if not verified:
@@ -225,16 +276,25 @@ def run(events, quotes, benchmark, config=Config()):
                     if not known:
                         scheduled=pd.NaT
                         diag["calendar_unverified"]+=1;diag["execution_valid"]=False
-                    expiry_stop=structure.expiry-pd.Timedelta(days=7)
+                    expiry_stop=structure.expiry-pd.Timedelta(days=cfg.expiry_buffer_days)
                     if sleeve=="reversal":
                         # Quotes after the actual release may be used only as exits.
                         ex=int(np.searchsorted(calendar,row.release_date,side="right"))
                         expiry_stop=structure.expiry-pd.Timedelta(days=1)
                         scheduled=pd.NaT
-                    else: ex=idx+cfg.hold_sessions
+                    else:
+                        ex=idx+cfg.hold_sessions
+                        if planned_exit is not None:
+                            if planned_exit<=date or planned_exit>structure.expiry or planned_exit not in calendar:
+                                raise ValueError("invalid predeclared exit date")
+                            ex=int(np.searchsorted(calendar,planned_exit,side="left"))
                     if expiry_stop<=date:
                         skip(row,sleeve,"insufficient_expiry_buffer");continue
+                    factors={int(r.optionid):float(getattr(r,"cfadj",1.)) for r in ch.itertuples() if int(r.optionid) in {x.optionid for x in structure.legs}}
+                    if any(not np.isfinite(v) or v<=0 for v in factors.values()):
+                        skip(row,sleeve,"invalid_adjustment_factor");continue
                     p=dict(event_id=row.event_id,secid=row.secid,sector=row.sector,sleeve=sleeve,
+                           adjustment_factors=factors,selection_key=selection_key,direction=direction,
                            structure=structure,contracts=contracts,risk=risk_unit*contracts,
                            collateral=collateral_unit*contracts,entry_date=date,entry_idx=idx,exit_idx=ex,
                            expiry_stop=expiry_stop,scheduled_date=scheduled,
@@ -242,6 +302,9 @@ def run(events, quotes, benchmark, config=Config()):
                            entry_cashflow=structure.cashflow*100*contracts,entry_fee=fee*contracts,exit_fee=fee*contracts)
                     cash+=p["entry_cashflow"]-p["entry_fee"]
                     open_book.append(p)
+                    for leg in structure.legs:
+                        key=(date,leg.optionid)
+                        entry_leg_usage[key]=entry_leg_usage.get(key,0)+contracts*abs(leg.quantity)
                     nav=cash+sum(mark(x,date)[0]-x["exit_fee"] for x in open_book)
         nav=cash+sum(mark(p,date)[0]-p["exit_fee"] for p in open_book)
         collateral=sum(p["collateral"] for p in open_book)

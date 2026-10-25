@@ -1,0 +1,45 @@
+{
+  "profiles": {
+    "cautious": {
+      "min_events": 100,
+      "z": 1.645,
+      "risk": 0.005,
+      "aggregate": 0.25
+    },
+    "balanced": {
+      "min_events": 50,
+      "z": 1.0,
+      "risk": 0.005,
+      "aggregate": 0.25
+    },
+    "opportunistic": {
+      "min_events": 50,
+      "z": 0.0,
+      "risk": 0.01,
+      "aggregate": 0.4
+    }
+  },
+  "capital_levels": [
+    100000,
+    1000000
+  ],
+  "commission_per_leg_side": 0.65,
+  "execution": "ask buys, bid sales; quoted small-lot capacity is an assumption",
+  "prediction": "quarter-start ridge on prior matured actual quote payoffs, four-year rolling window",
+  "holding_hypotheses": [
+    "10_sessions",
+    "20_sessions",
+    "carry_up_to45_sessions"
+  ],
+  "features": [
+    "quoted_structure_friction",
+    "IV/RV",
+    "earnings_surprise/announcement_response_alignment",
+    "prior_market_regime"
+  ],
+  "selection": "validation 2005\u20132007; subsequent development test 2008\u20132010",
+  "discovery": "1999\u20132004",
+  "final_holdout": "2012\u20132013 unevaluated",
+  "research_target": "CAGR >=12% and > same-date SPY plus 2pp; adequate sample, Sharpe and drawdown",
+  "source_preservation": "all original and prototype data and worktrees retained"
+}
