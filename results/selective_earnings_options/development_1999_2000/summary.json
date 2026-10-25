@@ -1,0 +1,106 @@
+{
+  "strategy": {
+    "cagr": -0.0015292693323452067,
+    "sharpe": -0.478906693540612,
+    "max_drawdown": -0.004487057019776919
+  },
+  "benchmark": {
+    "cagr": 0.04247280077749016,
+    "sharpe": 0.3027167331159549,
+    "max_drawdown": -0.17119498522541154
+  },
+  "alpha": -0.0017764002496799879,
+  "bootstrap": {
+    "cagr": {
+      "p025": -0.004386041708413136,
+      "p50": -0.0014105004337538474,
+      "p975": 0.0007848624329481351
+    },
+    "sharpe": {
+      "p025": -0.9800756583918443,
+      "p50": -0.4527705392076522,
+      "p975": 0.6035570759664741
+    },
+    "max_drawdown": {
+      "p025": -0.009297286383601782,
+      "p50": -0.003971637324027166,
+      "p975": -0.0010026507076758007
+    },
+    "alpha": {
+      "p025": -0.005140998831283107,
+      "p50": -0.0016241506284477658,
+      "p975": 0.000772388434749496
+    }
+  },
+  "bootstrap_alpha_nonpositive": 0.883,
+  "gates": {
+    "execution_valid": false,
+    "benchmark_total_return": true,
+    "minimum_three_years": false,
+    "cagr": false,
+    "sharpe": false,
+    "alpha": false,
+    "alpha_confidence": false,
+    "drawdown": true,
+    "canonical_provenance": false,
+    "minimum_100_trades": false,
+    "multifactor_and_issuer_cluster_inference": false,
+    "genuine_untouched_holdout": false
+  },
+  "accepted": false,
+  "sessions": 504,
+  "method": "paired circular three-month blocks; market alpha only, not multifactor alpha",
+  "diagnostics": {
+    "missing_marks": 0,
+    "execution_valid": false,
+    "unverified_events": 3,
+    "assignment_unverified": 3,
+    "calendar_unverified": 3,
+    "forced_reserves": 0,
+    "config_hash": "971168006dd48609",
+    "strict": false
+  },
+  "trade_count": 3,
+  "skip_counts": {
+    "underlying_liquidity": 42633,
+    "no_chain": 4133,
+    "no_asof_pre_event_schedule": 3697,
+    "unconfirmed_direction": 3207,
+    "no_liquid_structure": 24,
+    "forecast_does_not_cover_option_cost": 13,
+    "missing_rv": 13,
+    "iv_not_rich": 1
+  },
+  "parameters": {
+    "initial_nav": 1000000,
+    "hold_sessions": 20,
+    "commission": 0.65,
+    "directional_risk": 0.003,
+    "condor_risk": 0.002,
+    "reversal_risk": 0.002,
+    "issuer_risk": 0.01,
+    "sector_risk": 0.05,
+    "aggregate_risk": 0.25,
+    "cohort_risk": 0.05,
+    "participation": 0.05,
+    "rank_tail": 0.1,
+    "iv_rv_threshold": 1.3,
+    "min_adv": 25000000,
+    "require_price_edge": true,
+    "min_edge_fraction": 0.05,
+    "strict": false,
+    "sleeves": [
+      "directional",
+      "condor",
+      "reversal"
+    ]
+  },
+  "source_fingerprints": [
+    "82a1c5668d47f5d61d114e55ea688c4d5297dddb989cdc4b7a7badd9793f9d81",
+    "a47bac1b60934bb6c2fda6518f8d9a5254a6da06d23fc8caf9fd1238ebe3c4e1"
+  ],
+  "pandas_version": "3.1.0",
+  "sleeve_pnl": {
+    "directional": -3056.2
+  }
+}

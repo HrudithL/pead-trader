@@ -1,0 +1,104 @@
+[
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd1996.parquet",
+    "bytes": 667856968,
+    "mtime_ns": 1776296086110000000,
+    "rows": 15765291
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd1997.parquet",
+    "bytes": 919319932,
+    "mtime_ns": 1776296350330000000,
+    "rows": 23094527
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd1998.parquet",
+    "bytes": 1100866402,
+    "mtime_ns": 1776296684160000000,
+    "rows": 28072031
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd1999.parquet",
+    "bytes": 1246537994,
+    "mtime_ns": 1776297919740000000,
+    "rows": 31507466
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd2000.parquet",
+    "bytes": 1464608126,
+    "mtime_ns": 1776298500800000000,
+    "rows": 39360195
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd2001.parquet",
+    "bytes": 1204287935,
+    "mtime_ns": 1776298915640000000,
+    "rows": 33903858
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd2002.parquet",
+    "bytes": 1130431347,
+    "mtime_ns": 1776299315620000000,
+    "rows": 32559023
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd2003.parquet",
+    "bytes": 1109553692,
+    "mtime_ns": 1776299688670000000,
+    "rows": 30798708
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd2004.parquet",
+    "bytes": 1322281979,
+    "mtime_ns": 1776300152930000000,
+    "rows": 36885401
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd2005.parquet",
+    "bytes": 1468775716,
+    "mtime_ns": 1776300867440000000,
+    "rows": 42279728
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd2006.parquet",
+    "bytes": 1678130998,
+    "mtime_ns": 1776314950680000000,
+    "rows": 48192472
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd2007.parquet",
+    "bytes": 2071882433,
+    "mtime_ns": 1776321109720000000,
+    "rows": 58432799
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd2008.parquet",
+    "bytes": 2576259374,
+    "mtime_ns": 1776331208560000000,
+    "rows": 74825300
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd2009.parquet",
+    "bytes": 2627773349,
+    "mtime_ns": 1776342843820000000,
+    "rows": 80279134
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd2010.parquet",
+    "bytes": 2793478750,
+    "mtime_ns": 1776355038040000000,
+    "rows": 81582334
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd2012.parquet",
+    "bytes": 3808615523,
+    "mtime_ns": 1776382864850000000,
+    "rows": 123605275
+  },
+  {
+    "path": "D:\\OptionMetrics\\parquet\\opprcd2013.parquet",
+    "bytes": 2783522378,
+    "mtime_ns": 1776397539940000000,
+    "rows": 89142425
+  }
+]

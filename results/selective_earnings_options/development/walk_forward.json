@@ -1,0 +1,506 @@
+[
+  {
+    "test_start": "2002-01-04",
+    "test_end": "2003-01-04",
+    "train_events": 45415,
+    "validation_events": 8759,
+    "test_events": 8533,
+    "metrics": {
+      "strategy": {
+        "cagr": 0.0,
+        "sharpe": 0.0,
+        "max_drawdown": 0.0
+      },
+      "benchmark": {
+        "cagr": -0.2057983541133428,
+        "sharpe": -0.7338018976892038,
+        "max_drawdown": -0.32967732382480897
+      },
+      "alpha": 0.0,
+      "bootstrap": {
+        "cagr": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        },
+        "sharpe": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        },
+        "max_drawdown": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        },
+        "alpha": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        }
+      },
+      "bootstrap_alpha_nonpositive": 1.0,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": false,
+        "cagr": false,
+        "sharpe": true,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 252,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha"
+    }
+  },
+  {
+    "test_start": "2003-01-04",
+    "test_end": "2004-01-04",
+    "train_events": 54327,
+    "validation_events": 8398,
+    "test_events": 8490,
+    "metrics": {
+      "strategy": {
+        "cagr": 0.0032088779185506233,
+        "sharpe": 0.5951215997378058,
+        "max_drawdown": -0.003356876091109573
+      },
+      "benchmark": {
+        "cagr": 0.23847504872471426,
+        "sharpe": 1.3973036346031233,
+        "max_drawdown": -0.13725678979135147
+      },
+      "alpha": 0.0027777218398746875,
+      "bootstrap": {
+        "cagr": {
+          "p025": 0.00019458697469670883,
+          "p50": 0.003183670545134243,
+          "p975": 0.0057405381639649205
+        },
+        "sharpe": {
+          "p025": 0.10449723349070036,
+          "p50": 0.628114402536965,
+          "p975": 1.902845374789037
+        },
+        "max_drawdown": {
+          "p025": -0.003356876091109684,
+          "p50": -0.003356876091109573,
+          "p975": -0.00028037817408121946
+        },
+        "alpha": {
+          "p025": 0.00021771567188593594,
+          "p50": 0.0025551028289529636,
+          "p975": 0.004816528652308079
+        }
+      },
+      "bootstrap_alpha_nonpositive": 0.02,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": false,
+        "cagr": false,
+        "sharpe": false,
+        "alpha": true,
+        "alpha_confidence": true,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 251,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha"
+    }
+  },
+  {
+    "test_start": "2004-01-04",
+    "test_end": "2005-01-04",
+    "train_events": 62860,
+    "validation_events": 8358,
+    "test_events": 9272,
+    "metrics": {
+      "strategy": {
+        "cagr": 0.0,
+        "sharpe": 0.0,
+        "max_drawdown": 0.0
+      },
+      "benchmark": {
+        "cagr": 0.10230736251806771,
+        "sharpe": 0.9308261343525124,
+        "max_drawdown": -0.07526832646421056
+      },
+      "alpha": 0.0,
+      "bootstrap": {
+        "cagr": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        },
+        "sharpe": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        },
+        "max_drawdown": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        },
+        "alpha": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        }
+      },
+      "bootstrap_alpha_nonpositive": 1.0,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": false,
+        "cagr": false,
+        "sharpe": false,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 252,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha"
+    }
+  },
+  {
+    "test_start": "2005-01-04",
+    "test_end": "2006-01-04",
+    "train_events": 71353,
+    "validation_events": 9137,
+    "test_events": 10123,
+    "metrics": {
+      "strategy": {
+        "cagr": 0.004084657863731245,
+        "sharpe": 1.413439959333879,
+        "max_drawdown": -0.0023319426364409868
+      },
+      "benchmark": {
+        "cagr": 0.07175848125780937,
+        "sharpe": 0.7148259731762577,
+        "max_drawdown": -0.0695616670248651
+      },
+      "alpha": 0.0038656773711025975,
+      "bootstrap": {
+        "cagr": {
+          "p025": -0.0008314874355384444,
+          "p50": 0.004084657863730801,
+          "p975": 0.00852869885989916
+        },
+        "sharpe": {
+          "p025": -0.414810878990923,
+          "p50": 1.4311219012587408,
+          "p975": 3.0743959949249353
+        },
+        "max_drawdown": {
+          "p025": -0.0032000639740599607,
+          "p50": -0.0023319426364410978,
+          "p975": -0.0005977155312394649
+        },
+        "alpha": {
+          "p025": -0.0008858521919623649,
+          "p50": 0.0038781346331342335,
+          "p975": 0.008189542118837741
+        }
+      },
+      "bootstrap_alpha_nonpositive": 0.088,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": false,
+        "cagr": false,
+        "sharpe": true,
+        "alpha": true,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 252,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha"
+    }
+  },
+  {
+    "test_start": "2006-01-04",
+    "test_end": "2007-01-04",
+    "train_events": 80622,
+    "validation_events": 9973,
+    "test_events": 10642,
+    "metrics": {
+      "strategy": {
+        "cagr": -0.0033684793482444686,
+        "sharpe": -1.5639986046958694,
+        "max_drawdown": -0.003514221341059609
+      },
+      "benchmark": {
+        "cagr": 0.13702301384835747,
+        "sharpe": 1.350282431698697,
+        "max_drawdown": -0.07593218059462259
+      },
+      "alpha": -0.004072460865168645,
+      "bootstrap": {
+        "cagr": {
+          "p025": -0.008755143597589082,
+          "p50": -0.0033416592646713927,
+          "p975": 0.00039819841375225435
+        },
+        "sharpe": {
+          "p025": -3.1874931178440145,
+          "p50": -1.5639986046958694,
+          "p975": 0.22539897190503444
+        },
+        "max_drawdown": {
+          "p025": -0.009558151440368843,
+          "p50": -0.003992860486089822,
+          "p975": -0.0008835267891765808
+        },
+        "alpha": {
+          "p025": -0.009120619442627991,
+          "p50": -0.004087938269742083,
+          "p975": 0.0
+        }
+      },
+      "bootstrap_alpha_nonpositive": 0.98,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": false,
+        "cagr": false,
+        "sharpe": false,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 251,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha"
+    }
+  },
+  {
+    "test_start": "2007-01-04",
+    "test_end": "2008-01-04",
+    "train_events": 90730,
+    "validation_events": 10476,
+    "test_events": 11283,
+    "metrics": {
+      "strategy": {
+        "cagr": -0.0018857353330251625,
+        "sharpe": -0.8225111618042259,
+        "max_drawdown": -0.0038160245919364177
+      },
+      "benchmark": {
+        "cagr": 0.04349163504681375,
+        "sharpe": 0.34731353005820437,
+        "max_drawdown": -0.0992472322117125
+      },
+      "alpha": -0.001990740973207456,
+      "bootstrap": {
+        "cagr": {
+          "p025": -0.005204220386807107,
+          "p50": -0.001854603026531676,
+          "p975": 0.001121996851065344
+        },
+        "sharpe": {
+          "p025": -1.9231316957721547,
+          "p50": -0.8192754357619454,
+          "p975": 0.9006513513106211
+        },
+        "max_drawdown": {
+          "p025": -0.005810016914968058,
+          "p50": -0.0026424231234107864,
+          "p975": -0.0003684057257511825
+        },
+        "alpha": {
+          "p025": -0.0055123110141321995,
+          "p50": -0.0019429122483652856,
+          "p975": 0.001122503724279759
+        }
+      },
+      "bootstrap_alpha_nonpositive": 0.832,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": false,
+        "cagr": false,
+        "sharpe": false,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 252,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha"
+    }
+  },
+  {
+    "test_start": "2008-01-04",
+    "test_end": "2009-01-04",
+    "train_events": 101356,
+    "validation_events": 11114,
+    "test_events": 11310,
+    "metrics": {
+      "strategy": {
+        "cagr": 0.0,
+        "sharpe": 0.0,
+        "max_drawdown": 0.0
+      },
+      "benchmark": {
+        "cagr": -0.342951565729804,
+        "sharpe": -0.8060503030018759,
+        "max_drawdown": -0.4710286872302697
+      },
+      "alpha": 0.0,
+      "bootstrap": {
+        "cagr": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        },
+        "sharpe": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        },
+        "max_drawdown": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        },
+        "alpha": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        }
+      },
+      "bootstrap_alpha_nonpositive": 1.0,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": false,
+        "cagr": false,
+        "sharpe": true,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 252,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha"
+    }
+  },
+  {
+    "test_start": "2009-01-04",
+    "test_end": "2010-01-04",
+    "train_events": 112636,
+    "validation_events": 11156,
+    "test_events": 10736,
+    "metrics": {
+      "strategy": {
+        "cagr": -0.00019126797859136957,
+        "sharpe": -0.06133814980468614,
+        "max_drawdown": -0.004560797423899365
+      },
+      "benchmark": {
+        "cagr": 0.22769185727114705,
+        "sharpe": 0.9058352454291467,
+        "max_drawdown": -0.27131803178423275
+      },
+      "alpha": -0.0008036057441362786,
+      "bootstrap": {
+        "cagr": {
+          "p025": -0.0053527152376546564,
+          "p50": -0.0001695826778738696,
+          "p975": 0.003965660851818276
+        },
+        "sharpe": {
+          "p025": -1.283217566170426,
+          "p50": -0.04398461796914546,
+          "p975": 2.0683521929886908
+        },
+        "max_drawdown": {
+          "p025": -0.007307867203678551,
+          "p50": -0.0029486150786658394,
+          "p975": -0.0005709274392404762
+        },
+        "alpha": {
+          "p025": -0.007712569554961503,
+          "p50": -0.0006529367306426887,
+          "p975": 0.00352951565624891
+        }
+      },
+      "bootstrap_alpha_nonpositive": 0.612,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": false,
+        "cagr": false,
+        "sharpe": false,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 251,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha"
+    }
+  },
+  {
+    "test_start": "2010-01-04",
+    "test_end": "2011-01-04",
+    "train_events": 123961,
+    "validation_events": 10586,
+    "test_events": 10871,
+    "metrics": {
+      "strategy": {
+        "cagr": -0.006990795039983455,
+        "sharpe": -1.1922663327626257,
+        "max_drawdown": -0.010091905641463006
+      },
+      "benchmark": {
+        "cagr": 0.15058321718809298,
+        "sharpe": 0.8719317703267488,
+        "max_drawdown": -0.15701562658876367
+      },
+      "alpha": -0.009129402790670458,
+      "bootstrap": {
+        "cagr": {
+          "p025": -0.01248248295640779,
+          "p50": -0.006989313850938261,
+          "p975": -0.0006828301608415104
+        },
+        "sharpe": {
+          "p025": -3.8762168393357634,
+          "p50": -1.217084953815323,
+          "p975": -0.11811004300042138
+        },
+        "max_drawdown": {
+          "p025": -0.014011414004427614,
+          "p50": -0.008828525667660791,
+          "p975": -0.004643043713753277
+        },
+        "alpha": {
+          "p025": -0.019909911489204513,
+          "p50": -0.009203396960109298,
+          "p975": -0.0018085642279483452
+        }
+      },
+      "bootstrap_alpha_nonpositive": 0.988,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": false,
+        "cagr": false,
+        "sharpe": false,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 252,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha"
+    }
+  }
+]

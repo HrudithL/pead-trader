@@ -24,12 +24,12 @@ def forward_labels(events,stocks,calendar,delistings=None,max_horizon=20):
         s=groups.get(permno)
         if s is None:continue
         if s.date.duplicated().any():raise ValueError("duplicate stock label dates")
-        series=s.set_index("date").ret.reindex(cal).to_numpy(dtype=float,copy=True)
+        series=s.set_index("date").ret.reindex(cal).to_numpy(dtype=float,na_value=np.nan,copy=True)
         if len(dl):
             for row in dl[dl.permno==permno].itertuples():
                 pos=cal.searchsorted(row.dlstdt)
                 if pos>=len(cal):continue
-                if not np.isfinite(row.dlret):
+                if pd.isna(row.dlret) or not np.isfinite(row.dlret):
                     series[pos:]=np.nan
                 else:
                     base=series[pos] if np.isfinite(series[pos]) else 0.

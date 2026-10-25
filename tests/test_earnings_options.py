@@ -256,4 +256,7 @@ def test_training_labels_keep_delisting_loss_and_use_market_sessions():
     assert result.iloc[0].forward_return_3==pytest.approx(-.45)
     result=forward_labels(e,stocks,dates,max_horizon=3)
     assert np.isnan(result.iloc[0].forward_return_3)
+    dl["dlret"]=pd.Series([pd.NA],dtype="Float64")
+    result=forward_labels(e,stocks,dates,dl,max_horizon=3)
+    assert np.isnan(result.iloc[0].forward_return_3)
 
