@@ -73,3 +73,12 @@ meta/debate2/*.csv.gz
 
 # Complete pre-fix derived data vintage (kept for the *_legacy strategies and their tests); regenerable, large
 data/_prefix_vintage/
+
+# Independent earnings-options research caches (never remove with worktree cleanup)
+data/selective_earnings/
+
+# Version-two raw-entry research cache; preserve with worktree
+data/selective_earnings_v2/
+
+# Liquid-index earnings research caches, preserve
+data/selective_earnings_index/

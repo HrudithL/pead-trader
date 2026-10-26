@@ -1,0 +1,54 @@
+[
+  {
+    "scenario": "base_1m",
+    "initial_nav": 1000000,
+    "commission": 0.65,
+    "trade_count": 25,
+    "cagr": -0.0005614864727451208,
+    "sharpe": -0.19159788677532955,
+    "max_drawdown": -0.015578677790792028,
+    "mean_reserved_nav": 0.00039186272722731275,
+    "max_reserved_nav": 0.009340410748622489,
+    "win_fraction": 0.44,
+    "net_pnl": -6705.999999999999
+  },
+  {
+    "scenario": "capital_100k",
+    "initial_nav": 100000,
+    "commission": 0.65,
+    "trade_count": 13,
+    "cagr": -0.00048660025594005063,
+    "sharpe": -0.23883068432555513,
+    "max_drawdown": -0.010791697281411272,
+    "mean_reserved_nav": 0.00019992049780666234,
+    "max_reserved_nav": 0.010681349822280268,
+    "win_fraction": 0.38461538461538464,
+    "net_pnl": -581.4000000000001
+  },
+  {
+    "scenario": "capital_10m",
+    "initial_nav": 10000000,
+    "commission": 0.65,
+    "trade_count": 25,
+    "cagr": -0.0009617428132697725,
+    "sharpe": -0.3634485746190817,
+    "max_drawdown": -0.015880844732591215,
+    "mean_reserved_nav": 0.0002758776831077791,
+    "max_reserved_nav": 0.0070805034885789405,
+    "win_fraction": 0.44,
+    "net_pnl": -114611.89999999998
+  },
+  {
+    "scenario": "double_commission",
+    "initial_nav": 1000000,
+    "commission": 1.3,
+    "trade_count": 25,
+    "cagr": -0.0006308195240647407,
+    "sharpe": -0.21797632718362556,
+    "max_drawdown": -0.01591038293366087,
+    "mean_reserved_nav": 0.000390620505219217,
+    "max_reserved_nav": 0.009168528097516275,
+    "win_fraction": 0.4,
+    "net_pnl": -7531.199999999999
+  }
+]

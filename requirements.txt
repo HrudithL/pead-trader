@@ -6,3 +6,6 @@ numpy>=1.24
 pyarrow>=14.0
 reportlab>=4.0
 matplotlib>=3.8
+
+# Normal CDF for the standalone earnings-options valuation model
+scipy>=1.11

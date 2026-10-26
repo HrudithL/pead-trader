@@ -1,0 +1,32 @@
+{
+  "trend_1.5x": {
+    "recovery": false,
+    "target": 1.5,
+    "risk": 0.45
+  },
+  "trend_2x": {
+    "recovery": false,
+    "target": 2.0,
+    "risk": 0.55
+  },
+  "trend_3x": {
+    "recovery": false,
+    "target": 3.0,
+    "risk": 0.7
+  },
+  "recovery_1.5x": {
+    "recovery": true,
+    "target": 1.5,
+    "risk": 0.45
+  },
+  "recovery_2x": {
+    "recovery": true,
+    "target": 2.0,
+    "risk": 0.55
+  },
+  "recovery_3x": {
+    "recovery": true,
+    "target": 3.0,
+    "risk": 0.7
+  }
+}

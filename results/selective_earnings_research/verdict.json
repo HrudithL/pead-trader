@@ -1,0 +1,91 @@
+{
+  "target_cagr": [
+    0.12,
+    0.15
+  ],
+  "tested_capitals": [
+    100000,
+    1000000
+  ],
+  "final_holdout_evaluated": true,
+  "investment_accepted": false,
+  "frozen_holdout_results": [
+    {
+      "scenario": "deployed_100k",
+      "capital": 100000,
+      "period": "final_holdout",
+      "cagr": 0.3823892070584378,
+      "sharpe": 0.8612771282854451,
+      "drawdown": -0.4573314554309278,
+      "spy_cagr": 0.19613201090498333,
+      "trade_count": 33,
+      "closed_ticket_count": 56,
+      "mean_risk_nav": 0.5536225763350766
+    },
+    {
+      "scenario": "deployed_1000k",
+      "capital": 1000000,
+      "period": "final_holdout",
+      "cagr": 0.3475933036004102,
+      "sharpe": 0.8099610984750761,
+      "drawdown": -0.47064234533195215,
+      "spy_cagr": 0.19613201090498333,
+      "trade_count": 38,
+      "closed_ticket_count": 124,
+      "mean_risk_nav": 0.5584447184327298
+    }
+  ],
+  "reason": "Development results, data provenance and execution assumptions do not establish a deployable edge.",
+  "numerical_full_history_hits": [
+    {
+      "experiment": "selective_earnings_index_settlement",
+      "scenario": "deployed_100k",
+      "capital": 100000,
+      "cagr": 0.18158696548792208,
+      "drawdown": -0.7761078998029077
+    },
+    {
+      "experiment": "selective_earnings_index_settlement_risk_exit",
+      "scenario": "deployed_100k",
+      "capital": 100000,
+      "cagr": 0.1611276839509106,
+      "drawdown": -0.46940074968233325
+    },
+    {
+      "experiment": "selective_earnings_index_settlement_risk_exit_double_fee",
+      "scenario": "deployed_100k",
+      "capital": 100000,
+      "cagr": 0.1590623736823502,
+      "drawdown": -0.4682813913402665
+    },
+    {
+      "experiment": "selective_earnings_index_settlement_risk_exit_zero_floor",
+      "scenario": "deployed_100k",
+      "capital": 100000,
+      "cagr": 0.15692843883179353,
+      "drawdown": -0.46377956088067884
+    },
+    {
+      "experiment": "selective_earnings_index_settlement_risk_exit_zero_floor",
+      "scenario": "deployed_1000k",
+      "capital": 1000000,
+      "cagr": 0.145671205869359,
+      "drawdown": -0.4311855969576538
+    },
+    {
+      "experiment": "selective_earnings_index_settlement_risk_exit",
+      "scenario": "deployed_1000k",
+      "capital": 1000000,
+      "cagr": 0.13381747036806635,
+      "drawdown": -0.5116744174626164
+    },
+    {
+      "experiment": "selective_earnings_index_settlement_risk_exit_double_fee",
+      "scenario": "deployed_1000k",
+      "capital": 1000000,
+      "cagr": 0.1309516683945564,
+      "drawdown": -0.5126611525282523
+    }
+  ],
+  "best_cagr_with_drawdown_at_most30pct": 0.09733550855825146
+}

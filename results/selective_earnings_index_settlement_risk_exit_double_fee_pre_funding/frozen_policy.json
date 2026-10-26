@@ -1,0 +1,45 @@
+{
+  "profiles": {
+    "moderate": {
+      "ticket": 0.1,
+      "cohort": 0.2,
+      "aggregate": 0.4
+    },
+    "deployed": {
+      "ticket": 0.3,
+      "cohort": 0.3,
+      "aggregate": 0.8
+    },
+    "concentrated": {
+      "ticket": 0.6,
+      "cohort": 0.6,
+      "aggregate": 0.8
+    }
+  },
+  "signal": "prior trend and earnings breadth positive; RV <=30%",
+  "dte": [
+    35,
+    75
+  ],
+  "target_dte": 45,
+  "short_delta": 0.35,
+  "long_delta": 0.15,
+  "delta_source": "previous session",
+  "tickets_per_week": 8,
+  "liquidity": {
+    "min_oi": 100,
+    "max_relative_spread": 0.5,
+    "max_absolute_spread": 5.0,
+    "participation": 0.05,
+    "oi_participation": 0.02,
+    "small_lot_floor": 1
+  },
+  "commission_per_leg_each_side": 3.0,
+  "cash_sweep": true,
+  "staged_risk_exit": true,
+  "exit_rule": "prior trend below200day or RV>30%",
+  "settlement": "native SET SECID118963; all144 monthly SOQs; exact cash payoff",
+  "borrowing": false,
+  "final_holdout_evaluated": false,
+  "investment_accepted": false
+}

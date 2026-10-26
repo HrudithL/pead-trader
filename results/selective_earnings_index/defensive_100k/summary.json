@@ -1,0 +1,339 @@
+{
+  "policy": {
+    "signal": "agreement_put",
+    "short_delta": 0.25,
+    "long_delta": 0.1,
+    "risk": 0.03,
+    "aggregate": 0.2,
+    "hold": 20
+  },
+  "starting_nav": 100000,
+  "diagnostics": [
+    {
+      "missing_marks": 0,
+      "execution_valid": true,
+      "unverified_events": 0,
+      "assignment_unverified": 0,
+      "calendar_unverified": 0,
+      "forced_reserves": 0,
+      "config_hash": "2b8d9fff3b83cf5f",
+      "strict": false
+    },
+    {
+      "missing_marks": 0,
+      "execution_valid": true,
+      "unverified_events": 0,
+      "assignment_unverified": 0,
+      "calendar_unverified": 0,
+      "forced_reserves": 0,
+      "config_hash": "76fb57bfbf6cafc4",
+      "strict": false
+    },
+    {
+      "missing_marks": 0,
+      "execution_valid": true,
+      "unverified_events": 0,
+      "assignment_unverified": 0,
+      "calendar_unverified": 0,
+      "forced_reserves": 0,
+      "config_hash": "7b7a5d5fc3d4e0c6",
+      "strict": false
+    },
+    {
+      "missing_marks": 0,
+      "execution_valid": true,
+      "unverified_events": 0,
+      "assignment_unverified": 0,
+      "calendar_unverified": 0,
+      "forced_reserves": 0,
+      "config_hash": "7b7a5d5fc3d4e0c6",
+      "strict": false
+    },
+    {
+      "missing_marks": 0,
+      "execution_valid": true,
+      "unverified_events": 0,
+      "assignment_unverified": 0,
+      "calendar_unverified": 0,
+      "forced_reserves": 0,
+      "config_hash": "7b7a5d5fc3d4e0c6",
+      "strict": false
+    },
+    {
+      "missing_marks": 0,
+      "execution_valid": true,
+      "unverified_events": 0,
+      "assignment_unverified": 0,
+      "calendar_unverified": 0,
+      "forced_reserves": 0,
+      "config_hash": "c5020b29ee37cc16",
+      "strict": false
+    },
+    {
+      "missing_marks": 0,
+      "execution_valid": true,
+      "unverified_events": 0,
+      "assignment_unverified": 0,
+      "calendar_unverified": 0,
+      "forced_reserves": 0,
+      "config_hash": "ea45cd5d67e29794",
+      "strict": false
+    },
+    {
+      "missing_marks": 0,
+      "execution_valid": true,
+      "unverified_events": 0,
+      "assignment_unverified": 0,
+      "calendar_unverified": 0,
+      "forced_reserves": 0,
+      "config_hash": "d495367bc1d78a44",
+      "strict": false
+    },
+    {
+      "missing_marks": 0,
+      "execution_valid": true,
+      "unverified_events": 0,
+      "assignment_unverified": 0,
+      "calendar_unverified": 0,
+      "forced_reserves": 0,
+      "config_hash": "8ce8b769715b6c33",
+      "strict": false
+    },
+    {
+      "missing_marks": 0,
+      "execution_valid": true,
+      "unverified_events": 0,
+      "assignment_unverified": 0,
+      "calendar_unverified": 0,
+      "forced_reserves": 0,
+      "config_hash": "8ce8b769715b6c33",
+      "strict": false
+    },
+    {
+      "missing_marks": 0,
+      "execution_valid": true,
+      "unverified_events": 0,
+      "assignment_unverified": 0,
+      "calendar_unverified": 0,
+      "forced_reserves": 0,
+      "config_hash": "8ce8b769715b6c33",
+      "strict": false
+    },
+    {
+      "missing_marks": 0,
+      "execution_valid": true,
+      "unverified_events": 0,
+      "assignment_unverified": 0,
+      "calendar_unverified": 0,
+      "forced_reserves": 0,
+      "config_hash": "8ce8b769715b6c33",
+      "strict": false
+    }
+  ],
+  "periods": {
+    "discovery": {
+      "strategy": {
+        "cagr": -0.009978101961666486,
+        "sharpe": -1.218722779528905,
+        "max_drawdown": -0.0582449999999991
+      },
+      "benchmark": {
+        "cagr": 0.010902512478375925,
+        "sharpe": 0.1546291224409452,
+        "max_drawdown": -0.4750288382828953
+      },
+      "alpha": -0.010173841337517158,
+      "bootstrap": {
+        "cagr": {
+          "p025": -0.016981886613444526,
+          "p50": -0.009765749600004425,
+          "p975": -0.004248835672813625
+        },
+        "sharpe": {
+          "p025": -1.8668453278129158,
+          "p50": -1.218115610491096,
+          "p975": -0.6429706127815896
+        },
+        "max_drawdown": {
+          "p025": -0.09982532106795533,
+          "p50": -0.05963463599413843,
+          "p975": -0.027684028636351953
+        },
+        "alpha": {
+          "p025": -0.017877516945398634,
+          "p50": -0.010036523234421807,
+          "p975": -0.0041939451713395096
+        }
+      },
+      "bootstrap_alpha_nonpositive": 1.0,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": true,
+        "cagr": false,
+        "sharpe": false,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 1508,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha",
+      "trade_count": 32,
+      "mean_risk_nav": 0.003728678775748109
+    },
+    "validation": {
+      "strategy": {
+        "cagr": -0.0013824167696139256,
+        "sharpe": -0.10175710081164575,
+        "max_drawdown": -0.01597050948248957
+      },
+      "benchmark": {
+        "cagr": 0.08508487959122735,
+        "sharpe": 0.7224551393363922,
+        "max_drawdown": -0.09924723221171283
+      },
+      "alpha": -0.003454227903422234,
+      "bootstrap": {
+        "cagr": {
+          "p025": -0.006530687430362383,
+          "p50": -0.0014746581779133683,
+          "p975": 0.003852514989570631
+        },
+        "sharpe": {
+          "p025": -0.5983420530531413,
+          "p50": -0.11570499786938761,
+          "p975": 0.31585097095358466
+        },
+        "max_drawdown": {
+          "p025": -0.02559037131239128,
+          "p50": -0.014857112644407144,
+          "p975": -0.00846450140282451
+        },
+        "alpha": {
+          "p025": -0.010778750465982794,
+          "p50": -0.0034935467867368702,
+          "p975": 0.0025684975999891763
+        }
+      },
+      "bootstrap_alpha_nonpositive": 0.864,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": false,
+        "cagr": false,
+        "sharpe": false,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 754,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha",
+      "trade_count": 19,
+      "mean_risk_nav": 0.006994484927606594
+    },
+    "development_test": {
+      "strategy": {
+        "cagr": 0.0,
+        "sharpe": 0.0,
+        "max_drawdown": 0.0
+      },
+      "benchmark": {
+        "cagr": -0.027796870753572067,
+        "sharpe": 0.05720562638603991,
+        "max_drawdown": -0.5230392145222177
+      },
+      "alpha": 0.0,
+      "bootstrap": {
+        "cagr": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        },
+        "sharpe": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        },
+        "max_drawdown": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        },
+        "alpha": {
+          "p025": 0.0,
+          "p50": 0.0,
+          "p975": 0.0
+        }
+      },
+      "bootstrap_alpha_nonpositive": 1.0,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": true,
+        "cagr": false,
+        "sharpe": false,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 757,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha",
+      "trade_count": 0,
+      "mean_risk_nav": 0.0
+    },
+    "all_development": {
+      "strategy": {
+        "cagr": -0.005340315058618983,
+        "sharpe": -0.6160862856799892,
+        "max_drawdown": -0.06837499999999852
+      },
+      "benchmark": {
+        "cagr": 0.01891872891069113,
+        "sharpe": 0.1946638431541978,
+        "max_drawdown": -0.5520101707082642
+      },
+      "alpha": -0.00550501176399951,
+      "bootstrap": {
+        "cagr": {
+          "p025": -0.009389440683066835,
+          "p50": -0.005104542208920204,
+          "p975": -0.0017992792606724432
+        },
+        "sharpe": {
+          "p025": -1.1156630941954577,
+          "p50": -0.6017062170205845,
+          "p975": -0.22629431005428072
+        },
+        "max_drawdown": {
+          "p025": -0.11213261828992316,
+          "p50": -0.06495718800569339,
+          "p975": -0.029079581441286216
+        },
+        "alpha": {
+          "p025": -0.010181207524938429,
+          "p50": -0.005342076628403275,
+          "p975": -0.0018810475151702765
+        }
+      },
+      "bootstrap_alpha_nonpositive": 1.0,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": true,
+        "cagr": false,
+        "sharpe": false,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 3019,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha",
+      "trade_count": 51,
+      "mean_risk_nav": 0.0036093703972320374
+    }
+  }
+}

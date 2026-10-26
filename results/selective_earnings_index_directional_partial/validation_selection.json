@@ -1,0 +1,8 @@
+{
+  "selected_by_validation": {
+    "100000": "trend_1x_100k",
+    "1000000": "trend_15x_1000k"
+  },
+  "final_holdout_evaluated": false,
+  "investment_accepted": false
+}

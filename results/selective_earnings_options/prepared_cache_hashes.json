@@ -1,0 +1,106 @@
+{
+  "all_events.parquet": {
+    "sha256": "c8c1286f659646799b852c782def78c7fdeca0004d1f8f6b0fc4621fb9edba5b",
+    "bytes": 70688275
+  },
+  "benchmark.parquet": {
+    "sha256": "1d78a1098b5ca4ee4f0cd36db328bcba425ff05eb797660b45e1f9c11fff2ea3",
+    "bytes": 88962
+  },
+  "events_1999.parquet": {
+    "sha256": "3cafa40aa0e0d8fc9cb357f9a1a12d20d11c6f259171834bd21cebac6c1d4a6e",
+    "bytes": 1914113
+  },
+  "events_2000.parquet": {
+    "sha256": "8ac85e64acdc9564f7a52835b4e91ff04b555b4d9845c1529c026731e12b3cf2",
+    "bytes": 1859634
+  },
+  "events_2001.parquet": {
+    "sha256": "a737d5d558b06da741d8b618f7162802a3833dc804da8b1ac5e72ea843c8ada2",
+    "bytes": 1820285
+  },
+  "events_2002.parquet": {
+    "sha256": "ef6f5a8a499cb8836bccd2ab6769e0751ebef294e8a15892ca9711e137c31304",
+    "bytes": 1775629
+  },
+  "events_2003.parquet": {
+    "sha256": "feabcde02b3bb1666c2dc4346d2c1cab0cb57960b422c1ee504071304b40c860",
+    "bytes": 1772411
+  },
+  "events_2004.parquet": {
+    "sha256": "1db069e8d9e478559f94aeab829898cafff7f23eef27c6e79ca3ac5509394bc7",
+    "bytes": 1935068
+  },
+  "events_2005.parquet": {
+    "sha256": "be8137f537c90e95ab79f8e798fb2238519f878acf2a69483cf14a50912fec67",
+    "bytes": 2088143
+  },
+  "events_2006.parquet": {
+    "sha256": "21c4b230b21a928de92b9ce370e53a304dac9fbbd16baf38d5319bfed68e8e5e",
+    "bytes": 2216601
+  },
+  "events_2007.parquet": {
+    "sha256": "1d3a7cd168210f049bc2747f5935c1fff654793bccddec663289664c60fd9715",
+    "bytes": 2345171
+  },
+  "events_2008.parquet": {
+    "sha256": "fc93f3f72af86777c9a18ce5642dbd853e8dbf47c46a24cbbafffa22a206b07b",
+    "bytes": 2364531
+  },
+  "events_2009.parquet": {
+    "sha256": "9cdb4fd8cd1d52bd63d7df16fdd62b5f2296aa916448ca0acde98af264f1b21e",
+    "bytes": 2259563
+  },
+  "events_2010.parquet": {
+    "sha256": "68baaf538426d647c3b46acdd53b7af9d6dcb5a3c736a1ab7a0bd0b9817620d6",
+    "bytes": 2282144
+  },
+  "quotes_1999.parquet": {
+    "sha256": "13af2aa8cf037d6c9c033a844b0237245c391549a7b8d3df5331b255b67f61bc",
+    "bytes": 42202
+  },
+  "quotes_2000.parquet": {
+    "sha256": "7f67b2d6c7336e9563d376577db4becbbf1164e2109af20074436e1c79215453",
+    "bytes": 56959
+  },
+  "quotes_2001.parquet": {
+    "sha256": "7e5891d377d44c0bde8408034d018738e4f61c41a7340987bf30281447ab3f7b",
+    "bytes": 39799
+  },
+  "quotes_2002.parquet": {
+    "sha256": "524842ad17316c78493b4c7fa42636a61da5357216b028841fd9706b1726c114",
+    "bytes": 41875
+  },
+  "quotes_2003.parquet": {
+    "sha256": "b07f077e0494bc60ab86919ec00d2891c1777d1a7e40d4df50c9831cee6fe224",
+    "bytes": 37020
+  },
+  "quotes_2004.parquet": {
+    "sha256": "b23171d9ce101ecb0db07e10ea39cd40b00d31ea06762c76a7a8f6873d201c74",
+    "bytes": 28491
+  },
+  "quotes_2005.parquet": {
+    "sha256": "bfed1582b66e45abac838fa291dcb2316b58152d7a6cb3c94fe160e8f63b26a6",
+    "bytes": 49863
+  },
+  "quotes_2006.parquet": {
+    "sha256": "e474c1edfee419dc4d7fda62144c7f55f6500f39d56061c7bb80930130fe55d6",
+    "bytes": 69987
+  },
+  "quotes_2007.parquet": {
+    "sha256": "fa21f767f4e49bba26249ee156ab69efe5a166e29e752a20bdd947bbc9380ea4",
+    "bytes": 136374
+  },
+  "quotes_2008.parquet": {
+    "sha256": "61ccfd628a4951ace1b56df6b64e80d3218c433d67bbb3a344667ab25d245aa2",
+    "bytes": 112108
+  },
+  "quotes_2009.parquet": {
+    "sha256": "0606acabfaf4683bebd87caa2dc5981c94be8a1dbc23c2b596690e6b95b119cf",
+    "bytes": 182395
+  },
+  "quotes_2010.parquet": {
+    "sha256": "de4821fe2cd5fbc4dfea6075b9a455b75124acf7056396830b2978b0df5dd81f",
+    "bytes": 132887
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "defensive": {
+    "signal": "agreement_put",
+    "short_delta": 0.25,
+    "long_delta": 0.1,
+    "risk": 0.03,
+    "aggregate": 0.2,
+    "hold": 20
+  },
+  "trend_carry": {
+    "signal": "trend_put",
+    "short_delta": 0.25,
+    "long_delta": 0.1,
+    "risk": 0.06,
+    "aggregate": 0.3,
+    "hold": 45
+  },
+  "earnings_carry": {
+    "signal": "agreement_put",
+    "short_delta": 0.35,
+    "long_delta": 0.15,
+    "risk": 0.06,
+    "aggregate": 0.3,
+    "hold": 45
+  },
+  "trend_two_sided": {
+    "signal": "trend_both",
+    "short_delta": 0.25,
+    "long_delta": 0.1,
+    "risk": 0.06,
+    "aggregate": 0.3,
+    "hold": 20
+  },
+  "earnings_two_sided": {
+    "signal": "agreement_both",
+    "short_delta": 0.35,
+    "long_delta": 0.15,
+    "risk": 0.06,
+    "aggregate": 0.3,
+    "hold": 45
+  },
+  "active_trend": {
+    "signal": "trend_put",
+    "short_delta": 0.35,
+    "long_delta": 0.15,
+    "risk": 0.09,
+    "aggregate": 0.4,
+    "hold": 45
+  }
+}
