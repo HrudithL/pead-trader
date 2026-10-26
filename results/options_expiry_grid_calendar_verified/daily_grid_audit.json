@@ -1,0 +1,59 @@
+{
+  "cells": 54,
+  "candidate_trades": 240557,
+  "unique_contract_paths": 97258,
+  "path_days": 4793418,
+  "unique_daily_quote_keys": 4781566,
+  "matched_unique_daily_quote_keys": 4767924,
+  "contract_level_quotes_persisted": false,
+  "source_optionmetrics_dir": "D:\\OptionMetrics\\parquet",
+  "study_start": "1998-01-02",
+  "study_end": "2013-12-31",
+  "all_cash_final_nav": 14476864.556351427,
+  "factor_provenance": {
+    "ff3_url": "https://mba.tuck.dartmouth.edu/pages/faculty/Ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip",
+    "momentum_url": "https://mba.tuck.dartmouth.edu/pages/faculty/Ken.french/ftp/F-F_Momentum_Factor_daily_CSV.zip",
+    "ff3_sha256": "2f29e22546069914890a712680a6f81f3680ebc3543b52864484d209ca13a7db",
+    "momentum_sha256": "ecf82b116e6ec56d2b79a2f27bd1d1598c217b5c6c25caa55b945bdd8a2c0b78",
+    "factor_zip_directory": "C:\\Users\\hrudi\\.codex\\worktrees\\pead-options-optimization\\PEAD_Trading\\data\\factor"
+  },
+  "familywise_sharpe_bootstrap": {
+    "years": [
+      1998,
+      1999,
+      2000,
+      2001,
+      2002,
+      2003,
+      2004,
+      2005,
+      2006,
+      2007,
+      2008,
+      2009,
+      2010,
+      2011,
+      2012,
+      2013
+    ],
+    "cells": 54,
+    "observed_max_excess_rf_sharpe": 0.592924107225679,
+    "max_sharpe_familywise_p": 0.13017396520695862,
+    "centered_null_max_sharpe_95pct": 0.6989754903100844,
+    "resamples": 5000,
+    "seed": 20261022,
+    "method": "centered whole-calendar-year block bootstrap across all cells"
+  },
+  "portfolio_rule": {
+    "initial_capital": 10000000.0,
+    "premium_cap": 0.2,
+    "max_trade_fraction": 0.0025,
+    "max_open_option_oi_fraction": 0.1,
+    "per_issuer_premium_fraction": 0.02,
+    "cash_model": "daily French RF",
+    "entry": "same-session selected ask",
+    "mark_and_exit": "daily bid",
+    "missing_intermediate_marks": "zero",
+    "missing_exit_bid": "zero proceeds"
+  }
+}

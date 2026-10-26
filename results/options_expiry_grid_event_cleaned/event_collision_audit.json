@@ -1,0 +1,10 @@
+{
+  "input_events": 65527,
+  "retained_events": 65520,
+  "duplicate_event_date_groups": 3,
+  "duplicate_extra_rows": 4,
+  "duplicate_event_rows_excluded": 7,
+  "opposing_signal_groups": 1,
+  "multiple_decile_groups": 2,
+  "policy": "exclude every row in a repeated secid/day0_date cluster"
+}

@@ -1,0 +1,32 @@
+{
+  "observed_years": [
+    1998,
+    1999,
+    2000,
+    2001,
+    2002,
+    2003,
+    2004,
+    2005,
+    2006,
+    2007,
+    2008,
+    2009,
+    2010,
+    2012,
+    2013
+  ],
+  "cells": 54,
+  "winner_annual_pnl_t": 0.6806512367172103,
+  "winner_annual_pnl_95ci": [
+    -604540.3899354669,
+    1166621.1232688003
+  ],
+  "winner_one_sided_annual_t_p": 0.2535969134207614,
+  "max_t_observed": 2.8529019658774306,
+  "max_t_familywise_bootstrap_p": 0.1100889911008899,
+  "max_t_null_95pct": 3.5676000441483753,
+  "bootstrap_resamples": 10000,
+  "bootstrap_seed": 20261022,
+  "note": "Illustrative joint-year centered max-t across an already mined archive; not untouched proof."
+}

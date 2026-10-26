@@ -1,0 +1,114 @@
+{
+  "observed_years": [
+    1998,
+    1999,
+    2000,
+    2001,
+    2002,
+    2003,
+    2004,
+    2005,
+    2006,
+    2007,
+    2008,
+    2009,
+    2010,
+    2012,
+    2013
+  ],
+  "cells": 54,
+  "winner_annual_pnl_t": 0.6703765424225767,
+  "winner_annual_pnl_95ci": [
+    -612692.2967831058,
+    1169843.296783106
+  ],
+  "winner_one_sided_annual_t_p": 0.2567625182097125,
+  "max_t_observed": 2.590752596699434,
+  "max_t_familywise_bootstrap_p": 0.1650834916508349,
+  "max_t_null_95pct": 3.7189726939016343,
+  "bootstrap_resamples": 10000,
+  "bootstrap_seed": 20261022,
+  "note": "Illustrative joint-year centered max-t across an already mined archive; not untouched proof.",
+  "market_model_zero_rf": {
+    "n": 4025,
+    "daily_intercept": 5.899025537900886e-05,
+    "annualized_intercept": 0.014865544355510234,
+    "annualized_intercept_95ci": [
+      -0.024521925269123734,
+      0.0542530139801442
+    ],
+    "intercept_hac_t": 0.7397394962020444,
+    "slopes": [
+      0.3907012826577734
+    ],
+    "lag": 60
+  },
+  "market_and_centered_market_squared_zero_rf": {
+    "n": 4025,
+    "daily_intercept": 5.908034708652133e-05,
+    "annualized_intercept": 0.014888247465803375,
+    "annualized_intercept_95ci": [
+      -0.02521622593874082,
+      0.054992720870347574
+    ],
+    "intercept_hac_t": 0.7276236927142435,
+    "slopes": [
+      0.39043368583232974,
+      -0.4025556503966562
+    ],
+    "lag": 60
+  },
+  "missing_market_days": 0,
+  "missing_factor_days": 0,
+  "four_factor_excess_rf": {
+    "n": 4025,
+    "daily_intercept": -7.057600549121303e-05,
+    "annualized_intercept": -0.017785153383785685,
+    "annualized_intercept_95ci": [
+      -0.05711372051726656,
+      0.021543413749695192
+    ],
+    "intercept_hac_t": -0.8863506395722245,
+    "slopes": [
+      0.41104050096477834,
+      0.21226319313226955,
+      0.0974485744990729,
+      0.13142523030251685
+    ],
+    "lag": 60
+  },
+  "four_factor_plus_centered_market_squared_excess_rf": {
+    "n": 4025,
+    "daily_intercept": -7.030270092562892e-05,
+    "annualized_intercept": -0.017716280633258488,
+    "annualized_intercept_95ci": [
+      -0.057258374953808165,
+      0.02182581368729119
+    ],
+    "intercept_hac_t": -0.878150503604988,
+    "slopes": [
+      0.410965355921943,
+      0.21153558206863665,
+      0.09663069951692627,
+      0.13113379299562897,
+      -0.11503515794902902
+    ],
+    "lag": 60
+  },
+  "excess_rf_sharpe_year_block": {
+    "observed_excess_rf_sharpe": 0.21443866498884867,
+    "year_block_95ci": [
+      -0.3877616369113173,
+      0.7431009927830498
+    ],
+    "resamples": 5000,
+    "seed": 20261022
+  },
+  "factor_provenance": {
+    "ff3_url": "https://mba.tuck.dartmouth.edu/pages/faculty/Ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip",
+    "momentum_url": "https://mba.tuck.dartmouth.edu/pages/faculty/Ken.french/ftp/F-F_Momentum_Factor_daily_CSV.zip",
+    "ff3_sha256": "2f29e22546069914890a712680a6f81f3680ebc3543b52864484d209ca13a7db",
+    "momentum_sha256": "ecf82b116e6ec56d2b79a2f27bd1d1598c217b5c6c25caa55b945bdd8a2c0b78",
+    "factor_zip_directory": "data\\factor"
+  }
+}
