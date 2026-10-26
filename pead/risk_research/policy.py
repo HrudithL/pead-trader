@@ -45,6 +45,7 @@ class Policy:
     market_vol_target: float=0.
     stock_vol_target: float=.12
     gross_target: float=0.
+    min_iv_rv: float=0.
     hedge_cover: float=.25
     financing_spread: float=.02
     commission: float=1.50
@@ -61,6 +62,7 @@ class Policy:
         if not 0<=self.equity_scale<=1.5 or not 0<=self.annual_premium<=.1:
             raise ValueError('invalid equity scale or premium budget')
         if not 0<=self.gross_target<=1.2:raise ValueError('gross target outside study limits')
+        if self.min_iv_rv<0:raise ValueError('invalid compensation threshold')
         if min(self.commission,self.slippage,self.financing_spread,self.market_vol_target,self.stock_vol_target)<0:
             raise ValueError('negative costs or volatility target')
         if not 0<=self.hedge_cover<=1 or self.small_lot_floor not in (0,1):
@@ -98,3 +100,16 @@ def hedge_menu(chain, commission=1.5, liquidity=LIQUIDITY):
                      int(lo.optionid),int(sh.optionid))
                 choices.append((key,Structure('hedge',legs,-debit,debit,expiry),cap))
     return [(st,cap) for _,st,cap in sorted(choices,key=lambda x:x[0])]
+
+
+def attach_prior_iv(quotes,calendar):
+    """Lag IV only across adjacent real sessions; no gap/year forward fill."""
+    q=quotes.copy()
+    if q.duplicated(['date','optionid']).any():raise ValueError('duplicate option keys')
+    q['_original_order']=np.arange(len(q));q=q.sort_values(['optionid','date'])
+    cal=pd.DatetimeIndex(calendar);ix=cal.get_indexer(q.date)
+    if (ix<0).any():raise ValueError('quote date outside actual market calendar')
+    group=q.groupby('optionid',sort=False)
+    aligned=(ix>0)&(group.date.shift().to_numpy()==cal[np.maximum(ix-1,0)].to_numpy())
+    q['prior_iv']=np.where(aligned,group.iv.shift(),np.nan)
+    return q.sort_values('_original_order').drop(columns='_original_order')

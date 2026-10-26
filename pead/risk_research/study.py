@@ -9,7 +9,7 @@ from dataclasses import asdict,replace
 import argparse,hashlib,json,time
 import numpy as np
 import pandas as pd
-from .policy import Policy,LIQUIDITY,hedge_menu,lagged_beta
+from .policy import Policy,LIQUIDITY,hedge_menu,lagged_beta,attach_prior_iv
 from .ledger import Ledger
 from pead.earnings_options.index_settlement import credit_menu
 from pead.strategies.weights import causal_inverse_variance
@@ -223,6 +223,11 @@ def step(book,row,chain,spot,stock,events,credit,hedges,resolutions,end,quote_lo
                 funded=False
                 for _,st,cap in credit:
                     if st.expiry not in resolutions:continue
+                    if book.policy.min_iv_rv:
+                        values=[getattr(book.q.get(leg.optionid),'prior_iv',np.nan)
+                                for leg in st.legs if leg.quantity<0]
+                        if not values or not np.isfinite(values).all() or min(values)<book.policy.min_iv_rv*row.rv:
+                            book.skip('insufficient_prior_iv_compensation');continue
                     delta=sum(x.quantity*x.delta*100 for x in st.legs)
                     room=book.carry_room(st.expiry,delta)
                     lots=min(cap,int(room//(st.max_loss*100+4*book.policy.commission)))
@@ -241,8 +246,11 @@ def main():
     p.add_argument('--family',choices=['options','equity','all'],default='all')
     p.add_argument('--stress',choices=['base','double_fee','slippage','lot_floor','funding4','suite'],default='base')
     p.add_argument('--label',default='initial')
+    p.add_argument('--pricing-revision',action='store_true',help='adaptive, frozen 1.2x prior IV/RV challenger')
     p.add_argument('--smoke',action='store_true')
     args=p.parse_args();chosen=policies(args.family)
+    if args.pricing_revision:
+        chosen=[Policy('carry_risk20',carry=True),Policy('carry_rich_iv',carry=True,min_iv_rv=1.2)]
     if args.stress=='suite':
         original=chosen.copy()
         chosen += [replace(x,name=x.name+'__fee2',commission=3.) for x in original]
@@ -281,6 +289,15 @@ def main():
     empty_events=ev.iloc[:0];start=time.monotonic()
     for year,yearrows in b.groupby(b.date.dt.year,sort=True):
         q=quotes_for_year(args.source,int(year),allcal)
+        if args.pricing_revision:
+            prev=args.source/f'data/selective_earnings_index/spx_quotes_{int(year)-1}.parquet'
+            if prev.exists():
+                old=pd.read_parquet(prev,columns=['date','optionid','iv'])
+                old=old[old.date==old.date.max()]
+                expanded=pd.concat([old,q],ignore_index=True)
+            else:expanded=q
+            q=attach_prior_iv(expanded,allcal)
+            q=q[q.date.dt.year==year].copy()
         if q.duplicated(['date','optionid']).any():raise ValueError('duplicate native option keys')
         qgroups={day:g for day,g in q.groupby('date',sort=False)}
         spots=spot_for_year(args.source,int(year),args.optionmetrics)

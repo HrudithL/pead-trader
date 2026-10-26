@@ -288,3 +288,15 @@ def test_negligible_partial_trim_does_not_queue_a_zero_share_exit():
     assert not book.stocks[0].get('pending')
     book.begin(pd.Timestamp('2005-01-04'),0,0,q,{7:0.},100.)
 
+
+def test_prior_iv_uses_only_adjacent_previous_session():
+    from pead.risk_research.policy import attach_prior_iv
+    cal=pd.bdate_range('2005-01-03',periods=4)
+    q=pd.DataFrame(dict(date=[cal[0],cal[1],cal[3]],optionid=1,iv=[.2,.3,.8]))
+    out=attach_prior_iv(q,cal)
+    assert np.isnan(out.prior_iv.iloc[0])
+    assert out.prior_iv.iloc[1]==.2
+    assert np.isnan(out.prior_iv.iloc[2])
+    q.loc[1,'iv']=9.
+    assert attach_prior_iv(q,cal).prior_iv.iloc[1]==.2
+
