@@ -7,16 +7,17 @@ import numpy as np
 class LiquidityPolicy:
     min_oi: float=50
     max_relative_spread: float=.50
-    max_absolute_spread: float=1.
+    max_absolute_spread: float | None=1.
     participation: float=.10
     oi_participation: float=.01
     small_lot_floor: int=1
 
     def __post_init__(self):
-        if not np.isfinite([self.min_oi,self.max_relative_spread,self.max_absolute_spread,
-                            self.participation,self.oi_participation]).all():
+        finite_values=[self.min_oi,self.max_relative_spread,self.participation,self.oi_participation]
+        if self.max_absolute_spread is not None:finite_values.append(self.max_absolute_spread)
+        if not np.isfinite(finite_values).all():
             raise ValueError('finite policy values required')
-        if self.min_oi<0 or not 0<self.max_relative_spread<=2 or self.max_absolute_spread<0:
+        if self.min_oi<0 or not 0<self.max_relative_spread<=2 or (self.max_absolute_spread is not None and self.max_absolute_spread<0):
             raise ValueError('invalid quote limits')
         if not 0<self.participation<=1 or not 0<self.oi_participation<=1:
             raise ValueError('invalid participation')
@@ -29,7 +30,7 @@ def eligible(chain,policy=LiquidityPolicy()):
     width=chain.ask-chain.bid;mid=(chain.ask+chain.bid)/2
     return chain[finite&(chain.bid>=0)&(chain.ask>0)&(width>=0)&chain.standard_contract.eq(True)&
                  (chain.prior_oi>=policy.min_oi)&(chain.delta.abs()>0)&(chain.delta.abs()<=1)&
-                 (width<=policy.max_absolute_spread)&(width/mid<=policy.max_relative_spread)].copy()
+                 (True if policy.max_absolute_spread is None else width<=policy.max_absolute_spread)&(width/mid<=policy.max_relative_spread)].copy()
 
 
 def capacity(legs,policy=LiquidityPolicy()):

@@ -168,3 +168,326 @@ def test_allocator_chooses_best_feasible_structure_for_account_size(nav,credit):
     result=run_profile(e,q,b,pd.DataFrame(rows),Config(initial_nav=nav,sleeves=('directional',),directional_risk=.005))
     assert len(result.trades)==1
     assert (result.trades.iloc[0].entry_cashflow>0)==credit
+
+
+def test_vendor_lagged_oi_is_not_shifted_twice():
+    from pead.earnings_options.index_research import lagged_liquidity
+    dates=pd.bdate_range('2004-01-02',periods=3)
+    q=pd.concat([quotes().iloc[:1].assign(date=d,volume=7.,open_interest=100.+i,ss_flag='0') for i,d in enumerate(dates)])
+    result=lagged_liquidity(q,dates)
+    assert result.iloc[1].prior_volume==7.
+    assert result.iloc[1].prior_oi==101.
+
+
+def test_index_signals_are_flat_when_known_volatility_exceeds_limit():
+    from pead.earnings_options.index_research import policy_direction,POLICIES
+    b=pd.DataFrame(dict(trend_sign=[1,-1,1],breadth_sign=[1,-1,1],rv=[.2,.2,.4]))
+    assert policy_direction(b,POLICIES['earnings_two_sided']).tolist()==[1,-1,0]
+
+
+def test_risk_off_liquidation_uses_current_executable_quotes():
+    from pead.earnings_options.engine import run,Config
+    from test_earnings_options import inputs
+    e,q,b=inputs();b['risk_off']=[False,True,True,True,True]
+    r=run(e,q,b,Config(initial_nav=100_000,sleeves=('directional',)))
+    assert r.trades.iloc[0].exit_date==b.date.iloc[1]
+    assert r.trades.iloc[0].reason=='risk_off'
+
+
+def test_current_value_risk_budget_does_not_reinvest_unprotected_paper_gains():
+    from pead.earnings_options.engine import run,Config
+    from test_earnings_options import inputs
+    e,q,b=inputs()
+    q.loc[(q.date>b.date.iloc[0])&(q.optionid==1),'bid']=5.
+    q.loc[(q.date>b.date.iloc[0])&(q.optionid==1),'ask']=5.1
+    cfg=Config(initial_nav=100_000,aggregate_risk=.003,sleeves=('directional',),current_risk_budget=True)
+    r=run(e,q,b,cfg)
+    assert r.trades.iloc[0].exit_date==b.date.iloc[1]
+    assert r.trades.iloc[0].reason=='risk_rebalance'
+
+
+def test_risk_rebalance_trims_integer_lots_and_preserves_remaining_book():
+    from pead.earnings_options.engine import run,Config
+    from test_earnings_options import inputs
+    e,q,b=inputs()
+    q.loc[(q.date>b.date.iloc[0])&(q.optionid==1),'bid']=5.
+    q.loc[(q.date>b.date.iloc[0])&(q.optionid==1),'ask']=5.1
+    cfg=Config(initial_nav=100_000,aggregate_risk=.006,directional_risk=.006,
+               sleeves=('directional',),current_risk_budget=True)
+    r=run(e,q,b,cfg)
+    assert r.trades.contracts.tolist()==[1,1]
+    assert r.trades.iloc[0].reason=='risk_rebalance'
+    assert r.trades.iloc[1].exit_date==b.date.iloc[-1]
+    assert r.daily.iloc[-1].nav==pytest.approx(100_000+r.trades.pnl.sum())
+
+
+def test_fully_paid_long_call_has_no_fictitious_spread_profit_cap():
+    from pead.earnings_options.engine import run,Config
+    from pead.earnings_options.structures import Leg,Structure
+    from test_earnings_options import inputs
+    e,q,b=inputs();q=q[q.optionid==1].copy();q['underlying_price']=100.
+    q.loc[q.date>b.date.iloc[0],'bid']=6.;q.loc[q.date>b.date.iloc[0],'ask']=6.1
+    def choose(ch,sleeve,direction,event):
+        r=ch.iloc[0]
+        leg=Leg(int(r.optionid),1,'C',float(r.strike),r.expiry,float(r.bid),float(r.ask),float(r.delta),float(r.prior_volume))
+        return Structure(sleeve,(leg,),-r.ask,r.ask,r.expiry),.2,1
+    r=run(e,q,b,Config(initial_nav=100_000,directional_risk=.01,sleeves=('directional',)),selector=choose)
+    assert len(r.trades)==1
+    assert r.trades.iloc[0].pnl==pytest.approx((6.-3.1)*100-1.3)
+
+def test_single_short_put_reserves_entire_strike_and_reconciles():
+    from pead.earnings_options.engine import Config,run
+    from pead.earnings_options.structures import Leg,Structure
+    from test_earnings_options import inputs
+    e,q,b=inputs();q=q[q.optionid==3].copy()
+    def choose(ch,sleeve,direction,event):
+        r=ch.iloc[0]
+        leg=Leg(int(r.optionid),-1,'P',float(r.strike),r.expiry,float(r.bid),float(r.ask),float(r.delta),float(r.prior_volume))
+        return Structure(sleeve,(leg,),r.bid,r.strike-r.bid,r.expiry),.1,100
+    r=run(e,q,b,Config(initial_nav=100_000,directional_risk=.25,aggregate_risk=.25,issuer_risk=.25,sector_risk=.25,cohort_risk=.25,sleeves=('directional',)),selector=choose)
+    assert r.trades.contracts.tolist()==[2]
+    assert r.daily.iloc[0].free_cash==pytest.approx(80_598.7)
+    assert r.trades.iloc[0].pnl==pytest.approx(-22.6)
+    assert r.daily.iloc[-1].nav==pytest.approx(100_000+r.trades.pnl.sum())
+
+
+def test_non_event_volatility_is_lagged_and_excludes_announcement_jump():
+    from pead.earnings_options.cash_puts import non_event_features
+    dates=pd.bdate_range('2000-01-03',periods=100)
+    s=pd.DataFrame(dict(permno=7,date=dates,ret=[.01,-.01]*50,prc=100.))
+    s.loc[70,'ret']=.80
+    announcements=pd.DataFrame(dict(permno=[7],day0_date=[dates[70]]))
+    r=non_event_features(s,announcements)
+    assert r.loc[71,'rv_non_event']<.20
+    changed=s.copy();changed.loc[72:,'ret']=.9
+    other=non_event_features(changed,announcements)
+    assert r.loc[72,'rv_non_event']==pytest.approx(other.loc[72,'rv_non_event'])
+
+
+def test_expected_put_liability_increases_with_volatility_and_tail_stress():
+    from pead.earnings_options.cash_puts import expected_liability
+    a=expected_liability(100.,100.,.2,.3,20,35,tail=False)
+    assert expected_liability(100.,100.,.4,.3,20,35,tail=False)>a
+    assert expected_liability(100.,100.,.2,.3,20,35,tail=True)>a
+
+
+def test_unquoted_exit_defers_and_freezes_new_entries():
+    from test_earnings_options import inputs
+    from pead.earnings_options.engine import Config,run
+    e,q,b=inputs();new=e.copy()
+    new['event_id']='e2';new['entry_date']=b.date.iloc[1];new['release_date']=b.date.iloc[0]
+    e=pd.concat([e,new],ignore_index=True)
+    q.loc[(q.optionid==1)&(q.date==b.date.iloc[1]),['bid','ask']]=np.nan
+    b['risk_off']=[False,True,True,True,True]
+    r=run(e,q,b,Config(initial_nav=100_000,sleeves=('directional',),defer_unquoted_exits=True))
+    assert len(r.trades)==1
+    assert r.trades.iloc[0].exit_date==b.date.iloc[2]
+    assert not r.trades.iloc[0].exit_is_worst_loss_reserve
+    assert r.diagnostics['missing_marks']>0
+    assert not r.diagnostics['execution_valid']
+    assert 'unquoted_open_position' in set(r.skips.reason)
+    assert r.daily.iloc[-1].nav==pytest.approx(100_000+r.trades.pnl.sum())
+
+
+def test_non_event_prior_price_is_on_entry_split_basis():
+    from pead.earnings_options.cash_puts import non_event_features
+    s=pd.DataFrame(dict(permno=[7,7],date=pd.to_datetime(['2000-01-03','2000-01-04']),ret=[0.,0.],prc=[100.,50.],cfacpr=[2.,1.]))
+    e=pd.DataFrame(dict(permno=pd.Series(dtype=int),day0_date=pd.Series(dtype='datetime64[ns]')))
+    assert non_event_features(s,e).prior_spot.iloc[-1]==pytest.approx(50.)
+
+
+def test_capacity_call_selection_uses_feasible_liquid_strike():
+    from pead.earnings_options.index_calls import CallPolicy,select_call
+    from types import SimpleNamespace
+    date=pd.Timestamp('2006-01-03')
+    q=pd.DataFrame(dict(date=[date,date],expiry=[date+pd.Timedelta(days=270)]*2,
+        optionid=[1,2],cp=['C','C'],strike=[70.,80.],bid=[29.9,19.9],ask=[30.,20.],
+        delta=[.95,.90],prior_volume=[0.,100.],prior_oi=[100.,5000.],standard_contract=True,
+        underlying_price=[100.,100.],prior_underlying_price=[100.,100.]))
+    ctx=dict(nav=100000.,risk_budget=45000.,free_cash=100000.,commission=1.,date=date,
+             used_lots={},open_delta_units=0.,greeks_complete=True)
+    event=SimpleNamespace(spot=100.)
+    selected=select_call(q,CallPolicy(False,1.5,.45,capacity_selection=True),event,ctx)
+    assert selected[0].legs[0].optionid==2
+    changed=q.copy();changed['underlying_price']=200.
+    other=select_call(changed,CallPolicy(False,1.5,.45,capacity_selection=True),event,ctx)
+    assert other[0].legs[0].optionid==2
+
+
+def test_deferred_missing_exit_never_recovers_after_contract_terminal():
+    from test_earnings_options import inputs
+    from pead.earnings_options.engine import Config,run
+    e,q,b=inputs();q['expiry']=b.date.iloc[3]
+    b['risk_off']=[False,True,True,True,True]
+    q.loc[q.date.isin(b.date.iloc[1:3]),['bid','ask']]=np.nan
+    from pead.earnings_options.structures import Leg,Structure
+    def choose(ch,sleeve,direction,event):
+        a=ch[ch.optionid==1].iloc[0];z=ch[ch.optionid==2].iloc[0]
+        legs=tuple(Leg(int(x.optionid),qty,'C',float(x.strike),x.expiry,float(x.bid),float(x.ask),float(x.delta),float(x.prior_volume)) for x,qty in ((a,1),(z,-1)))
+        debit=a.ask-z.bid
+        return Structure(sleeve,legs,-debit,debit,a.expiry),.2,1
+    r=run(e,q,b,Config(initial_nav=100000,sleeves=('directional',),expiry_buffer_days=1,defer_unquoted_exits=True),selector=choose)
+    assert len(r.trades)==1
+    assert r.trades.iloc[0].exit_date==b.date.iloc[2]
+    assert r.trades.iloc[0].exit_is_worst_loss_reserve
+    assert r.trades.iloc[0].reason=='contract_terminal'
+
+
+def test_single_name_call_selector_skips_unaffordable_low_cost_contract():
+    from pead.earnings_options.earnings_calls import select_menu
+    from pead.earnings_options.structures import Leg,Structure
+    expiry=pd.Timestamp('2020-06-20')
+    def st(oid,ask):
+        leg=Leg(oid,1,'C',60.,expiry,ask-.1,ask,.9,100.)
+        return Structure('directional',(leg,),-ask,ask,expiry)
+    choices=[((0.,),st(1,40.),5),((1.,),st(2,21.),5)]
+    date=pd.Timestamp('2020-02-03')
+    ctx=dict(date=date,used_lots={},commission=.65,risk_budget=3000.,free_cash=100000.)
+    assert select_menu(choices,ctx)[0].legs[0].optionid==2
+    ctx['risk_budget']=30000.
+    assert select_menu(choices,ctx)[0].legs[0].optionid==1
+
+
+def test_known_corporate_action_exits_only_when_information_is_available():
+    from test_earnings_options import inputs
+    from pead.earnings_options.engine import Config,run
+    e,q,b=inputs()
+    a=pd.DataFrame(dict(secid=[7],known_date=[b.date.iloc[2]],effective_date=[b.date.iloc[-1]]))
+    r=run(e,q,b,Config(initial_nav=100000,sleeves=('directional',)),corporate_actions=a)
+    assert r.trades.iloc[0].entry_date==b.date.iloc[0]
+    assert r.trades.iloc[0].exit_date==b.date.iloc[2]
+    assert r.trades.iloc[0].reason=='announced_corporate_action'
+    a['known_date']=b.date.iloc[0]
+    blocked=run(e,q,b,Config(initial_nav=100000,sleeves=('directional',)),corporate_actions=a)
+    assert blocked.trades.empty
+    assert 'announced_corporate_action' in set(blocked.skips.reason)
+
+
+def test_concentrated_call_selection_obeys_gross_stock_admission_limit():
+    from pead.earnings_options.earnings_calls import select_menu
+    from pead.earnings_options.structures import Leg,Structure
+    from types import SimpleNamespace
+    date=pd.Timestamp('2020-02-03');expiry=pd.Timestamp('2020-06-20')
+    leg=Leg(1,1,'C',60.,expiry,39.9,40.,.9,100.)
+    st=Structure('directional',(leg,),-40.,40.,expiry)
+    ctx=dict(date=date,used_lots={},commission=.65,risk_budget=30000.,free_cash=100000.,
+        stock_notional_complete=True,open_stock_notional_bound=195000.,nav=100000.)
+    event=SimpleNamespace(portfolio_stock_limit=2.,spot=100.)
+    assert select_menu([((0.,),st,20)],ctx,event) is None
+    ctx['open_stock_notional_bound']=180000.
+    assert select_menu([((0.,),st,20)],ctx,event)[2]==2
+
+
+def test_stock_exposure_context_counts_other_issuers_using_prior_known_prices():
+    from test_earnings_options import inputs
+    from pead.earnings_options.engine import Config,run
+    from pead.earnings_options.earnings_calls import select_menu
+    from pead.earnings_options.structures import Leg,Structure
+    e,q,b=inputs();one=q[q.optionid==1].copy();one['underlying_price']=100.
+    events=[];quotes=[]
+    for issuer,oid,name,day in ((7,1,'a',0),(8,11,'b',0),(9,21,'c',1)):
+        x=e.copy();x['secid']=issuer;x['event_id']=name;x['spot']=100.;x['portfolio_stock_limit']=2.
+        x['entry_date']=b.date.iloc[day];x['release_date']=b.date.iloc[day]-pd.Timedelta(days=2)
+        events.append(x)
+        y=one.copy();y['secid']=issuer;y['optionid']=oid;quotes.append(y)
+    q=pd.concat(quotes,ignore_index=True)
+    q.loc[q.date==b.date.iloc[1],'underlying_price']=1_000_000.
+    contexts=[]
+    def choose(ch,sleeve,direction,event,ctx):
+        contexts.append((event.event_id,ctx['open_stock_notional_bound']))
+        a=ch.iloc[0];leg=Leg(int(a.optionid),1,'C',float(a.strike),a.expiry,float(a.bid),float(a.ask),float(a.delta),float(a.prior_volume))
+        st=Structure(sleeve,(leg,),-a.ask,a.ask,a.expiry)
+        return select_menu([((0.,),st,10)],ctx,event)
+    cfg=Config(initial_nav=100000,sleeves=('directional',),require_price_edge=False,directional_risk=.30,issuer_risk=.30,sector_risk=1.,cohort_risk=1.,aggregate_risk=.80)
+    r=run(pd.concat(events,ignore_index=True),q,b,cfg,selector=choose,selector_context=True)
+    assert dict(contexts)['b']==pytest.approx(100000.)
+    assert dict(contexts)['c']==pytest.approx(190000.)
+    assert r.trades.contracts.tolist()==[10,9]
+    assert r.daily.free_cash.min()>=0
+    assert r.daily.iloc[-1].nav==pytest.approx(100000+r.trades.pnl.sum())
+
+
+@pytest.mark.parametrize('factor',[.5,2.])
+def test_stock_bound_keeps_price_and_contract_factor_on_same_historical_basis(factor):
+    from test_earnings_options import inputs
+    from pead.earnings_options.engine import Config,run
+    from pead.earnings_options.structures import Leg,Structure
+    e,q,b=inputs();q=q[q.optionid==1].copy()
+    q['underlying_price']=10.;q['cfadj']=1.;q['strike']=1.;q['bid']=9.;q['ask']=9.1
+    q.loc[q.date>b.date.iloc[0],'underlying_price']=10./factor
+    q.loc[q.date>b.date.iloc[0],'cfadj']=factor
+    q.loc[q.date>b.date.iloc[0],'strike']=1./factor
+    q.loc[q.date>b.date.iloc[0],'bid']=9./factor
+    q.loc[q.date>b.date.iloc[0],'ask']=9.1/factor
+    other=q.copy();other['secid']=8;other['optionid']=11
+    e['spot']=10.;e['portfolio_stock_limit']=2.
+    other_event=e.copy();other_event['event_id']='e2';other_event['secid']=8
+    other_event['entry_date']=b.date.iloc[1];other_event['release_date']=b.date.iloc[0]
+    observed=[]
+    def choose(ch,sleeve,direction,event,ctx):
+        if event.event_id=='e2':observed.append(ctx['open_stock_notional_bound']);return None
+        a=ch.iloc[0];leg=Leg(int(a.optionid),1,'C',a.strike,a.expiry,a.bid,a.ask,a.delta,a.prior_volume)
+        return Structure(sleeve,(leg,),-a.ask,a.ask,a.expiry),0.,1
+    cfg=Config(initial_nav=100000,sleeves=('directional',),require_price_edge=False,directional_risk=.30)
+    run(pd.concat([e,other_event],ignore_index=True),pd.concat([q,other],ignore_index=True),b,cfg,selector=choose,selector_context=True)
+    assert observed==pytest.approx([1000.])
+
+
+def test_streamed_quote_store_matches_cash_ledger_across_year_boundary():
+    from test_earnings_options import inputs
+    from pead.earnings_options.engine import Config,run
+    from pead.earnings_options.quote_store import YearQuoteStore
+    e,q,b=inputs();old=b.date.copy();new=pd.bdate_range('2020-12-30',periods=len(b))
+    q['date']=q.date.map(dict(zip(old,new)));q['expiry']=pd.Timestamp('2021-02-19')
+    e['entry_date']=new[0];e['release_date']=new[0]-pd.Timedelta(days=2);b['date']=new
+    cfg=Config(initial_nav=100000,sleeves=('directional',),hold_sessions=3)
+    expected=run(e,q,b,cfg)
+    loaded=[]
+    def load(year):loaded.append(year);return q[q.date.dt.year==year].copy()
+    source=YearQuoteStore(load)
+    actual=run(e,source,b,cfg)
+    pd.testing.assert_frame_equal(actual.daily,expected.daily)
+    pd.testing.assert_frame_equal(actual.trades,expected.trades)
+    assert actual.trades.iloc[0].exit_date.year==2021
+    assert loaded==[2020,2021]
+
+
+def test_long_carry_uses_whole_trade_cost_instead_of_absolute_half_dollar_gate():
+    from pead.earnings_options.earnings_carry import menu
+    from types import SimpleNamespace
+    date=pd.Timestamp('2005-01-03')
+    q=pd.DataFrame(dict(date=[date],expiry=[date+pd.Timedelta(days=180)],optionid=[1],cp=['C'],
+        strike=[400.],bid=[100.],ask=[102.],delta=[.9],iv=[.2],prior_delta=[.9],prior_iv=[.2],prior_volume=[100.],prior_oi=[1000.],standard_contract=[True]))
+    assert len(menu(q,SimpleNamespace(spot=500.)))==1
+    q['ask']=110.
+    assert menu(q,SimpleNamespace(spot=500.))==[]
+
+
+def test_carry_contract_admission_uses_prior_session_analytics():
+    from pead.earnings_options.earnings_carry import menu
+    from types import SimpleNamespace
+    date=pd.Timestamp('2005-01-03')
+    q=pd.DataFrame(dict(date=[date],expiry=[date+pd.Timedelta(days=180)],optionid=[1],cp=['C'],
+        strike=[400.],bid=[100.],ask=[102.],delta=[.9],iv=[.2],prior_delta=[.9],prior_iv=[.2],
+        prior_volume=[100.],prior_oi=[1000.],standard_contract=[True]))
+    first=menu(q,SimpleNamespace(spot=500.))
+    q['delta']=.1;q['iv']=float('nan')
+    other=menu(q,SimpleNamespace(spot=500.))
+    assert first==other
+    q['prior_delta']=.1
+    assert menu(q,SimpleNamespace(spot=500.))==[]
+
+
+def test_intrinsic_carry_uses_price_and_exposure_bound_without_inventing_greeks():
+    from pead.earnings_options.earnings_carry import menu
+    from types import SimpleNamespace
+    date=pd.Timestamp('2005-01-03')
+    q=pd.DataFrame(dict(date=[date],expiry=[date+pd.Timedelta(days=180)],optionid=[1],cp=['C'],
+        strike=[400.],bid=[100.],ask=[102.],delta=[float('nan')],iv=[float('nan')],
+        prior_volume=[100.],prior_oi=[1000.],standard_contract=[True]))
+    choices=menu(q,SimpleNamespace(spot=500.),intrinsic=True)
+    assert len(choices)==1
+    assert choices[0][1].cashflow==-102.
+    assert choices[0][1].legs[0].delta==1.
+    q['bid']=89.;q['ask']=90.
+    assert menu(q,SimpleNamespace(spot=500.),intrinsic=True)==[]
