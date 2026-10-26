@@ -114,13 +114,13 @@ def prepare(all_events,benchmark,fee,calendar,intrinsic=False):
     return pd.concat(events,ignore_index=True),paths
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--market-gate',action='store_true');parser.add_argument('--double-fee',action='store_true');parser.add_argument('--cash-sweep',action='store_true');parser.add_argument('--intrinsic',action='store_true')
-    args=parser.parse_args();suffix=('_trend' if args.market_gate else '')+('_double_fee' if args.double_fee else '')+('_cash' if args.cash_sweep else '')
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--market-gate',action='store_true');parser.add_argument('--double-fee',action='store_true');parser.add_argument('--cash-sweep',action='store_true');parser.add_argument('--intrinsic',action='store_true');parser.add_argument('--capacity-ceiling',action='store_true')
+    args=parser.parse_args();suffix=('_trend' if args.market_gate else '')+('_double_fee' if args.double_fee else '')+('_cash' if args.cash_sweep else '')+('_ceiling' if args.capacity_ceiling else '')
     family='selective_earnings_carry_intrinsic' if args.intrinsic else 'selective_earnings_carry_lagged'
     out=ROOT/f'results/{family}{suffix}';out.mkdir(parents=True,exist_ok=True)
     (out/'source_versions.json').write_text(json.dumps({p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in Path(__file__).parent.glob('*.py')},indent=2))
-    protocol=dict(metrics_risk_free='official French daily RF',cash_interest_proxy=args.cash_sweep,prior_session_greeks=not args.intrinsic,delta_is_risk_upper_bound=args.intrinsic,moneyness_floor=1.20 if args.intrinsic else 1.05,price_floor_prior_intrinsic_pct=.01 if args.intrinsic else None,liquidity=asdict(LIQ),car_floors=POLICIES,max_tickets=8,hold_sessions=50,dte=[120,270],cost_per_stock_delta_limit=.01,
-        ticket_risk=.30,issuer_admission_risk=.30,sector_admission_risk=.50,cohort_admission_risk=.50,aggregate_marked_risk=.80,
+    protocol=dict(capacity_ceiling=args.capacity_ceiling,metrics_risk_free='official French daily RF',cash_interest_proxy=args.cash_sweep,prior_session_greeks=not args.intrinsic,delta_is_risk_upper_bound=args.intrinsic,moneyness_floor=1.20 if args.intrinsic else 1.05,price_floor_prior_intrinsic_pct=.01 if args.intrinsic else None,liquidity=asdict(LIQ),car_floors=POLICIES,max_tickets=8,hold_sessions=50,dte=[120,270],cost_per_stock_delta_limit=.01,
+        ticket_risk=.80 if args.capacity_ceiling else .30,issuer_admission_risk=.80 if args.capacity_ceiling else .30,sector_admission_risk=.80 if args.capacity_ceiling else .50,cohort_admission_risk=.80 if args.capacity_ceiling else .50,aggregate_marked_risk=.80,
         stock_exposure_admission_bound=2.,continuous_across_years=True,market_gate=args.market_gate,commission=1.30 if args.double_fee else .65)
     (out/'frozen_policy.json').write_text(json.dumps(protocol,indent=2))
     all_events=pd.read_parquet(OLD/'all_events.parquet')
@@ -140,8 +140,8 @@ def main():
         for capital in (100000,1000000):
             label=f'{name}_{capital//1000}k'
             cfg=Config(initial_nav=capital,strict=False,hold_sessions=50,expiry_buffer_days=14,sleeves=('directional',),
-                require_price_edge=False,min_adv=5000000,directional_risk=.30,issuer_risk=.30,sector_risk=.50,
-                aggregate_risk=.80,cohort_risk=.50,current_risk_budget=True,defer_unquoted_exits=True,commission=protocol['commission'])
+                require_price_edge=False,min_adv=5000000,directional_risk=protocol['ticket_risk'],issuer_risk=protocol['issuer_admission_risk'],sector_risk=protocol['sector_admission_risk'],
+                aggregate_risk=.80,cohort_risk=protocol['cohort_admission_risk'],current_risk_budget=True,defer_unquoted_exits=True,commission=protocol['commission'])
             source=YearQuoteStore(lambda year:pd.read_parquet(paths[year]))
             memo={};memo_date=None
             def choose(ch,sleeve,direction,event,ctx):

@@ -32,6 +32,7 @@ class Config:
     expiry_buffer_days: int = 7
     condor_stops: bool = True
     defer_unquoted_exits: bool = False
+    cash_settlement: bool = False
     sleeves: tuple = ("directional", "condor", "reversal")
 
     def __post_init__(self):
@@ -61,7 +62,7 @@ class Result:
     diagnostics: dict
 
 
-def run(events, quotes, benchmark, config=Config(), selector=None, selector_context=False, corporate_actions=None):
+def run(events, quotes, benchmark, config=Config(), selector=None, selector_context=False, corporate_actions=None, settlements=None):
     """Entries and exits occur at EOD; same-close fills use lagged liquidity only.
 
     Benchmark date rows are the authoritative session calendar. Missing quotes are
@@ -107,6 +108,19 @@ def run(events, quotes, benchmark, config=Config(), selector=None, selector_cont
         qgroups={k:v for k,v in entry_quotes.groupby(["date","secid"],sort=False)}
     egroups={k:v for k,v in e.groupby("entry_date",sort=False)}
     calendar=b.date.tolist()
+    settlement_lookup={}
+    if cfg.cash_settlement:
+        if settlements is None or {'secid','expiry','settlement_date','value'}-set(settlements):
+            raise ValueError("cash settlement requires explicit resolution data")
+        resolved=settlements.copy()
+        for col in ('expiry','settlement_date'):
+            resolved[col]=pd.to_datetime(resolved[col]).dt.normalize()
+        if (resolved.duplicated(['secid','expiry']).any() or
+            resolved[['expiry','settlement_date']].isna().any().any() or
+            not np.isfinite(resolved.value).all() or (resolved.value<=0).any() or
+            (resolved.settlement_date>resolved.expiry).any()):
+            raise ValueError("invalid or ambiguous cash settlement")
+        settlement_lookup={(r.secid,r.expiry):(r.settlement_date,float(r.value)) for r in resolved.itertuples()}
     action_days={}
     if corporate_actions is not None:
         a=corporate_actions.copy()
@@ -132,6 +146,11 @@ def run(events, quotes, benchmark, config=Config(), selector=None, selector_cont
 
     def mark(position,date):
         nonlocal diag,quote_failure_today
+        if cfg.cash_settlement and date>=position['settlement_date']:
+            spot=position['settlement_value']
+            value=sum(leg.quantity*max(0.,spot-leg.strike if leg.cp=='C' else leg.strike-spot)
+                      for leg in position['structure'].legs)*100*position['contracts']
+            return value,False
         value=0.;valid=True
         for leg in position["structure"].legs:
             row=quote_lookup.get((date,position["secid"],leg.optionid))
@@ -200,7 +219,11 @@ def run(events, quotes, benchmark, config=Config(), selector=None, selector_cont
             if getattr(day,"risk_off",False):exit_reason="risk_off"
             signal=int(getattr(day,"direction_signal",0))
             if signal and p.get("direction",0) not in (0,signal):exit_reason="regime_change"
-            if idx>=p["last_trade_idx"]:exit_reason="contract_terminal"
+            if cfg.cash_settlement:
+                # A declared hold-to-settlement position cannot be liquidated after
+                # its last trading session. It resolves to the actual cash payoff.
+                exit_reason="cash_settlement" if date>=p['settlement_date'] else None
+            elif idx>=p["last_trade_idx"]:exit_reason="contract_terminal"
             if idx==len(b)-1: exit_reason="sample_end"
             if cfg.current_risk_budget and risk_total>risk_ceiling and not exit_reason:exit_reason="risk_rebalance"
             if exit_reason and missing and cfg.defer_unquoted_exits and idx<min(len(b)-1,p["last_trade_idx"]):
@@ -357,6 +380,14 @@ def run(events, quotes, benchmark, config=Config(), selector=None, selector_cont
                         iv=ch[ch.optionid.isin(ids)].iv.mean()
                         if not np.isfinite(iv) or iv/row.rv<cfg.iv_rv_threshold:
                             skip(row,sleeve,"iv_not_rich");continue
+                    settlement_date=None;settlement_value=None
+                    if cfg.cash_settlement:
+                        resolution=settlement_lookup.get((row.secid,structure.expiry))
+                        if resolution is None:
+                            raise ValueError("missing cash settlement for selected contract")
+                        settlement_date,settlement_value=resolution
+                        if settlement_date<=date or settlement_date not in calendar:
+                            raise ValueError("cash settlement must follow entry within sample")
                     nlegs=len(structure.legs)
                     fee=cfg.commission*nlegs
                     risk_unit=structure.max_loss*100+2*fee
@@ -398,6 +429,7 @@ def run(events, quotes, benchmark, config=Config(), selector=None, selector_cont
                             if planned_exit<=date or planned_exit>structure.expiry or planned_exit not in calendar:
                                 raise ValueError("invalid predeclared exit date")
                             ex=int(np.searchsorted(calendar,planned_exit,side="left"))
+                    if cfg.cash_settlement:expiry_stop=settlement_date
                     if expiry_stop<=date:
                         skip(row,sleeve,"insufficient_expiry_buffer");continue
                     factors={int(r.optionid):float(getattr(r,"cfadj",1.)) for r in ch.itertuples() if int(r.optionid) in {x.optionid for x in structure.legs}}
@@ -411,6 +443,10 @@ def run(events, quotes, benchmark, config=Config(), selector=None, selector_cont
                            last_trade_idx=min(len(calendar)-1,max(0,int(np.searchsorted(calendar,structure.expiry-pd.Timedelta(days=getattr(row,"last_trade_buffer_days",1)),side="right"))-1)),scheduled_date=scheduled,
                            scheduled_stop=calendar[max(0,int(np.searchsorted(calendar,scheduled,side="left"))-1)] if pd.notna(scheduled) else pd.NaT,
                            entry_cashflow=structure.cashflow*100*contracts,entry_fee=fee*contracts,exit_fee=fee*contracts)
+                    if cfg.cash_settlement:
+                        p['settlement_date']=settlement_date
+                        p['settlement_value']=settlement_value
+                        p['last_trade_idx']=calendar.index(settlement_date)
                     cash+=p["entry_cashflow"]-p["entry_fee"]
                     open_book.append(p)
                     for leg in structure.legs:
