@@ -156,8 +156,10 @@ def step(book,row,chain,spot,stock,events,credit,hedges,resolutions,end,quote_lo
     actual={ex:v for ex,(day,v) in resolutions.items() if day==row.date}
     stock_capacity={} if stock is None else dict(zip(stock.permno,(stock.prior_adv*.05).fillna(0.)))
     if stock_pack is not None:returns,stock_capacity,prices=stock_pack
+    raw_prices=({} if stock is None else dict(zip(stock.permno,stock.prc.abs())))
     book.begin(row.date,row.cash_rf,row.benchmark,chain,returns,spot,actual,
-        stock_capacity=stock_capacity,funding_rf=row.funding_rf,quote_lookup=quote_lookup)
+        stock_capacity=stock_capacity,funding_rf=row.funding_rf,quote_lookup=quote_lookup,
+        stock_prices=raw_prices)
     # Evaluation uses the published contemporaneous risk-free proxy; cash earns
     # only the separately lagged/haircut series applied above.
     book.rf=row.rf;book.chain=chain
@@ -272,6 +274,7 @@ def main():
     empty_events=ev.iloc[:0];start=time.monotonic()
     for year,yearrows in b.groupby(b.date.dt.year,sort=True):
         q=quotes_for_year(args.source,int(year),allcal)
+        if q.duplicated(['date','optionid']).any():raise ValueError('duplicate native option keys')
         qgroups={day:g for day,g in q.groupby('date',sort=False)}
         spots=spot_for_year(args.source,int(year),args.optionmetrics)
         stocks=equity_day_inputs(args.data,int(year),ev.permno.unique()) if len(ev) else {}
@@ -309,8 +312,12 @@ def main():
         audit=dict(cash_residual=book.reconciliation(),cash_interest=book.cash_interest,
             financing=book.financing,stock_fees=book.stock_fees,option_fees=book.option_fees,
             missing_option_mark_calls=book.missing_marks,missing_stock_marks=book.missing_stock_marks,
-            skips=book.skips,final_nav=book.nav,investment_accepted=False)
+            skips=book.skips,final_nav=book.nav,investment_accepted=False,
+            attribution_residual=book.nav-(book.initial+book.cash_interest-book.financing+
+                                          sum(t['pnl'] for t in book.trades)))
         (folder/'audit.json').write_text(json.dumps(audit,indent=2),encoding='utf-8')
+        if abs(audit['cash_residual'])>.01 or abs(audit['attribution_residual'])>.01:
+            raise ValueError('independent terminal trade attribution failed')
     (out/'complete.json').write_text(json.dumps(dict(completed=True,elapsed_seconds=time.monotonic()-start)),encoding='utf-8')
 
 

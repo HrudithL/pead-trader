@@ -233,3 +233,39 @@ def test_stock_capacity_rounding_never_adds_a_share():
     assert book.stock_value==930
     assert book.used_stock[7]<=70
 
+
+def test_remaining_loss_is_distinct_from_original_admission_loss():
+    from pead.earnings_options.structures import Leg,Structure
+    q=chain();ex=q.expiry.iloc[0]
+    st=Structure('carry',(Leg(2,1,'P',90.,ex,1.,1.1,-.15,1000),
+                           Leg(1,-1,'P',100.,ex,3.,3.1,-.35,1000)),1.9,8.1,ex)
+    book=make_ledger();book.begin(q.date.iloc[0],0,0,q,{},100.)
+    book.open_option(st,2,'carry',pd.Timestamp('2005-03-18'),q);book.finish()
+    assert book.daily[-1]['carry_admission_risk']==pytest.approx(1632.)
+    assert book.daily[-1]['carry_remaining_loss']==pytest.approx(1580.)
+
+
+def test_later_quotes_cannot_revise_previous_ledger_observations():
+    from pead.earnings_options.structures import Leg,Structure
+    q=chain();ex=q.expiry.iloc[0]
+    st=Structure('carry',(Leg(2,1,'P',90.,ex,1.,1.1,-.15,1000),
+                           Leg(1,-1,'P',100.,ex,3.,3.1,-.35,1000)),1.9,8.1,ex)
+    books=[make_ledger(),make_ledger()]
+    for book in books:
+        book.begin(q.date.iloc[0],0,0,q,{},100.)
+        book.open_option(st,2,'carry',pd.Timestamp('2005-03-18'),q);book.finish()
+    changed=q.copy();changed[['bid','ask']]*=1.8
+    books[0].begin(pd.Timestamp('2005-01-04'),0,0,q,{},100.);books[0].finish()
+    books[1].begin(pd.Timestamp('2005-01-04'),0,0,changed,{},100.);books[1].finish()
+    assert books[0].daily[0]==books[1].daily[0]
+    assert books[0].options[0]['lots']==books[1].options[0]['lots']
+
+
+def test_stock_split_updates_share_units_before_capacity_rounding():
+    book=make_ledger(equity_scale=1.);q=chain().iloc[:0]
+    book.begin(pd.Timestamp('2005-01-03'),0,0,q,{},100.)
+    book.open_stock(7,10,1000,0,pd.Timestamp('2005-01-10'),1e8);book.finish()
+    book.begin(pd.Timestamp('2005-01-04'),0,0,q,{7:0.},100.,stock_prices={7:5.})
+    assert book.stocks[0]['shares']==200
+    assert book.stock_value==1000
+

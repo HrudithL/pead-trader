@@ -66,7 +66,7 @@ class Ledger:
         return self.cash+self.stock_value+sum(self.mark_option(p)[0]-self.policy.commission*len(p['structure'].legs)*p['lots'] for p in self.options)
 
     def begin(self,date,rf,market,quotes,stock_returns,spot,settlements=None,
-              stock_capacity=None,funding_rf=None,quote_lookup=None):
+              stock_capacity=None,funding_rf=None,quote_lookup=None,stock_prices=None):
         """Apply beginning cash carry, actual stock returns and native resolution."""
         if not np.isfinite([rf,market,spot]).all() or spot<=0:raise ValueError('invalid market inputs')
         self.date=pd.Timestamp(date);self.q=self._quotes(quotes) if quote_lookup is None else quote_lookup
@@ -90,6 +90,11 @@ class Ledger:
                     self.missing_stock_marks+=1
             else:
                 pnl=p['value']*ret;p['value']+=pnl;self.stock_pnl_today+=pnl
+                price=(stock_prices or {}).get(p['permno'],np.nan)
+                if np.isfinite(price) and price>0 and p['value']>0:
+                    # Rebase total-return/DRIP units to raw contemporaneous price
+                    # so splits and reverse splits do not corrupt share rounding.
+                    p['shares']=p['value']/price
         for p in list(self.stocks):
             if self.date>=p['exit_date'] or p.get('pending'):
                 fraction=(1. if self.date>=p['exit_date'] else
