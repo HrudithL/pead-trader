@@ -236,6 +236,7 @@ class Ledger:
         if not 0<fraction<=1:raise ValueError('invalid stock sale fraction')
         requested=(p['shares'] if fraction==1. else
                    min(p['shares'],np.ceil(p['shares']*fraction-1e-10)))
+        if requested<=0:return 0.
         executed=requested
         if self.stock_capacity is not None and p['value']>0:
             room=max(0.,self.stock_capacity.get(p['permno'],0.)-self.used_stock.get(p['permno'],0.))

@@ -278,3 +278,13 @@ def test_terminal_sale_removes_fractional_drip_dust():
     book.begin(pd.Timestamp('2005-01-04'),0,0,q,{7:0.},100.)
     assert not book.stocks
 
+
+def test_negligible_partial_trim_does_not_queue_a_zero_share_exit():
+    book=make_ledger(equity_scale=1.);q=chain().iloc[:0]
+    book.begin(pd.Timestamp('2005-01-03'),0,0,q,{},100.)
+    book.open_stock(7,10,1000,0,pd.Timestamp('2005-01-10'),1e8)
+    book.stock_capacity={7:1000.}
+    book.close_stock(book.stocks[0],'risk_trim',1e-15);book.finish()
+    assert not book.stocks[0].get('pending')
+    book.begin(pd.Timestamp('2005-01-04'),0,0,q,{7:0.},100.)
+

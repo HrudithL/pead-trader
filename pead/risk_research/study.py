@@ -304,8 +304,17 @@ def main():
                 menus[(floor,commission)]=(credit,hedges)
             for book in books:
                 credit,hedges=menus[(book.policy.small_lot_floor,book.policy.commission)]
-                step(book,row,chain,spot,stocks.get(row.date),event_groups.get(row.date,empty_events),
-                     credit,hedges,resolutions,b.date.iloc[-1],lookup,stock_pack)
+                try:
+                    step(book,row,chain,spot,stocks.get(row.date),event_groups.get(row.date,empty_events),
+                         credit,hedges,resolutions,b.date.iloc[-1],lookup,stock_pack)
+                except Exception as error:
+                    (out/'failure.json').write_text(json.dumps(dict(scenario=book.policy.name,
+                        capital=book.initial,date=str(row.date),error=repr(error),
+                        stock_count=len(book.stocks),stock_value=book.stock_value,
+                        pending_stocks=[s for s in book.stocks if s.get('pending')][:10]),
+                        indent=2,default=str),encoding='utf-8')
+                    pd.DataFrame(book.daily).to_csv(out/'failed_account_partial_daily.csv.gz',index=False)
+                    raise
         print(f'{name}: {year}; elapsed {time.monotonic()-start:.1f}s; '+
               ', '.join(f'{x.policy.name}/{x.initial:g}={x.nav:,.0f}' for x in books if '__' not in x.policy.name)+
               f'; {len(books)} funded accounts including stresses',flush=True)
