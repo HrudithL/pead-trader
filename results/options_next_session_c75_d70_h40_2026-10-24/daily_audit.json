@@ -1,0 +1,17 @@
+{
+  "eligible_contracts": 5522,
+  "required_daily_quote_lookups": 226402,
+  "matched_daily_quotes": 225878,
+  "daily_quote_coverage": 0.9976855328133144,
+  "eligible_contracts_with_adjustment_or_special_settlement": 198,
+  "contract_level_quotes_persisted": false,
+  "source_optionmetrics_dir": "D:\\OptionMetrics\\parquet",
+  "factor_provenance": {
+    "ff3_url": "https://mba.tuck.dartmouth.edu/pages/faculty/Ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip",
+    "momentum_url": "https://mba.tuck.dartmouth.edu/pages/faculty/Ken.french/ftp/F-F_Momentum_Factor_daily_CSV.zip",
+    "ff3_sha256": "2f29e22546069914890a712680a6f81f3680ebc3543b52864484d209ca13a7db",
+    "momentum_sha256": "ecf82b116e6ec56d2b79a2f27bd1d1598c217b5c6c25caa55b945bdd8a2c0b78",
+    "factor_zip_directory": "C:\\Users\\hrudi\\Documents\\BEI\\PEAD_Trading\\.claude\\worktrees\\options-next-study\\data\\factor"
+  },
+  "all_cash_final_nav": 14476864.556351427
+}

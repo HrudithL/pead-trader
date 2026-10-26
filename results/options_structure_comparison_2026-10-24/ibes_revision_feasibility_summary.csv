@@ -1,0 +1,4 @@
+feature_freeze,events,events_with_target_quarter,events_with_any_pre_event_forecast,events_with_3plus_pre_event_analysts,events_with_changed_existing_analyst,changed_existing_analysts_total,events_with_new_post_event_analyst,median_changed_analysts_per_event,median_revision_value_change_when_present,revision_date_rule
+d1,33108,33048,32084,27151,13478,27158,4567,0.0,0.010000000000000009,revdats strictly after event date and strictly before next-session-after-feature entry date
+d5,33108,33048,32084,27151,20043,49864,7916,1.0,0.010000000000000009,revdats strictly after event date and strictly before next-session-after-feature entry date
+d10,33108,33048,32084,27151,22118,59681,9542,1.0,0.010000000000000009,revdats strictly after event date and strictly before next-session-after-feature entry date

@@ -1,0 +1,98 @@
+{
+  "study": "cleaned SUE drift, post-drift giveback, and lag-4 SUE association",
+  "years": [
+    1998,
+    1999,
+    2000,
+    2001,
+    2002,
+    2003,
+    2004,
+    2005,
+    2006,
+    2007,
+    2008,
+    2009,
+    2010,
+    2012,
+    2013
+  ],
+  "event_rows_after_collision_filter": 147115,
+  "duplicate_policy": {
+    "input_events": 147142,
+    "retained_events": 147115,
+    "duplicate_event_date_groups": 13,
+    "duplicate_extra_rows": 14,
+    "duplicate_event_rows_excluded": 27,
+    "eligible_signal_rows_excluded_by_duplicates": 15,
+    "opposing_signal_groups": 1,
+    "multiple_decile_groups": 11,
+    "policy": "exclude every row in a repeated secid/day0_date cluster"
+  },
+  "return_definition": "CRSP market-adjusted cumulative returns from sessions +1 through +h after day0; excludes day0 return",
+  "groups": "positive SUE deciles 9-10 versus negative SUE deciles 1-2",
+  "inference": "quarterly equal-weight high-minus-low return spread; intercept HAC standard errors with 4 quarterly lags",
+  "lag4_sue": {
+    "pairs": 102433,
+    "correlation_lag4": 0.04963033122245876,
+    "mean_current_sue_by_lag_decile": [
+      {
+        "lag_decile": 1,
+        "mean_current_sue": -0.6232486066563557,
+        "pairs": 10345
+      },
+      {
+        "lag_decile": 2,
+        "mean_current_sue": -0.09626767237962802,
+        "pairs": 11506
+      },
+      {
+        "lag_decile": 3,
+        "mean_current_sue": 0.09646029454622357,
+        "pairs": 8275
+      },
+      {
+        "lag_decile": 4,
+        "mean_current_sue": 0.24385462062291097,
+        "pairs": 13164
+      },
+      {
+        "lag_decile": 5,
+        "mean_current_sue": 0.46957887440580215,
+        "pairs": 5722
+      },
+      {
+        "lag_decile": 6,
+        "mean_current_sue": 0.48943781787930735,
+        "pairs": 5833
+      },
+      {
+        "lag_decile": 7,
+        "mean_current_sue": 0.6156068381495244,
+        "pairs": 13456
+      },
+      {
+        "lag_decile": 8,
+        "mean_current_sue": 0.7609089637801146,
+        "pairs": 10460
+      },
+      {
+        "lag_decile": 9,
+        "mean_current_sue": 1.0173153361517242,
+        "pairs": 10875
+      },
+      {
+        "lag_decile": 10,
+        "mean_current_sue": 1.3995556318801283,
+        "pairs": 12797
+      }
+    ],
+    "interpretation": "positive correlation indicates persistence; negative indicates reversal",
+    "note": "Descriptive same-firm SUE association; not a return signal or causal test."
+  },
+  "limitations": [
+    "Stock-event diagnostics are not option portfolio performance or proof of investable alpha.",
+    "Quarter-level HAC uncertainty does not correct selection across previously inspected strategy variants.",
+    "The historical source ends in 2013 and has a missing OptionMetrics year (2011) and partial 2013 option coverage."
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "study": "frozen C/75/0.70/40 next-session stock/call/debit-spread comparison",
+  "years_requested": [
+    1998,
+    1999,
+    2000,
+    2001,
+    2002,
+    2003,
+    2004,
+    2005,
+    2006,
+    2007,
+    2008,
+    2009,
+    2010,
+    2012,
+    2013
+  ],
+  "option_calendar_first": "1996-01-02",
+  "option_calendar_last": "2013-08-30",
+  "portfolio_calendar_first": "1998-01-02",
+  "portfolio_calendar_last": "2013-12-31",
+  "event_collision_audit": {
+    "input_events": 147142,
+    "retained_events": 147115,
+    "duplicate_event_date_groups": 13,
+    "duplicate_extra_rows": 14,
+    "duplicate_event_rows_excluded": 27,
+    "eligible_signal_rows_excluded_by_duplicates": 15,
+    "opposing_signal_groups": 1,
+    "multiple_decile_groups": 11,
+    "policy": "exclude every row in a repeated secid/day0_date cluster",
+    "eligible_signal_rows_before_exclusion": 65527,
+    "eligible_signal_rows_after_exclusion": 65512
+  },
+  "entry_chain_years_scanned": [
+    1998,
+    1999,
+    2000,
+    2001,
+    2002,
+    2003,
+    2004,
+    2005,
+    2006,
+    2007,
+    2008,
+    2009,
+    2010,
+    2012,
+    2013
+  ],
+  "selected_long_candidates": 5522,
+  "entry_funnel": {
+    "selected_long_candidates": 5522,
+    "longs_with_short_day0_pair": 3384,
+    "valid_long_next_session_entry": 5443,
+    "valid_short_next_session_entry": 3199,
+    "valid_debit_spreads_next_session": 3180,
+    "missing_long_entry_quote": 0,
+    "missing_short_entry_quote": 2138
+  },
+  "common_spread_stock_event_count": 3169,
+  "common_unique_permnos": 1073,
+  "common_low_tvol_events": 1204,
+  "daily_quote_lookups": 356240,
+  "daily_quotes_matched": 355477,
+  "daily_quote_match_fraction": 0.9978581854929262,
+  "quote_audit": {
+    "long_rows": 220356,
+    "long_nonstandard_cfadj_or_settlement_rows": 6193,
+    "short_rows": 135121,
+    "short_nonstandard_cfadj_or_settlement_rows": 3856
+  },
+  "stock_path_audit": {
+    "candidate_stock_events": 5522,
+    "stock_paths_built": 5492,
+    "stock_missing_return_days_carried": 1,
+    "stock_price_return_fallbacks": 0
+  },
+  "accounting": {
+    "initial_capital": 10000000.0,
+    "capital_cap_fraction": 0.2,
+    "max_trade_fraction": 0.0025,
+    "option_oi_participation": 0.1,
+    "per_name_cap_fraction": 0.02,
+    "stock_adv21_participation": 0.1,
+    "call_entry_exit": "ask next session / bid scheduled exit",
+    "spread_entry_exit": "long ask minus short bid / long bid minus short ask",
+    "stock_entry_exit": "CRSP close proxy; daily CRSP total returns; same event and exit dates",
+    "stock_trading_cost_sensitivities_bps_per_side": [
+      0,
+      10,
+      25
+    ],
+    "extra_option_cost_sensitivity": "3% of net debit in addition to quoted leg bid/ask"
+  },
+  "factor_provenance": {
+    "ff3_url": "https://mba.tuck.dartmouth.edu/pages/faculty/Ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip",
+    "momentum_url": "https://mba.tuck.dartmouth.edu/pages/faculty/Ken.french/ftp/F-F_Momentum_Factor_daily_CSV.zip",
+    "ff3_sha256": "2f29e22546069914890a712680a6f81f3680ebc3543b52864484d209ca13a7db",
+    "momentum_sha256": "ecf82b116e6ec56d2b79a2f27bd1d1598c217b5c6c25caa55b945bdd8a2c0b78",
+    "factor_zip_directory": "data\\factor"
+  }
+}

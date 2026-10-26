@@ -62,3 +62,7 @@ docs/paper/*.toc
 
 # Complete pre-fix derived data vintage (kept for the *_legacy strategies and their tests); regenerable, large
 data/_prefix_vintage/
+
+# Local follow-up runtime and downloaded factor inputs
+/.task-deps/
+/data/factor/

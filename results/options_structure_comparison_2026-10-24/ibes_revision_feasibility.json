@@ -1,0 +1,90 @@
+{
+  "study": "top-SUE positive PEAD event IBES detail-history revision feasibility",
+  "years": [
+    1998,
+    1999,
+    2000,
+    2001,
+    2002,
+    2003,
+    2004,
+    2005,
+    2006,
+    2007,
+    2008,
+    2009,
+    2010,
+    2012,
+    2013
+  ],
+  "selected_positive_events": 33108,
+  "collision_audit": {
+    "input_events": 147142,
+    "retained_events": 147115,
+    "duplicate_event_date_groups": 13,
+    "duplicate_extra_rows": 14,
+    "duplicate_event_rows_excluded": 27,
+    "eligible_signal_rows_excluded_by_duplicates": 15,
+    "opposing_signal_groups": 1,
+    "multiple_decile_groups": 11,
+    "policy": "exclude every row in a repeated secid/day0_date cluster",
+    "eligible_signal_rows_before_exclusion": 65527,
+    "eligible_signal_rows_after_exclusion": 65512
+  },
+  "raw_ibes_rows": 14646712,
+  "source_file": "C:\\Users\\hrudi\\Documents\\BEI\\PEAD_Trading\\data\\raw_wrds\\ibes\\detu_epsus.parquet",
+  "forecast_horizon_rule": "nearest future fpedats 45-180 calendar days after reported-period end",
+  "measurement": "same-analyst change from latest pre-event forecast to latest strictly post-day0 forecast available before frozen entry",
+  "revtims_used_for_order_within_analyst": true,
+  "revtims_timezone_assumed": false,
+  "entry_date_same_day_revisions_excluded": true,
+  "limitations": [
+    "This is a feature-coverage audit, not a return backtest or evidence of profitability.",
+    "The extract is unadjusted detail EPS; analyst forecast and actual share bases need split-basis reconciliation.",
+    "REVDATS and REVTIMS do not identify a timezone in this extract; same-date updates are excluded.",
+    "The next fiscal-quarter horizon is inferred from fpedats rather than an explicit quarterly forecast-period indicator.",
+    "New analyst coverage and changed forecasts are reported separately; reissues with unchanged values are not counted as revisions."
+  ],
+  "horizon_summaries": [
+    {
+      "feature_freeze": "d1",
+      "events": 33108,
+      "events_with_target_quarter": 33048,
+      "events_with_any_pre_event_forecast": 32084,
+      "events_with_3plus_pre_event_analysts": 27151,
+      "events_with_changed_existing_analyst": 13478,
+      "changed_existing_analysts_total": 27158,
+      "events_with_new_post_event_analyst": 4567,
+      "median_changed_analysts_per_event": 0.0,
+      "median_revision_value_change_when_present": 0.010000000000000009,
+      "revision_date_rule": "revdats strictly after event date and strictly before next-session-after-feature entry date"
+    },
+    {
+      "feature_freeze": "d5",
+      "events": 33108,
+      "events_with_target_quarter": 33048,
+      "events_with_any_pre_event_forecast": 32084,
+      "events_with_3plus_pre_event_analysts": 27151,
+      "events_with_changed_existing_analyst": 20043,
+      "changed_existing_analysts_total": 49864,
+      "events_with_new_post_event_analyst": 7916,
+      "median_changed_analysts_per_event": 1.0,
+      "median_revision_value_change_when_present": 0.010000000000000009,
+      "revision_date_rule": "revdats strictly after event date and strictly before next-session-after-feature entry date"
+    },
+    {
+      "feature_freeze": "d10",
+      "events": 33108,
+      "events_with_target_quarter": 33048,
+      "events_with_any_pre_event_forecast": 32084,
+      "events_with_3plus_pre_event_analysts": 27151,
+      "events_with_changed_existing_analyst": 22118,
+      "changed_existing_analysts_total": 59681,
+      "events_with_new_post_event_analyst": 9542,
+      "median_changed_analysts_per_event": 1.0,
+      "median_revision_value_change_when_present": 0.010000000000000009,
+      "revision_date_rule": "revdats strictly after event date and strictly before next-session-after-feature entry date"
+    }
+  ],
+  "no_raw_estimate_rows_written": true
+}
