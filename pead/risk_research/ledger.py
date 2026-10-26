@@ -28,6 +28,10 @@ class Ledger:
     @property
     def stock_value(self):return sum(p['value'] for p in self.stocks)
 
+    @property
+    def exit_reserve(self):
+        return sum(self.policy.commission*len(p['structure'].legs)*p['lots'] for p in self.options)
+
     def skip(self,reason):self.skips[reason]=self.skips.get(reason,0)+1
 
     def _quotes(self,q):
@@ -61,10 +65,12 @@ class Ledger:
     def current_nav(self):
         return self.cash+self.stock_value+sum(self.mark_option(p)[0]-self.policy.commission*len(p['structure'].legs)*p['lots'] for p in self.options)
 
-    def begin(self,date,rf,market,quotes,stock_returns,spot,settlements=None):
+    def begin(self,date,rf,market,quotes,stock_returns,spot,settlements=None,
+              stock_capacity=None,funding_rf=None):
         """Apply beginning cash carry, actual stock returns and native resolution."""
         if not np.isfinite([rf,market,spot]).all() or spot<=0:raise ValueError('invalid market inputs')
         self.date=pd.Timestamp(date);self.q=self._quotes(quotes);self.used={};self.spot=spot
+        self.stock_capacity=stock_capacity;self.used_stock={}
         self.previous_nav=self.nav;self.stock_pnl_today=0.;self.market=market;self.rf=rf
         if self.last_year!=self.date.year:
             self.hedge_budget=self.previous_nav*self.policy.annual_premium
@@ -73,7 +79,7 @@ class Ledger:
         if free>=0:
             interest=free*rf;self.cash+=interest;self.cash_interest+=interest
         else:
-            cost=-free*(max(0.,rf)+self.policy.financing_spread/252)
+            cost=-free*(max(0.,rf if funding_rf is None else funding_rf)+self.policy.financing_spread/252)
             self.cash-=cost;self.financing+=cost
         for p in self.stocks:
             ret=stock_returns.get(p['permno'],np.nan)
@@ -84,8 +90,11 @@ class Ledger:
             else:
                 pnl=p['value']*ret;p['value']+=pnl;self.stock_pnl_today+=pnl
         for p in list(self.stocks):
-            if self.date>=p['exit_date']:
-                self.close_stock(p,'terminal_reserve' if p.get('impaired') else 'time')
+            if self.date>=p['exit_date'] or p.get('pending'):
+                fraction=(1. if self.date>=p['exit_date'] else
+                          min(1.,p.get('pending_shares',p['shares'])/p['shares']))
+                self.close_stock(p,'terminal_reserve' if p.get('impaired') else
+                                 (p.get('pending') or 'time'),fraction)
         for p in list(self.options):
             if self.date>=p['settlement_date']:
                 value=(settlements or {}).get(p['structure'].expiry)
@@ -143,7 +152,7 @@ class Ledger:
         fee=self.policy.commission*len(st.legs)
         risk_unit=(width*100-flow if role=='carry' else -flow)+2*fee
         if risk_unit<=0 or (role=='carry' and flow<=0) or (role=='hedge' and flow>=0):return 0
-        free=self.cash-self.collateral
+        free=self.cash-self.collateral-self.exit_reserve
         lots=min(int(lots),available,max(0,int(free//risk_unit)))
         if role=='carry':
             delta=sum(x.quantity*x.delta*100 for x in st.legs)
@@ -166,10 +175,10 @@ class Ledger:
     def close_option(self,p,quotes,reason,settlement=None):
         if p not in self.options:return 0
         self.q=self._quotes(quotes)
-        value,valid=self.mark_option(p)
         if settlement is not None:
             value=sum(leg.quantity*max(0.,leg.strike-settlement if leg.cp=='P' else settlement-leg.strike)
                       for leg in p['structure'].legs)*100*p['lots'];valid=True
+        else:value,valid=self.mark_option(p)
         if not valid:p['pending']=reason;self.skip('deferred_missing_exit');return 0
         original=p['lots'];lots=original if settlement is not None else min(original,self._capacity(p))
         if settlement is None:
@@ -179,8 +188,12 @@ class Ledger:
                 fill=r.bid*(1-self.policy.slippage) if leg.quantity>0 else r.ask*(1+self.policy.slippage)
                 value+=leg.quantity*fill*100*original
             # A legged close beyond terminal width can require extra free cash.
-            extra=max(0.,-value/original-(p['width']*100 if p['role']=='carry' else 0.))
-            if extra>0:lots=min(lots,max(0,int(max(0.,self.cash-self.collateral)//extra)))
+            own_width=p['width']*100 if p['role']=='carry' else 0.
+            fee_unit=self.policy.commission*len(p['structure'].legs)
+            need=max(0.,-value/original+fee_unit-own_width)
+            other_reserve=self.exit_reserve-fee_unit*original
+            spendable=max(0.,self.cash-self.collateral-other_reserve)
+            if need>0:lots=min(lots,max(0,int(spendable//need)))
         if lots<1:p['pending']=reason;self.skip('deferred_capacity_exit');return 0
         fee=self.policy.commission*len(p['structure'].legs)*lots
         proceeds=value*lots/original-fee
@@ -199,29 +212,46 @@ class Ledger:
     def open_stock(self,permno,price,desired,cost,exit_date,adv):
         if not np.isfinite([price,desired,cost,adv]).all() or min(price,adv)<=0 or cost<0:
             self.skip('invalid_stock_entry');return 0.
-        free=self.cash-self.collateral
+        free=self.cash-self.collateral-self.exit_reserve
         leverage=max(0.,self.policy.equity_scale-1.)*self.previous_nav
-        dollars=min(desired,adv*.05,max(0.,(free+leverage)/(1+cost)))
+        capacity=np.inf if self.stock_capacity is None else max(0.,self.stock_capacity.get(int(permno),0.)-self.used_stock.get(int(permno),0.))
+        dollars=min(desired,adv*.05,capacity,max(0.,(free+leverage)/(1+cost)))
         # A levered control pays its entry costs in addition to the target debt.
-        if self.policy.equity_scale>1 and desired<=free+leverage:dollars=min(desired,adv*.05)
+        if self.policy.equity_scale>1 and desired<=free+leverage:dollars=min(desired,adv*.05,capacity)
         shares=int(max(0.,dollars)//price);value=shares*price
         if value<=0:self.skip('stock_cash_or_rounding');return 0.
         fee=value*cost;self.cash-=value+fee;self.stock_cashflows-=value+fee;self.stock_fees+=fee
         self.stocks.append(dict(permno=int(permno),value=value,initial=value,cost=cost,
             entry_date=self.date,exit_date=pd.Timestamp(exit_date),shares=shares))
+        self.used_stock[int(permno)]=self.used_stock.get(int(permno),0.)+value
         return value
 
     def close_stock(self,p,reason,fraction=1.):
         if not 0<fraction<=1:raise ValueError('invalid stock sale fraction')
+        requested=min(p['shares'],np.ceil(p['shares']*fraction))
+        if self.stock_capacity is not None and p['value']>0:
+            room=max(0.,self.stock_capacity.get(p['permno'],0.)-self.used_stock.get(p['permno'],0.))
+            shares=min(p['shares'],np.floor(room/(p['value']/p['shares'])))
+            fraction=min(fraction,shares/p['shares'])
+            if fraction<=0:
+                p['pending']=reason;p['pending_shares']=requested
+                self.skip('deferred_stock_capacity');return 0.
         if fraction<1:
             fraction=min(1.,np.ceil(p['shares']*fraction)/p['shares'])
+        sold_shares=p['shares']*fraction
         value=p['value']*fraction;fee=value*p['cost'];proceeds=value-fee
         self.cash+=proceeds;self.stock_cashflows+=proceeds;self.stock_fees+=fee
         self.trades.append(dict(kind='stock',entry_date=p['entry_date'],exit_date=self.date,
             quantity=p['shares']*fraction,pnl=proceeds-p['initial']*(1+p['cost'])*fraction,
             reason=reason,permno=p['permno']))
         p['value']-=value;p['initial']*=1-fraction;p['shares']*=1-fraction
+        self.used_stock[p['permno']]=self.used_stock.get(p['permno'],0.)+value
         if fraction==1:self.stocks.remove(p)
+        elif sold_shares+1e-8<requested:
+            p['pending']=reason;p['pending_shares']=requested-sold_shares
+        else:
+            p.pop('pending',None);p.pop('pending_shares',None)
+        return value
 
     def reconciliation(self):
         return self.cash-(self.initial+self.cash_interest-self.financing+
@@ -241,4 +271,6 @@ class Ledger:
             hedge_delta=self.delta_units('hedge'),carry_delta=self.delta_units('carry'),
             cash_interest_cumulative=self.cash_interest,financing_cumulative=self.financing,
             hedge_premium_ytd=self.premium_spent,stock_positions=len(self.stocks),
-            option_positions=len(self.options),cash_residual=self.reconciliation()))
+            option_positions=len(self.options),exit_fee_reserve=self.exit_reserve,
+            hedge_coverage=(-self.delta_units('hedge')/self.delta_units('carry')
+                if self.delta_units('carry')>0 else np.nan),cash_residual=self.reconciliation()))

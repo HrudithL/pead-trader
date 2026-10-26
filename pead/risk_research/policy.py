@@ -44,6 +44,7 @@ class Policy:
     annual_premium: float=.01
     market_vol_target: float=0.
     stock_vol_target: float=.12
+    gross_target: float=0.
     hedge_cover: float=.25
     financing_spread: float=.02
     commission: float=1.50
@@ -59,6 +60,7 @@ class Policy:
             raise ValueError('invalid carry risk hierarchy')
         if not 0<=self.equity_scale<=1.5 or not 0<=self.annual_premium<=.1:
             raise ValueError('invalid equity scale or premium budget')
+        if not 0<=self.gross_target<=1.2:raise ValueError('gross target outside study limits')
         if min(self.commission,self.slippage,self.financing_spread,self.market_vol_target,self.stock_vol_target)<0:
             raise ValueError('negative costs or volatility target')
         if not 0<=self.hedge_cover<=1 or self.small_lot_floor not in (0,1):

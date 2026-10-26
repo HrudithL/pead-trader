@@ -73,6 +73,7 @@ def test_spread_settles_to_native_soq_without_quote_or_capacity():
     assert not book.options
     assert book.nav==pytest.approx(100_000-810-6)
     assert book.reconciliation()==pytest.approx(0,abs=1e-8)
+    assert book.missing_marks==0
 
 
 def test_shared_leg_capacity_partial_exit_and_missing_quotes_persist():
@@ -147,4 +148,76 @@ def test_collateral_cannot_pay_for_an_unrelated_hedge():
     book.cash=book.collateral+100
     hedge,_=hedge_menu(q)[0]
     assert book.open_option(hedge,1,'hedge',pd.Timestamp('2005-03-18'),q)==0
+
+
+def test_report_metrics_include_first_return_and_cash_is_not_an_options_edge():
+    from pead.risk_research.report import statistics
+    dates=pd.bdate_range('2000-01-03',periods=252)
+    d=pd.DataFrame(dict(date=dates,ret=.001,rf=.0001,benchmark=np.sin(np.arange(252))*.01))
+    stats=statistics(d)
+    assert stats['cagr']==pytest.approx(1.001**252-1)
+    assert stats['max_drawdown']==0
+    d['ret']=d.rf
+    assert statistics(d)['excess_sharpe']==0
+
+
+def test_paired_bootstrap_does_not_compare_different_dates():
+    from pead.risk_research.report import paired_difference
+    dates=pd.bdate_range('2000-01-03',periods=100)
+    d=pd.DataFrame(dict(date=dates,ret=np.sin(np.arange(100))*.01,rf=0.,benchmark=0.))
+    assert paired_difference(d,d,repetitions=20)['sharpe']['p025']==0
+    with pytest.raises(ValueError):paired_difference(d,d.iloc[1:],repetitions=20)
+
+
+def test_hedge_roll_preserves_protection_when_budget_cannot_replace_it():
+    from pead.risk_research.study import manage_hedge
+    q=chain();st,cap=hedge_menu(q)[0]
+    book=make_ledger(hedge=True,carry=True,require_hedge=True,annual_premium=.002)
+    book.begin(q.date.iloc[0],0,0,q,{},100.)
+    book.open_option(st,1,'hedge',pd.Timestamp('2005-03-18'),q);book.finish()
+    book.begin(pd.Timestamp('2005-02-01'),0,0,q,{},100.);book.chain=q
+    manage_hedge(book,[(st,cap)],{st.expiry:(pd.Timestamp('2005-03-18'),85.)},pd.Timestamp('2005-12-31'))
+    assert len(book.options)==1
+    assert book.options[0]['entry_date']==pd.Timestamp('2005-01-03')
+
+
+def test_stock_exits_and_entries_share_actual_lagged_capacity():
+    book=make_ledger(equity_scale=1.)
+    q=chain().iloc[:0]
+    book.begin(pd.Timestamp('2005-01-03'),0,0,q,{},100.)
+    book.open_stock(7,10.,1000,.001,pd.Timestamp('2005-01-04'),1e8);book.finish()
+    book.begin(pd.Timestamp('2005-01-04'),0,0,q,{7:0.},100.,stock_capacity={7:200.})
+    assert book.stock_value==pytest.approx(800.)
+    assert book.open_stock(7,10.,100,.001,pd.Timestamp('2005-01-05'),1e8)==0
+
+
+def test_funding_uses_unhaircut_lagged_rate():
+    book=make_ledger(equity_scale=1.2);q=chain().iloc[:0]
+    book.begin(pd.Timestamp('2005-01-03'),0,0,q,{},100.)
+    book.open_stock(7,10,120000,.001,pd.Timestamp('2005-01-06'),1e8);book.finish()
+    book.begin(pd.Timestamp('2005-01-04'),0,0,q,{7:0.},100.,funding_rf=.0002)
+    assert book.financing==pytest.approx(20120*(.0002+.02/252))
+
+
+def test_a_close_cannot_spend_another_positions_collateral_on_its_fee():
+    from pead.earnings_options.structures import Leg,Structure
+    q=chain();ex=q.expiry.iloc[0]
+    st=Structure('carry',(Leg(2,1,'P',90.,ex,1.,1.1,-.15,1000),
+                           Leg(1,-1,'P',100.,ex,3.,3.1,-.35,1000)),1.9,8.1,ex)
+    book=make_ledger();book.begin(q.date.iloc[0],0,0,q,{},100.)
+    book.open_option(st,1,'carry',pd.Timestamp('2005-03-18'),q)
+    book.open_option(st,1,'carry',pd.Timestamp('2005-03-18'),q)
+    book.cash=book.collateral+2
+    q.loc[q.optionid.eq(1),'ask']=11.
+    assert book.close_option(book.options[0],q,'risk_off')==0
+    assert book.cash>=book.collateral
+
+
+def test_completed_partial_risk_trim_does_not_liquidate_remaining_stock_next_day():
+    book=make_ledger(equity_scale=1.);q=chain().iloc[:0]
+    book.begin(pd.Timestamp('2005-01-03'),0,0,q,{},100.)
+    book.open_stock(7,10,1000,0,pd.Timestamp('2005-01-10'),1e8)
+    book.close_stock(book.stocks[0],'risk_trim',.2);book.finish()
+    book.begin(pd.Timestamp('2005-01-04'),0,0,q,{7:0.},100.)
+    assert book.stock_value==800
 

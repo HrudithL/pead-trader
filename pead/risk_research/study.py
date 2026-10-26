@@ -27,7 +27,8 @@ def policies(family):
     equity=[Policy('equity_funded',equity_scale=1.),
             Policy('equity_cash80',equity_scale=.8),
             Policy('equity_hedged',equity_scale=1.,hedge=True),
-            Policy('equity_leverage120',equity_scale=1.2)]
+            Policy('equity_targets120',equity_scale=1.2),
+            Policy('equity_borrow120',equity_scale=1.2,gross_target=1.2)]
     return options if family=='options' else equity if family=='equity' else options+equity
 
 
@@ -40,6 +41,7 @@ def inputs(source,segment):
     monthly=f.groupby(f.date.dt.to_period('M')).rf.mean().shift(1)
     b=b.drop(columns='rf').merge(f[['date','rf']],on='date',validate='1:1')
     b['cash_rf']=np.maximum(0.,b.date.dt.to_period('M').map(monthly)-.001/252)
+    b['funding_rf']=np.maximum(0.,b.date.dt.to_period('M').map(monthly))
     if segment=='development':b=b[b.date.dt.year.between(1999,2010)]
     else:b=b[b.date.dt.year.between(2012,2013)&b.date.le('2013-08-30')]
     if b[['rf','cash_rf','benchmark']].isna().any().any():raise ValueError('incomplete market series')
@@ -89,7 +91,9 @@ def stock_events(data,b):
     ev=ev[ev.causal_weight>0].merge(timing[['permno','day0_date']],on=['permno','day0_date'],validate='m:1')
     ev=ev[~ev.duplicated(['permno','day0_date'],keep=False)].copy()
     cal=pd.DatetimeIndex(b.date);ix=cal.searchsorted(ev.day0_date,side='right')
-    valid=(ix+60<len(cal))&(ev.day0_date>=cal.min())
+    # Ten-session liquidation buffer after the fixed 60-session scheduled exit.
+    # The predetermined source end is not an inferred future liquidity signal.
+    valid=(ix+70<len(cal))&(ev.day0_date>=cal.min())
     ev=ev[valid].copy();ix=ix[valid]
     ev['entry_date']=cal[ix];ev['planned_exit']=cal[ix+60]
     ev['cost']=ev.liquidity_quintile.map(COST_BPS).fillna(15)/1e4
@@ -98,24 +102,37 @@ def stock_events(data,b):
 
 def equity_day_inputs(data,year,ids):
     q=pd.read_parquet(data/f'normalized_equity/equity_{year}.parquet',
-        columns=['date','permno','ret','prc','prc_is_bidask_avg'],filters=[('permno','in',list(ids))])
+        columns=['date','permno','ret','prc','prc_is_bidask_avg','vol'],filters=[('permno','in',list(ids))])
+    prior=pd.read_parquet(data/f'normalized_equity/equity_{year-1}.parquet',
+        columns=['date','permno','ret','prc','prc_is_bidask_avg','vol'],filters=[('permno','in',list(ids))])
+    q=pd.concat([prior,q],ignore_index=True).sort_values(['permno','date'])
+    q['dollars']=q.prc.abs()*pd.to_numeric(q.vol,errors='coerce')
+    q['prior_adv']=q.groupby('permno',sort=False).dollars.transform(lambda s:s.rolling(21,min_periods=10).mean().shift(1))
+    q=q[q.date.dt.year==year].copy()
     if q.duplicated(['permno','date']).any():raise ValueError('duplicate stock rows')
     return {day:g for day,g in q.groupby('date',sort=False)}
 
 
-def manage_hedge(book,menu,resolutions,end):
+def manage_hedge(book,menu,resolutions,end,credit=()):
     if not book.policy.hedge:return
     old=[p for p in book.options if p['role']=='hedge']
     monthly_roll=not book.daily or book.date.to_period('M')!=pd.Timestamp(book.daily[-1]['date']).to_period('M')
     if old and not monthly_roll:return
-    for p in old:book.close_option(p,book.chain,'monthly_roll')
-    if any(p['role']=='hedge' for p in book.options):book.skip('hedge_roll_incomplete');return
     if book.date>end-pd.Timedelta(days=120):return
     if not menu:book.skip('no_hedge_menu');return
     target=0.
     if book.policy.carry:
-        # Fund protection for a complete contemplated 5% cohort at this entry.
-        target=book.policy.hedge_cover*book.previous_nav*book.policy.ticket/book.spot
+        # Protection has delta units, so size from contemplated quoted contracts,
+        # not maximum-loss dollars divided by the index level.
+        planned=0.
+        for _,st,cap in credit:
+            lots=min(cap,int(book.previous_nav*book.policy.ticket//(st.max_loss*100+4*book.policy.commission)))
+            planned=max(planned,lots*sum(x.quantity*x.delta*100 for x in st.legs))
+        existing=book.delta_units('carry')
+        target=book.policy.hedge_cover*(max(0.,existing) if np.isfinite(existing) else 0.)
+        target+=book.policy.hedge_cover*planned
+        # No carry proposal: preserve existing protection rather than churning it.
+        if target<=0:return
     elif len(book.stock_history)>=60:
         s=pd.Series(book.stock_history+[0.]);m=pd.Series(book.market_history+[0.])
         beta=float(lagged_beta(s,m).iloc[-1])
@@ -126,21 +143,36 @@ def manage_hedge(book,menu,resolutions,end):
         units=-sum(x.quantity*x.delta*100 for x in st.legs)
         if units<=0:continue
         lots=min(cap,max(1,int(np.ceil(target/units))))
-        if book.open_option(st,lots,'hedge',resolutions[st.expiry][0],book.chain):return
+        # Buy replacement first using independent free cash and remaining gross
+        # annual debit budget. If it cannot fill, retain the old hedge.
+        if book.open_option(st,lots,'hedge',resolutions[st.expiry][0],book.chain):
+            for held in old:book.close_option(held,book.chain,'monthly_roll')
+            return
     book.skip('hedge_unaffordable_or_capacity')
 
 
 def step(book,row,chain,spot,stock,events,credit,hedges,resolutions,end):
     returns={} if stock is None else dict(zip(stock.permno,stock.ret))
     actual={ex:v for ex,(day,v) in resolutions.items() if day==row.date}
-    book.begin(row.date,row.cash_rf,row.benchmark,chain,returns,spot,actual)
+    stock_capacity={} if stock is None else dict(zip(stock.permno,(stock.prior_adv*.05).fillna(0.)))
+    book.begin(row.date,row.cash_rf,row.benchmark,chain,returns,spot,actual,
+        stock_capacity=stock_capacity,funding_rf=row.funding_rf)
     # Evaluation uses the published contemporaneous risk-free proxy; cash earns
     # only the separately lagged/haircut series applied above.
     book.rf=row.rf;book.chain=chain
     if book.policy.exit_on_signal and (row.trend_sign<0 or row.rv>.30):
         for p in list(book.options):
             if p['role']=='carry':book.close_option(p,chain,'risk_off')
-    manage_hedge(book,hedges,resolutions,end)
+    manage_hedge(book,hedges,resolutions,end,credit)
+    if book.policy.require_hedge:
+        hd=book.delta_units('hedge');cd=book.delta_units('carry')
+        if not np.isfinite([hd,cd]).all() or -hd<book.policy.hedge_cover*cd-1e-9:
+            for held in list(book.options):
+                if held['role']=='carry':
+                    # close_option stages a whole ticket against current capacity;
+                    # conservative over-reduction is preferable to assumed fills.
+                    book.close_option(held,chain,'hedge_coverage_shortfall')
+            book.skip('hedge_coverage_shortfall')
     if book.policy.equity_scale:
         if not hasattr(book,'quarter') or book.quarter!=row.date.to_period('Q'):
             book.quarter=row.date.to_period('Q');book.quarter_nav=book.previous_nav
@@ -148,11 +180,25 @@ def step(book,row,chain,spot,stock,events,credit,hedges,resolutions,end):
         if len(book.stock_history)>=20:
             vol=np.std(book.stock_history[-60:],ddof=1)*np.sqrt(252)
             if vol>0:risk_scale=min(1.,book.policy.stock_vol_target/vol)
-        cap=.8*book.policy.equity_scale*risk_scale*book.previous_nav
+        cap=(book.policy.gross_target or .8*book.policy.equity_scale)*risk_scale*book.previous_nav
         if book.stock_value>cap:
             fraction=1-cap/book.stock_value
             for p in list(book.stocks):book.close_stock(p,'risk_trim',fraction)
         prices={} if stock is None else {int(r.permno):r for r in stock.itertuples()}
+        monthly=not book.daily or row.date.to_period('M')!=pd.Timestamp(book.daily[-1]['date']).to_period('M')
+        if book.policy.gross_target and monthly and book.stock_value>0:
+            # An explicit 120%-NAV control must actually request borrowed gross,
+            # unlike merely multiplying a partly invested parent by 1.2.
+            snapshot=[(held,held['value']) for held in book.stocks]
+            existing=book.stock_value
+            for held,value in snapshot:
+                quote=prices.get(held['permno'])
+                if quote is None or quote.prc_is_bidask_avg or held.get('pending'):continue
+                name_total=sum(p['value'] for p in book.stocks if p['permno']==held['permno'])
+                wanted=min(max(0.,cap*value/existing-value),max(0.,cap-book.stock_value),
+                           max(0.,.01*book.policy.equity_scale*book.previous_nav-name_total))
+                book.open_stock(held['permno'],abs(quote.prc),wanted,held['cost'],held['exit_date'],
+                                quote.prior_adv)
         for e in events.itertuples():
             quote=prices.get(int(e.permno))
             if quote is None or quote.prc_is_bidask_avg:book.skip('stock_entry_quote');continue
@@ -201,10 +247,15 @@ def main():
     out=ROOT/'results/options_risk_synthesis'/name
     if out.exists():raise ValueError(f'trial already exists; use a new label: {out}')
     out.mkdir(parents=True)
+    dependencies=[Path(__file__).parent.parent/'earnings_options'/name for name in
+                  ['index_settlement.py','structures.py','liquidity_v2.py']]
+    dependencies.append(Path(__file__).parent.parent/'strategies/weights.py')
+    dependencies.append(Path(__file__).parent.parent/'engines/equity.py')
     protocol=dict(policies=[asdict(x) for x in chosen],segment=args.segment,stress=args.stress,
         source=str(args.source),data=str(args.data),development_only=True,
         targets=dict(cagr=.12,sharpe=1.,drawdown=-.20),started_utc=pd.Timestamp.now(tz='UTC').isoformat(),
-        source_hashes={f.name:hashlib.sha256(f.read_bytes()).hexdigest() for f in Path(__file__).parent.glob('*.py')})
+        source_hashes={str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()
+                       for f in list(Path(__file__).parent.glob('*.py'))+dependencies})
     (out/'protocol.json').write_text(json.dumps(protocol,indent=2),encoding='utf-8')
     b,settlements=inputs(args.source,args.segment)
     if args.smoke:b=b.iloc[:180].copy()
@@ -214,6 +265,9 @@ def main():
     event_groups={d:g for d,g in ev.groupby('entry_date')}
     capitals=[100_000,1_000_000] if args.family=='options' else [1_000_000,10_000_000]
     books=[Ledger(cap,policy) for policy in chosen for cap in capitals]
+    if args.family=='all':
+        books=[Ledger(cap,policy) for policy in chosen for cap in
+               ([100_000,1_000_000] if policy.carry else [1_000_000,10_000_000])]
     empty_events=ev.iloc[:0];start=time.monotonic()
     for year,yearrows in b.groupby(b.date.dt.year,sort=True):
         q=quotes_for_year(args.source,int(year),allcal)
@@ -240,9 +294,8 @@ def main():
         del q,qgroups,stocks
     for book in books:
         if book.options:raise ValueError('terminal option positions remain')
-        for position in list(book.stocks):book.close_stock(position,'sample_end')
-        # All stock entries have predeclared exits before segment end.
-        if book.stocks:raise ValueError('terminal stocks remain')
+        # A terminal forced sale outside the recorded ledger would fabricate NAV.
+        if book.stocks:raise ValueError('terminal stocks remain; resolve capacity before completing trial')
         folder=out/f'{book.policy.name}_{int(book.initial)}';folder.mkdir()
         pd.DataFrame(book.daily).to_csv(folder/'daily.csv.gz',index=False)
         pd.DataFrame(book.trades).to_csv(folder/'trades.csv.gz',index=False)
