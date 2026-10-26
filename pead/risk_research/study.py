@@ -151,12 +151,13 @@ def manage_hedge(book,menu,resolutions,end,credit=()):
     book.skip('hedge_unaffordable_or_capacity')
 
 
-def step(book,row,chain,spot,stock,events,credit,hedges,resolutions,end):
+def step(book,row,chain,spot,stock,events,credit,hedges,resolutions,end,quote_lookup=None,stock_pack=None):
     returns={} if stock is None else dict(zip(stock.permno,stock.ret))
     actual={ex:v for ex,(day,v) in resolutions.items() if day==row.date}
     stock_capacity={} if stock is None else dict(zip(stock.permno,(stock.prior_adv*.05).fillna(0.)))
+    if stock_pack is not None:returns,stock_capacity,prices=stock_pack
     book.begin(row.date,row.cash_rf,row.benchmark,chain,returns,spot,actual,
-        stock_capacity=stock_capacity,funding_rf=row.funding_rf)
+        stock_capacity=stock_capacity,funding_rf=row.funding_rf,quote_lookup=quote_lookup)
     # Evaluation uses the published contemporaneous risk-free proxy; cash earns
     # only the separately lagged/haircut series applied above.
     book.rf=row.rf;book.chain=chain
@@ -184,7 +185,7 @@ def step(book,row,chain,spot,stock,events,credit,hedges,resolutions,end):
         if book.stock_value>cap:
             fraction=1-cap/book.stock_value
             for p in list(book.stocks):book.close_stock(p,'risk_trim',fraction)
-        prices={} if stock is None else {int(r.permno):r for r in stock.itertuples()}
+        if stock_pack is None:prices={} if stock is None else {int(r.permno):r for r in stock.itertuples()}
         monthly=not book.daily or row.date.to_period('M')!=pd.Timestamp(book.daily[-1]['date']).to_period('M')
         if book.policy.gross_target and monthly and book.stock_value>0:
             # An explicit 120%-NAV control must actually request borrowed gross,
@@ -278,6 +279,12 @@ def main():
             chain=qgroups.get(row.date,q.iloc[:0]);spot=spots.get(row.date)
             if spot is None:raise ValueError(f'missing native SPX spot {row.date}')
             menus={}
+            lookup={int(r.optionid):r for r in chain.itertuples(index=False)}
+            stock=stocks.get(row.date)
+            stock_pack=({}, {}, {}) if stock is None else (
+                dict(zip(stock.permno,stock.ret)),
+                dict(zip(stock.permno,(stock.prior_adv*.05).fillna(0.))),
+                {int(r.permno):r for r in stock.itertuples()})
             for floor in {x.policy.small_lot_floor for x in books}:
                 liq=replace(LIQUIDITY,small_lot_floor=floor)
                 needcarry=any(x.policy.carry for x in books)
@@ -288,7 +295,7 @@ def main():
             for book in books:
                 credit,hedges=menus[book.policy.small_lot_floor]
                 step(book,row,chain,spot,stocks.get(row.date),event_groups.get(row.date,empty_events),
-                     credit,hedges,resolutions,b.date.iloc[-1])
+                     credit,hedges,resolutions,b.date.iloc[-1],lookup,stock_pack)
         print(f'{name}: {year}; elapsed {time.monotonic()-start:.1f}s; '+
               ', '.join(f'{x.policy.name}/{x.initial:g}={x.nav:,.0f}' for x in books),flush=True)
         del q,qgroups,stocks

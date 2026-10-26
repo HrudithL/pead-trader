@@ -66,10 +66,11 @@ class Ledger:
         return self.cash+self.stock_value+sum(self.mark_option(p)[0]-self.policy.commission*len(p['structure'].legs)*p['lots'] for p in self.options)
 
     def begin(self,date,rf,market,quotes,stock_returns,spot,settlements=None,
-              stock_capacity=None,funding_rf=None):
+              stock_capacity=None,funding_rf=None,quote_lookup=None):
         """Apply beginning cash carry, actual stock returns and native resolution."""
         if not np.isfinite([rf,market,spot]).all() or spot<=0:raise ValueError('invalid market inputs')
-        self.date=pd.Timestamp(date);self.q=self._quotes(quotes);self.used={};self.spot=spot
+        self.date=pd.Timestamp(date);self.q=self._quotes(quotes) if quote_lookup is None else quote_lookup
+        self.shared_quotes=quote_lookup is not None;self.chain=quotes;self.used={};self.spot=spot
         self.stock_capacity=stock_capacity;self.used_stock={}
         self.previous_nav=self.nav;self.stock_pnl_today=0.;self.market=market;self.rf=rf
         if self.last_year!=self.date.year:
@@ -174,7 +175,7 @@ class Ledger:
 
     def close_option(self,p,quotes,reason,settlement=None):
         if p not in self.options:return 0
-        self.q=self._quotes(quotes)
+        if not (self.shared_quotes and self.chain is quotes):self.q=self._quotes(quotes)
         if settlement is not None:
             value=sum(leg.quantity*max(0.,leg.strike-settlement if leg.cp=='P' else settlement-leg.strike)
                       for leg in p['structure'].legs)*100*p['lots'];valid=True
@@ -228,17 +229,17 @@ class Ledger:
 
     def close_stock(self,p,reason,fraction=1.):
         if not 0<fraction<=1:raise ValueError('invalid stock sale fraction')
-        requested=min(p['shares'],np.ceil(p['shares']*fraction))
+        requested=min(p['shares'],np.ceil(p['shares']*fraction-1e-10))
+        executed=requested
         if self.stock_capacity is not None and p['value']>0:
             room=max(0.,self.stock_capacity.get(p['permno'],0.)-self.used_stock.get(p['permno'],0.))
             shares=min(p['shares'],np.floor(room/(p['value']/p['shares'])))
-            fraction=min(fraction,shares/p['shares'])
-            if fraction<=0:
+            executed=min(requested,shares)
+            if executed<=0:
                 p['pending']=reason;p['pending_shares']=requested
                 self.skip('deferred_stock_capacity');return 0.
-        if fraction<1:
-            fraction=min(1.,np.ceil(p['shares']*fraction)/p['shares'])
-        sold_shares=p['shares']*fraction
+        fraction=executed/p['shares']
+        sold_shares=executed
         value=p['value']*fraction;fee=value*p['cost'];proceeds=value-fee
         self.cash+=proceeds;self.stock_cashflows+=proceeds;self.stock_fees+=fee
         self.trades.append(dict(kind='stock',entry_date=p['entry_date'],exit_date=self.date,
@@ -264,10 +265,13 @@ class Ledger:
         self.stock_history.append(self.stock_pnl_today/self.previous_nav)
         self.market_history.append(self.market)
         carry_risk=sum(p['risk_unit']*p['lots'] for p in self.options if p['role']=='carry')
+        remaining=sum(max(0.,p['width']*100*p['lots']+self.mark_option(p)[0])
+                      for p in self.options if p['role']=='carry')
         self.daily.append(dict(date=self.date,nav=self.nav,ret=ret,rf=self.rf,benchmark=self.market,
             cash=self.cash,free_cash=self.cash-self.collateral,stock_value=self.stock_value,
             option_value=self.nav-self.cash-self.stock_value,collateral=self.collateral,
             carry_admission_risk=carry_risk,carry_risk_nav=carry_risk/self.nav,
+            carry_remaining_loss=remaining,carry_remaining_loss_nav=remaining/self.nav,
             hedge_delta=self.delta_units('hedge'),carry_delta=self.delta_units('carry'),
             cash_interest_cumulative=self.cash_interest,financing_cumulative=self.financing,
             hedge_premium_ytd=self.premium_spent,stock_positions=len(self.stocks),

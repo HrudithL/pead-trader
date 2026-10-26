@@ -171,12 +171,15 @@ def test_paired_bootstrap_does_not_compare_different_dates():
 
 def test_hedge_roll_preserves_protection_when_budget_cannot_replace_it():
     from pead.risk_research.study import manage_hedge
+    from pead.earnings_options.index_settlement import credit_menu
     q=chain();st,cap=hedge_menu(q)[0]
     book=make_ledger(hedge=True,carry=True,require_hedge=True,annual_premium=.002)
     book.begin(q.date.iloc[0],0,0,q,{},100.)
     book.open_option(st,1,'hedge',pd.Timestamp('2005-03-18'),q);book.finish()
     book.begin(pd.Timestamp('2005-02-01'),0,0,q,{},100.);book.chain=q
-    manage_hedge(book,[(st,cap)],{st.expiry:(pd.Timestamp('2005-03-18'),85.)},pd.Timestamp('2005-12-31'))
+    proposed=credit_menu(q,1.5)
+    assert proposed
+    manage_hedge(book,[(st,cap)],{st.expiry:(pd.Timestamp('2005-03-18'),85.)},pd.Timestamp('2005-12-31'),proposed)
     assert len(book.options)==1
     assert book.options[0]['entry_date']==pd.Timestamp('2005-01-03')
 
@@ -220,4 +223,13 @@ def test_completed_partial_risk_trim_does_not_liquidate_remaining_stock_next_day
     book.close_stock(book.stocks[0],'risk_trim',.2);book.finish()
     book.begin(pd.Timestamp('2005-01-04'),0,0,q,{7:0.},100.)
     assert book.stock_value==800
+
+
+def test_stock_capacity_rounding_never_adds_a_share():
+    book=make_ledger(equity_scale=1.);q=chain().iloc[:0]
+    book.begin(pd.Timestamp('2005-01-03'),0,0,q,{},100.)
+    book.open_stock(7,10,1000,0,pd.Timestamp('2005-01-04'),1e8);book.finish()
+    book.begin(pd.Timestamp('2005-01-04'),0,0,q,{7:0.},100.,stock_capacity={7:70.})
+    assert book.stock_value==930
+    assert book.used_stock[7]<=70
 
