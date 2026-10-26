@@ -152,11 +152,12 @@ def manage_hedge(book,menu,resolutions,end,credit=()):
 
 
 def step(book,row,chain,spot,stock,events,credit,hedges,resolutions,end,quote_lookup=None,stock_pack=None):
-    returns={} if stock is None else dict(zip(stock.permno,stock.ret))
+    if stock_pack is None:
+        returns={} if stock is None else dict(zip(stock.permno,stock.ret))
+        stock_capacity={} if stock is None else dict(zip(stock.permno,(stock.prior_adv*.05).fillna(0.)))
+        raw_prices={} if stock is None else dict(zip(stock.permno,stock.prc.abs()))
+    else:returns,stock_capacity,prices,raw_prices=stock_pack
     actual={ex:v for ex,(day,v) in resolutions.items() if day==row.date}
-    stock_capacity={} if stock is None else dict(zip(stock.permno,(stock.prior_adv*.05).fillna(0.)))
-    if stock_pack is not None:returns,stock_capacity,prices=stock_pack
-    raw_prices=({} if stock is None else dict(zip(stock.permno,stock.prc.abs())))
     book.begin(row.date,row.cash_rf,row.benchmark,chain,returns,spot,actual,
         stock_capacity=stock_capacity,funding_rf=row.funding_rf,quote_lookup=quote_lookup,
         stock_prices=raw_prices)
@@ -238,10 +239,16 @@ def main():
     p.add_argument('--optionmetrics',type=Path,default=Path('D:/OptionMetrics/parquet'))
     p.add_argument('--segment',choices=['development','recent'],default='development')
     p.add_argument('--family',choices=['options','equity','all'],default='all')
-    p.add_argument('--stress',choices=['base','double_fee','slippage','lot_floor','funding4'],default='base')
+    p.add_argument('--stress',choices=['base','double_fee','slippage','lot_floor','funding4','suite'],default='base')
     p.add_argument('--label',default='initial')
     p.add_argument('--smoke',action='store_true')
     args=p.parse_args();chosen=policies(args.family)
+    if args.stress=='suite':
+        original=chosen.copy()
+        chosen += [replace(x,name=x.name+'__fee2',commission=3.) for x in original]
+        chosen += [replace(x,name=x.name+'__slippage',slippage=.01) for x in original]
+        chosen += [replace(x,name=x.name+'__lotfloor',small_lot_floor=1) for x in original if x.carry]
+        chosen += [replace(x,name=x.name+'__funding4',financing_spread=.04) for x in original if x.gross_target]
     chosen=[replace(x,commission=3.) if args.stress=='double_fee' else
             replace(x,slippage=.01) if args.stress=='slippage' else
             replace(x,small_lot_floor=1) if args.stress=='lot_floor' else
@@ -284,28 +291,27 @@ def main():
             menus={}
             lookup={int(r.optionid):r for r in chain.itertuples(index=False)}
             stock=stocks.get(row.date)
-            stock_pack=({}, {}, {}) if stock is None else (
+            stock_pack=({}, {}, {}, {}) if stock is None else (
                 dict(zip(stock.permno,stock.ret)),
                 dict(zip(stock.permno,(stock.prior_adv*.05).fillna(0.))),
-                {int(r.permno):r for r in stock.itertuples()})
-            for floor in {x.policy.small_lot_floor for x in books}:
+                {int(r.permno):r for r in stock.itertuples()},dict(zip(stock.permno,stock.prc.abs())))
+            for floor,commission in {(x.policy.small_lot_floor,x.policy.commission) for x in books}:
                 liq=replace(LIQUIDITY,small_lot_floor=floor)
                 needcarry=any(x.policy.carry for x in books)
                 gate=row.weekly_entry and row.trend_sign>0 and row.breadth_sign>0 and row.rv<=.30
-                credit=credit_menu(chain,3. if args.stress=='double_fee' else 1.5,liq) if needcarry and gate else []
-                hedges=hedge_menu(chain,3. if args.stress=='double_fee' else 1.5,liq) if any(x.policy.hedge for x in books) else []
-                menus[floor]=(credit,hedges)
+                credit=credit_menu(chain,commission,liq) if needcarry and gate else []
+                hedges=hedge_menu(chain,commission,liq) if any(x.policy.hedge for x in books) else []
+                menus[(floor,commission)]=(credit,hedges)
             for book in books:
-                credit,hedges=menus[book.policy.small_lot_floor]
+                credit,hedges=menus[(book.policy.small_lot_floor,book.policy.commission)]
                 step(book,row,chain,spot,stocks.get(row.date),event_groups.get(row.date,empty_events),
                      credit,hedges,resolutions,b.date.iloc[-1],lookup,stock_pack)
         print(f'{name}: {year}; elapsed {time.monotonic()-start:.1f}s; '+
-              ', '.join(f'{x.policy.name}/{x.initial:g}={x.nav:,.0f}' for x in books),flush=True)
+              ', '.join(f'{x.policy.name}/{x.initial:g}={x.nav:,.0f}' for x in books if '__' not in x.policy.name)+
+              f'; {len(books)} funded accounts including stresses',flush=True)
         del q,qgroups,stocks
+    unresolved=[]
     for book in books:
-        if book.options:raise ValueError('terminal option positions remain')
-        # A terminal forced sale outside the recorded ledger would fabricate NAV.
-        if book.stocks:raise ValueError('terminal stocks remain; resolve capacity before completing trial')
         folder=out/f'{book.policy.name}_{int(book.initial)}';folder.mkdir()
         pd.DataFrame(book.daily).to_csv(folder/'daily.csv.gz',index=False)
         pd.DataFrame(book.trades).to_csv(folder/'trades.csv.gz',index=False)
@@ -313,11 +319,22 @@ def main():
             financing=book.financing,stock_fees=book.stock_fees,option_fees=book.option_fees,
             missing_option_mark_calls=book.missing_marks,missing_stock_marks=book.missing_stock_marks,
             skips=book.skips,final_nav=book.nav,investment_accepted=False,
+            terminal_stock_count=len(book.stocks),terminal_stock_value=book.stock_value,
+            terminal_option_count=len(book.options),
             attribution_residual=book.nav-(book.initial+book.cash_interest-book.financing+
                                           sum(t['pnl'] for t in book.trades)))
         (folder/'audit.json').write_text(json.dumps(audit,indent=2),encoding='utf-8')
+        if book.stocks or book.options:
+            unresolved.append(dict(scenario=folder.name,stock_count=len(book.stocks),
+                stock_value=book.stock_value,options=len(book.options),
+                stock_share_max=max([s['shares'] for s in book.stocks],default=0.)))
+            continue
         if abs(audit['cash_residual'])>.01 or abs(audit['attribution_residual'])>.01:
             raise ValueError('independent terminal trade attribution failed')
+    if unresolved:
+        (out/'incomplete.json').write_text(json.dumps(dict(reason='unresolved terminal positions',
+            accounts=unresolved),indent=2),encoding='utf-8')
+        raise ValueError('terminal positions remain; all partial ledgers saved, not accepted')
     (out/'complete.json').write_text(json.dumps(dict(completed=True,elapsed_seconds=time.monotonic()-start)),encoding='utf-8')
 
 

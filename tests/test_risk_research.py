@@ -269,3 +269,12 @@ def test_stock_split_updates_share_units_before_capacity_rounding():
     assert book.stocks[0]['shares']==200
     assert book.stock_value==1000
 
+
+def test_terminal_sale_removes_fractional_drip_dust():
+    book=make_ledger(equity_scale=1.);q=chain().iloc[:0]
+    book.begin(pd.Timestamp('2005-01-03'),0,0,q,{},100.)
+    book.open_stock(7,10,10,0,pd.Timestamp('2005-01-04'),1e8)
+    book.stocks[0]['shares']=1e-11;book.stocks[0]['value']=1e-10;book.finish()
+    book.begin(pd.Timestamp('2005-01-04'),0,0,q,{7:0.},100.)
+    assert not book.stocks
+
