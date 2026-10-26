@@ -1,0 +1,7 @@
+{
+  "selected_by_validation": "cautious",
+  "rule": "highest validation Sharpe among three predefined profiles, >=50 trades and drawdown <=25%",
+  "target": "12\u201315% NAV CAGR in unseen tests, with benchmark/risk/provenance gates",
+  "final_holdout_evaluated": false,
+  "investment_accepted": false
+}

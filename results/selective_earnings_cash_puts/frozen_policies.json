@@ -1,0 +1,38 @@
+{
+  "income_trend": {
+    "delta": 0.35,
+    "reaction": 0.01,
+    "iv_rv": 1.25,
+    "trend": true
+  },
+  "income_all": {
+    "delta": 0.35,
+    "reaction": 0.01,
+    "iv_rv": 1.25,
+    "trend": false
+  },
+  "drift_trend": {
+    "delta": 0.6,
+    "reaction": 0.02,
+    "iv_rv": 1.1,
+    "trend": true
+  },
+  "drift_all": {
+    "delta": 0.6,
+    "reaction": 0.02,
+    "iv_rv": 1.1,
+    "trend": false
+  },
+  "rich_trend": {
+    "delta": 0.5,
+    "reaction": 0.0,
+    "iv_rv": 1.5,
+    "trend": true
+  },
+  "rich_all": {
+    "delta": 0.5,
+    "reaction": 0.0,
+    "iv_rv": 1.5,
+    "trend": false
+  }
+}

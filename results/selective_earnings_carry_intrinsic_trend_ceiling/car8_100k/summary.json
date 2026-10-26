@@ -1,0 +1,258 @@
+{
+  "protocol": {
+    "capacity_ceiling": true,
+    "metrics_risk_free": "official French daily RF",
+    "cash_interest_proxy": false,
+    "prior_session_greeks": false,
+    "delta_is_risk_upper_bound": true,
+    "moneyness_floor": 1.2,
+    "price_floor_prior_intrinsic_pct": 0.01,
+    "liquidity": {
+      "min_oi": 50,
+      "max_relative_spread": 0.15,
+      "max_absolute_spread": null,
+      "participation": 0.05,
+      "oi_participation": 0.01,
+      "small_lot_floor": 1
+    },
+    "car_floors": {
+      "car3": 0.03,
+      "car5": 0.05,
+      "car8": 0.08
+    },
+    "max_tickets": 8,
+    "hold_sessions": 50,
+    "dte": [
+      120,
+      270
+    ],
+    "cost_per_stock_delta_limit": 0.01,
+    "ticket_risk": 0.8,
+    "issuer_admission_risk": 0.8,
+    "sector_admission_risk": 0.8,
+    "cohort_admission_risk": 0.8,
+    "aggregate_marked_risk": 0.8,
+    "stock_exposure_admission_bound": 2.0,
+    "continuous_across_years": true,
+    "market_gate": true,
+    "commission": 0.65
+  },
+  "starting_nav": 100000,
+  "diagnostics": {
+    "missing_marks": 20,
+    "execution_valid": false,
+    "unverified_events": 241,
+    "assignment_unverified": 0,
+    "calendar_unverified": 241,
+    "forced_reserves": 0,
+    "config_hash": "6abd49712dc3c751",
+    "strict": false
+  },
+  "periods": {
+    "discovery": {
+      "strategy": {
+        "cagr": -0.03256817252042754,
+        "sharpe": -0.3289663818948684,
+        "max_drawdown": -0.2953183270216526
+      },
+      "benchmark": {
+        "cagr": 0.010902512478375925,
+        "sharpe": 0.006637561389101121,
+        "max_drawdown": -0.4750288382828953
+      },
+      "alpha": -0.05109287618253912,
+      "bootstrap": {
+        "cagr": {
+          "p025": -0.09590966968881333,
+          "p50": -0.032454372952267274,
+          "p975": 0.02578272557683943
+        },
+        "sharpe": {
+          "p025": -0.7382562520133633,
+          "p50": -0.3405657475764359,
+          "p975": 0.08034335342312042
+        },
+        "max_drawdown": {
+          "p025": -0.5294464293358752,
+          "p50": -0.3169040606182902,
+          "p975": -0.15762189151076383
+        },
+        "alpha": {
+          "p025": -0.113147366327575,
+          "p50": -0.05158878705212687,
+          "p975": 0.00848220860175148
+        }
+      },
+      "bootstrap_alpha_nonpositive": 0.95,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": true,
+        "cagr": false,
+        "sharpe": false,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 1508,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha",
+      "trade_count": 39,
+      "closed_ticket_count": 67
+    },
+    "validation": {
+      "strategy": {
+        "cagr": 0.07735842389466696,
+        "sharpe": 0.2587373947016679,
+        "max_drawdown": -0.29506956879580726
+      },
+      "benchmark": {
+        "cagr": 0.08508487959122735,
+        "sharpe": 0.38888688888149364,
+        "max_drawdown": -0.09924723221171283
+      },
+      "alpha": 0.02716501833017604,
+      "bootstrap": {
+        "cagr": {
+          "p025": -0.11633815773335761,
+          "p50": 0.06106721748489008,
+          "p975": 0.38432202050485453
+        },
+        "sharpe": {
+          "p025": -0.6929692024952925,
+          "p50": 0.19078883310252043,
+          "p975": 1.3301553513700646
+        },
+        "max_drawdown": {
+          "p025": -0.4902338389963022,
+          "p50": -0.3042696989848492,
+          "p975": -0.17154866791151202
+        },
+        "alpha": {
+          "p025": -0.1317916458128963,
+          "p50": 0.012732492453996588,
+          "p975": 0.222267185352623
+        }
+      },
+      "bootstrap_alpha_nonpositive": 0.444,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": false,
+        "cagr": false,
+        "sharpe": false,
+        "alpha": true,
+        "alpha_confidence": false,
+        "drawdown": false
+      },
+      "accepted": false,
+      "sessions": 754,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha",
+      "trade_count": 75,
+      "closed_ticket_count": 126
+    },
+    "development_test": {
+      "strategy": {
+        "cagr": 0.04913462020784509,
+        "sharpe": 0.41554217985563247,
+        "max_drawdown": -0.1609914426924982
+      },
+      "benchmark": {
+        "cagr": -0.027796870753572067,
+        "sharpe": 0.036385934103413474,
+        "max_drawdown": -0.5230392145222177
+      },
+      "alpha": 0.04768805516098667,
+      "bootstrap": {
+        "cagr": {
+          "p025": -0.032697506977390094,
+          "p50": 0.04590939534356442,
+          "p975": 0.16085033202899773
+        },
+        "sharpe": {
+          "p025": -0.3423326703936637,
+          "p50": 0.4241309388336718,
+          "p975": 1.3395026785945583
+        },
+        "max_drawdown": {
+          "p025": -0.23771685600259626,
+          "p50": -0.1609914426924981,
+          "p975": -0.05501613187605046
+        },
+        "alpha": {
+          "p025": -0.03915681972459492,
+          "p50": 0.043924895504338146,
+          "p975": 0.13573634924630743
+        }
+      },
+      "bootstrap_alpha_nonpositive": 0.158,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": true,
+        "cagr": false,
+        "sharpe": true,
+        "alpha": true,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 757,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha",
+      "trade_count": 26,
+      "closed_ticket_count": 48
+    },
+    "all_development": {
+      "strategy": {
+        "cagr": 0.014197822168086072,
+        "sharpe": 0.009015750697756338,
+        "max_drawdown": -0.39033692539584275
+      },
+      "benchmark": {
+        "cagr": 0.01891872891069113,
+        "sharpe": 0.07103740508662053,
+        "max_drawdown": -0.5520101707082642
+      },
+      "alpha": -0.0005335359473896435,
+      "bootstrap": {
+        "cagr": {
+          "p025": -0.03960620449007788,
+          "p50": 0.012948950567841067,
+          "p975": 0.08338099283137611
+        },
+        "sharpe": {
+          "p025": -0.3390956796414907,
+          "p50": -0.0003154716839157048,
+          "p975": 0.4043945243988717
+        },
+        "max_drawdown": {
+          "p025": -0.5829511812851222,
+          "p50": -0.3694029937127022,
+          "p975": -0.23082134738613908
+        },
+        "alpha": {
+          "p025": -0.05588762948540717,
+          "p50": -0.0036578320352455874,
+          "p975": 0.0647949930056512
+        }
+      },
+      "bootstrap_alpha_nonpositive": 0.55,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": true,
+        "cagr": false,
+        "sharpe": false,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": true
+      },
+      "accepted": false,
+      "sessions": 3019,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha",
+      "trade_count": 140,
+      "closed_ticket_count": 241
+    }
+  },
+  "investment_accepted": false
+}

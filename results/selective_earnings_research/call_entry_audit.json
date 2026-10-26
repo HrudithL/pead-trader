@@ -1,0 +1,29 @@
+{
+  "method": "Post-run diagnostic only. No historical entries removed or repriced.",
+  "price_test": "Ask below contemporaneous native-close intrinsic by more than1%ofstock.",
+  "timestamp_limit": "Native stock close can follow option quote by one minute; flag is diagnostic, not proof of arbitrage.",
+  "liquidity_test": "Prior volume<20 requires the assumed one-contract floor at5%participation.",
+  "pnl_limit": "PnL on flagged records is attribution, not a counterfactual portfolio return.",
+  "summaries": [
+    {
+      "experiment": "selective_earnings_carry_intrinsic_trend_cash_ceiling",
+      "scenario": "car5_100k",
+      "closed_records": 527,
+      "pricing_flags": 0,
+      "flagged_trade_pnl": 0.0,
+      "low_volume_records": 383,
+      "low_volume_pnl": 22932.09999999999,
+      "total_net_option_pnl": 159027.59999999998
+    },
+    {
+      "experiment": "selective_earnings_carry_lagged_cash",
+      "scenario": "car5_100k",
+      "closed_records": 686,
+      "pricing_flags": 0,
+      "flagged_trade_pnl": 0.0,
+      "low_volume_records": 507,
+      "low_volume_pnl": -22663.100000000013,
+      "total_net_option_pnl": 135383.4
+    }
+  ]
+}

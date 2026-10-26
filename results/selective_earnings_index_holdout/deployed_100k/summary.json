@@ -1,0 +1,103 @@
+{
+  "protocol": {
+    "frozen_at_utc": "2026-10-26T03:55:57.737754+00:00",
+    "policy": "deployed",
+    "years": [
+      2012,
+      2013
+    ],
+    "coverage_end": "2013-08-30",
+    "starting_capitals": [
+      100000,
+      1000000
+    ],
+    "risk": {
+      "ticket": 0.3,
+      "cohort": 0.3,
+      "aggregate": 0.8
+    },
+    "entry_cutoff_calendar_days": 75,
+    "selection": "Frozen high-risk development candidate; not the30%drawdown validation-selector winner.",
+    "hypotheses": "Full development CAGR>=12%, doubled-fee and no-lot-floor stresses>=12%; inspect untouched holdout without subsequent tuning.",
+    "risk_disclosure": "Development drawdown around47-51%; not assumed acceptable or investment validated.",
+    "coverage_audit": "Native option parquet footer and native SET secprd2013 both end2013-08-30. Benchmark uses same end.",
+    "signal": "Prior200day market trend and observed earnings-response breadth positive, priorRV<=30%;35/15 prior-delta monthlySPX put spread35-75DTE.",
+    "exit": "Staged prior-volume/OI-constrained risk exit; actual SET cash settlement for remainder; cash-funded closes only.",
+    "final_holdout_evaluated": false,
+    "no_post_holdout_tuning": true,
+    "source_hashes": {
+      "engine.py": "ef62aaa340b1ddd6198dc6c27d498ddf91f589c6d79b364e2a6ce5d1dc9b8356",
+      "index_settlement.py": "4deb52fc272cfcf885d04f72786b51c7a67b9addd7b856768cffdb0bd38d5e72",
+      "index_holdout.py": "4494360ca0795318c209fb27809d5512dafd6dd846fba78e66bfb93bce240d56",
+      "index_research.py": "d5b622c105517c8c94786996fdd0396812cab3f5bce46b68ac70db07467354d1",
+      "index_directional.py": "a81822d99ea745c7544492425ab7e249be3661763a6ff1faff04a8675670c075",
+      "liquidity_v2.py": "d6c52623095366b840a61e9a3c7cc29c9a3c5866720f23aa1fb414e92342655f",
+      "quote_store.py": "a6d41de74b99e7da89e4fb32764c7442a4e6d4de729eb9a9fcc61e26b1d6e8a3",
+      "validation.py": "4aca51b05a990caa73f5aaf8b17f6f455ee74455bb41e7ede479730ab7ce2757"
+    }
+  },
+  "starting_nav": 100000,
+  "diagnostics": {
+    "missing_marks": 0,
+    "execution_valid": true,
+    "unverified_events": 0,
+    "assignment_unverified": 0,
+    "calendar_unverified": 0,
+    "forced_reserves": 0,
+    "config_hash": "63fc5581bebaba1a",
+    "strict": false
+  },
+  "periods": {
+    "final_holdout": {
+      "strategy": {
+        "cagr": 0.3823892070584378,
+        "sharpe": 0.8612771282854451,
+        "max_drawdown": -0.4573314554309278
+      },
+      "benchmark": {
+        "cagr": 0.19613201090498333,
+        "sharpe": 1.5197277384624108,
+        "max_drawdown": -0.09686960431302583
+      },
+      "alpha": -0.11859767043358009,
+      "bootstrap": {
+        "cagr": {
+          "p025": -0.1394931490796655,
+          "p50": 0.40459527467056056,
+          "p975": 1.1078285316376268
+        },
+        "sharpe": {
+          "p025": 0.02395688164103881,
+          "p50": 0.9208182761818035,
+          "p975": 2.0648536308458083
+        },
+        "max_drawdown": {
+          "p025": -0.6157421680348987,
+          "p50": -0.45461987107336554,
+          "p975": -0.16908400599814943
+        },
+        "alpha": {
+          "p025": -0.40032758200767143,
+          "p50": -0.08665745210812154,
+          "p975": 0.2133722875927797
+        }
+      },
+      "bootstrap_alpha_nonpositive": 0.707,
+      "gates": {
+        "execution_valid": false,
+        "benchmark_total_return": true,
+        "minimum_three_years": false,
+        "cagr": true,
+        "sharpe": false,
+        "alpha": false,
+        "alpha_confidence": false,
+        "drawdown": false
+      },
+      "accepted": false,
+      "sessions": 418,
+      "method": "paired circular 3-month blocks; market alpha only, not multifactor alpha"
+    }
+  },
+  "final_holdout_evaluated": true,
+  "investment_accepted": false
+}

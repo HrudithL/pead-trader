@@ -33,9 +33,14 @@ class Config:
     condor_stops: bool = True
     defer_unquoted_exits: bool = False
     cash_settlement: bool = False
+    settlement_risk_exit: bool = False
     sleeves: tuple = ("directional", "condor", "reversal")
 
     def __post_init__(self):
+        if self.cash_settlement and self.current_risk_budget:
+            raise ValueError("cash settlement does not support automatic risk rebalancing")
+        if self.settlement_risk_exit and not self.cash_settlement:
+            raise ValueError("settlement risk exit requires cash settlement")
         numbers=[v for v in asdict(self).values() if isinstance(v,(float,int))]
         if not all(np.isfinite(x) for x in numbers):
             raise ValueError("config must be finite")
@@ -62,7 +67,7 @@ class Result:
     diagnostics: dict
 
 
-def run(events, quotes, benchmark, config=Config(), selector=None, selector_context=False, corporate_actions=None, settlements=None):
+def run(events, quotes, benchmark, config=Config(), selector=None, selector_context=False, corporate_actions=None, settlements=None, exit_capacity=None):
     """Entries and exits occur at EOD; same-close fills use lagged liquidity only.
 
     Benchmark date rows are the authoritative session calendar. Missing quotes are
@@ -202,6 +207,7 @@ def run(events, quotes, benchmark, config=Config(), selector=None, selector_cont
             risk_total=sum(risk_value(p) for p in open_book)
             risk_ceiling=max(0.,marked_nav*cfg.aggregate_risk)
         retained=[]
+        remaining_collateral=sum(p["collateral"] for p in open_book)
         for p in open_book:
             value,missing=mark(p,date)
             liquidation=value-p["exit_fee"]
@@ -222,7 +228,10 @@ def run(events, quotes, benchmark, config=Config(), selector=None, selector_cont
             if cfg.cash_settlement:
                 # A declared hold-to-settlement position cannot be liquidated after
                 # its last trading session. It resolves to the actual cash payoff.
-                exit_reason="cash_settlement" if date>=p['settlement_date'] else None
+                if date>=p['settlement_date']:exit_reason="cash_settlement"
+                elif cfg.settlement_risk_exit and (getattr(day,'risk_off',False) or p.get('pending_exit_reason')=='risk_off'):
+                    exit_reason="risk_off"
+                else:exit_reason=None
             elif idx>=p["last_trade_idx"]:exit_reason="contract_terminal"
             if idx==len(b)-1: exit_reason="sample_end"
             if cfg.current_risk_budget and risk_total>risk_ceiling and not exit_reason:exit_reason="risk_rebalance"
@@ -236,9 +245,32 @@ def run(events, quotes, benchmark, config=Config(), selector=None, selector_cont
                 if exit_reason=="risk_rebalance":
                     unit_risk=risk_value(p)/original_contracts
                     closed=min(original_contracts,max(1,int(np.ceil((risk_total-risk_ceiling)/unit_risk))))
+                if exit_capacity is not None and exit_reason!='cash_settlement' and not missing:
+                    live=pd.DataFrame([quote_lookup.get((date,p['secid'],leg.optionid))._asdict()
+                                       for leg in p['structure'].legs])
+                    limit=exit_capacity(live,dict(date=date,used_lots=entry_leg_usage,structure=p['structure']))
+                    if not np.isfinite(limit) or limit<0 or limit!=int(limit):
+                        raise ValueError("invalid exit capacity")
+                    closed=min(closed,int(limit))
+                    # Release only this position's collateral. A wide executable
+                    # exit can cost more than terminal width; it must not spend
+                    # collateral reserved for the remaining book.
+                    unit_need=max(0.,-(liquidation+p['collateral'])/original_contracts)
+                    if unit_need>0:
+                        funded=int(max(0.,cash-remaining_collateral)//unit_need)
+                        closed=min(closed,funded)
+                    if closed<1:
+                        if exit_reason!='risk_rebalance':p['pending_exit_reason']=exit_reason
+                        retained.append(p)
+                        continue
                 fraction=closed/original_contracts
                 risk_total-=risk_value(p)*fraction
                 cash+=liquidation*fraction
+                remaining_collateral-=p["collateral"]*fraction
+                if exit_capacity is not None and exit_reason!='cash_settlement' and not missing:
+                    for leg in p['structure'].legs:
+                        key=(date,leg.optionid)
+                        entry_leg_usage[key]=entry_leg_usage.get(key,0)+closed*abs(leg.quantity)
                 if missing:diag["forced_reserves"]+=1
                 record={k:p[k] for k in ("event_id","secid","sector","sleeve","entry_date","contracts","entry_cashflow","entry_fee","risk")}
                 record["contracts"]=closed
@@ -249,6 +281,7 @@ def run(events, quotes, benchmark, config=Config(), selector=None, selector_cont
                     optionids=",".join(str(x.optionid) for x in p["structure"].legs),
                     selection_key=p.get("selection_key"),direction=p.get("direction"),source_event_id=p.get("source_event_id",p["event_id"])))
                 if closed<original_contracts:
+                    if exit_reason!='risk_rebalance':p['pending_exit_reason']=exit_reason
                     remainder=1-fraction
                     p["contracts"]=original_contracts-closed
                     for key in ("entry_cashflow","entry_fee","exit_fee","risk","collateral","risk_mark"):
@@ -269,6 +302,8 @@ def run(events, quotes, benchmark, config=Config(), selector=None, selector_cont
                 for sleeve in cfg.sleeves:
                     if row.secid in action_days.get(date,set()):
                         skip(row,sleeve,"announced_corporate_action");continue
+                    if exit_capacity is not None and any(p.get('pending_exit_reason') for p in open_book):
+                        skip(row,sleeve,"pending_capacity_exit");continue
                     if cfg.defer_unquoted_exits and quote_failure_today:
                         skip(row,sleeve,"unquoted_open_position");continue
                     if not verified:

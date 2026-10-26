@@ -1,0 +1,31 @@
+{
+  "liquidity": {
+    "min_oi": 50,
+    "max_relative_spread": 0.15,
+    "max_absolute_spread": null,
+    "participation": 0.05,
+    "oi_participation": 0.01,
+    "small_lot_floor": 1
+  },
+  "car_floors": {
+    "car3": 0.03,
+    "car5": 0.05,
+    "car8": 0.08
+  },
+  "max_tickets": 8,
+  "hold_sessions": 50,
+  "dte": [
+    120,
+    270
+  ],
+  "cost_per_stock_delta_limit": 0.01,
+  "ticket_risk": 0.3,
+  "issuer_admission_risk": 0.3,
+  "sector_admission_risk": 0.5,
+  "cohort_admission_risk": 0.5,
+  "aggregate_marked_risk": 0.8,
+  "stock_exposure_admission_bound": 2.0,
+  "continuous_across_years": true,
+  "market_gate": false,
+  "commission": 0.65
+}

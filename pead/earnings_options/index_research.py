@@ -68,7 +68,7 @@ def index_quotes(year,calendar):
 
 
 def signals(end_year=2010):
-    path=CACHE/'signals_1999_2010.parquet'
+    path=CACHE/f'signals_1999_{end_year}.parquet'
     if path.exists():return pd.read_parquet(path)
     b=pd.read_parquet(ROOT/'data/selective_earnings/benchmark.parquet')
     b=b[b.date.dt.year<=end_year].copy().reset_index(drop=True)

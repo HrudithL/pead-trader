@@ -1,0 +1,5 @@
+{
+  "records": 1382,
+  "maximum_absolute_pnl_gap": 7.275957614183426e-12,
+  "method": "Independent entry bid/ask cashflows; early exit bid/ask; native SET intrinsic payoff; actual fees; no fitted price."
+}
