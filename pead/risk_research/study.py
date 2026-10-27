@@ -103,9 +103,9 @@ def stock_events(data,b):
 
 def equity_day_inputs(data,year,ids):
     q=pd.read_parquet(data/f'normalized_equity/equity_{year}.parquet',
-        columns=['date','permno','ret','retx','prc','prc_is_bidask_avg','vol'],filters=[('permno','in',list(ids))])
+        columns=['date','permno','ret','retx','prc','prc_is_bidask_avg','vol','cfacshr'],filters=[('permno','in',list(ids))])
     prior=pd.read_parquet(data/f'normalized_equity/equity_{year-1}.parquet',
-        columns=['date','permno','ret','retx','prc','prc_is_bidask_avg','vol'],filters=[('permno','in',list(ids))])
+        columns=['date','permno','ret','retx','prc','prc_is_bidask_avg','vol','cfacshr'],filters=[('permno','in',list(ids))])
     q=pd.concat([prior,q],ignore_index=True).sort_values(['permno','date'])
     q['dollars']=q.prc.abs()*pd.to_numeric(q.vol,errors='coerce')
     q['prior_adv']=q.groupby('permno',sort=False).dollars.transform(lambda s:s.rolling(21,min_periods=10).mean().shift(1))
@@ -162,7 +162,7 @@ def step(book,row,chain,spot,stock,events,credit,hedges,resolutions,end,quote_lo
     spy=(None if stock is None else stock[stock.permno.eq(84398)])
     spy_quote=spy.iloc[0] if spy is not None and len(spy) else None
     short_observation=(None if spy_quote is None else
-                       (float(spy_quote.ret),float(spy_quote.retx),abs(float(spy_quote.prc))))
+                       (float(spy_quote.ret),float(spy_quote.retx),abs(float(spy_quote.prc)),float(spy_quote.cfacshr)))
     book.begin(row.date,row.cash_rf,row.benchmark,chain,returns,spot,actual,
         stock_capacity=stock_capacity,funding_rf=row.funding_rf,quote_lookup=quote_lookup,
         stock_prices=raw_prices,short_observation=short_observation)
@@ -251,7 +251,7 @@ def step(book,row,chain,spot,stock,events,credit,hedges,resolutions,end,quote_lo
                 if len(book.stock_history)>=60 and book.stock_value>0 and not maintenance and row.date<end:
                     beta=float(lagged_beta(pd.Series(book.stock_history+[0.]),pd.Series(book.market_history+[0.])).iloc[-1])
                 target=min(book.stock_value,beta*book.previous_nav)
-                book.rebalance_short(target,abs(float(spy_quote.prc)),float(spy_quote.prior_adv))
+                book.rebalance_short(target,abs(float(spy_quote.prc)),float(spy_quote.prior_adv),float(spy_quote.cfacshr))
     book.finish()
 
 
@@ -375,7 +375,8 @@ def main():
             skips=book.skips,final_nav=book.nav,investment_accepted=False,
             terminal_stock_count=len(book.stocks),terminal_stock_value=book.stock_value,
             terminal_option_count=len(book.options),terminal_short_count=len(book.shorts),
-            short_dividends=book.short_dividends,short_borrow=book.short_borrow,margin_breaches=book.margin_breaches,
+            short_dividends=book.short_dividends,short_borrow=book.short_borrow,
+            short_fees=book.short_fees,margin_breaches=book.margin_breaches,
             attribution_residual=book.nav-(book.initial+book.cash_interest-book.financing+
                                           sum(t['pnl'] for t in book.trades)-book.short_dividends-book.short_borrow))
         (folder/'audit.json').write_text(json.dumps(audit,indent=2),encoding='utf-8')

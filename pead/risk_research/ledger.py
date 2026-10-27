@@ -19,7 +19,7 @@ class Ledger:
         self.stock_fees=0.;self.option_fees=0.;self.premium_spent=0.;self.hedge_budget=0.
         self.missing_marks=0;self.missing_stock_marks=0;self.skips={};self.used={}
         self.stock_pnl_today=0.;self.last_year=None;self.market_history=[];self.stock_history=[]
-        self.shorts=[];self.short_cashflows=0.;self.short_dividends=0.;self.short_borrow=0.
+        self.shorts=[];self.short_cashflows=0.;self.short_dividends=0.;self.short_borrow=0.;self.short_fees=0.
         self.margin_breaches=0
         self.liquidity=replace(LIQUIDITY,small_lot_floor=policy.small_lot_floor)
 
@@ -90,8 +90,9 @@ class Ledger:
             self.cash-=cost;self.financing+=cost
         if self.shorts:
             if short_observation is None:raise ValueError('actual SPY return/retx/price required')
-            total,ex_div,price=short_observation
-            if not np.isfinite([total,ex_div,price]).all() or price<=0 or min(total,ex_div)<-1:
+            total,ex_div,price=short_observation[:3]
+            factor=short_observation[3] if len(short_observation)>3 else 1.
+            if not np.isfinite([total,ex_div,price,factor]).all() or min(price,factor)<=0 or min(total,ex_div)<-1:
                 raise ValueError('invalid SPY observation')
             if total-ex_div < -1e-6:raise ValueError('inconsistent SPY dividend returns')
             for held in self.shorts:
@@ -100,7 +101,8 @@ class Ledger:
                 borrow=prior*self.policy.short_borrow_rate/252
                 self.cash-=dividend+borrow;self.short_cashflows-=dividend+borrow
                 self.short_dividends+=dividend;self.short_borrow+=borrow
-                held['value']=prior*(1+ex_div);held['shares']=held['value']/price
+                held['shares']*=held['cfacshr']/factor
+                held['cfacshr']=factor;held['value']=held['shares']*price
         for p in self.stocks:
             ret=stock_returns.get(p['permno'],np.nan)
             if not np.isfinite(ret) or ret < -1:
@@ -285,9 +287,9 @@ class Ledger:
         return self.cash-(self.initial+self.cash_interest-self.financing+
                           self.option_cashflows+self.stock_cashflows+self.short_cashflows)
 
-    def rebalance_short(self,target,price,adv):
+    def rebalance_short(self,target,price,adv,split_factor=1.):
         """Actual SPY shares, 150% collateral including sale proceeds; FIFO covers."""
-        if not np.isfinite([target,price,adv]).all() or min(price,adv)<=0:return
+        if not np.isfinite([target,price,adv,split_factor]).all() or min(price,adv,split_factor)<=0:return
         cost=.0002*(2 if self.policy.commission==3 else 1)
         held=sum(p['shares'] for p in self.shorts);desired=max(0.,np.floor(target/price))
         capacity=max(0.,adv*.05-self.used_stock.get(84398,0.))
@@ -298,8 +300,10 @@ class Ledger:
                        np.floor(room/((.5+cost)*price)))
             if shares<1:self.skip('short_margin_or_capacity');return
             value=shares*price;fee=value*cost
+            self.short_fees+=fee
             self.cash+=value-fee;self.short_cashflows+=value-fee
-            self.shorts.append(dict(value=value,shares=shares,credit=value,entry_fee=fee,entry_date=self.date))
+            self.shorts.append(dict(value=value,shares=shares,credit=value,entry_fee=fee,
+                                    entry_date=self.date,cfacshr=split_factor))
             self.used_stock[84398]=self.used_stock.get(84398,0.)+value
         elif desired<held:
             remaining=held-desired
@@ -309,6 +313,7 @@ class Ledger:
                 shares=min(p['shares'],remaining,allowed)
                 if shares<=0:break
                 fraction=shares/p['shares'];value=p['value']*fraction;fee=value*cost
+                self.short_fees+=fee
                 self.cash-=value+fee;self.short_cashflows-=value+fee
                 self.trades.append(dict(kind='spy_short',entry_date=p['entry_date'],exit_date=self.date,
                     quantity=shares,pnl=(p['credit']-p['entry_fee'])*fraction-value-fee,

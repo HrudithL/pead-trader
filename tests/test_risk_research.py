@@ -327,10 +327,19 @@ def test_spy_split_changes_share_count_without_profit():
     book=make_ledger(equity_scale=1.,linear_hedge=True,short_borrow_rate=0.)
     q=chain().iloc[:0];book.begin(pd.Timestamp('2005-01-03'),0,0,q,{},100.)
     book.rebalance_short(10_000,100.,1_000_000.);book.finish()
-    book.begin(pd.Timestamp('2005-01-04'),0,0,q,{},100.,short_observation=(0.,0.,50.))
+    book.begin(pd.Timestamp('2005-01-04'),0,0,q,{},100.,short_observation=(0.,0.,50.,.5))
     assert book.shorts[0]['shares']==200
     assert book.short_value==10000
     assert book.current_nav()==pytest.approx(99998)
+
+
+def test_vendor_return_rounding_cannot_change_fixed_short_quantity():
+    book=make_ledger(equity_scale=1.,linear_hedge=True,short_borrow_rate=0.)
+    q=chain().iloc[:0];book.begin(pd.Timestamp('2005-01-03'),0,0,q,{},100.)
+    book.rebalance_short(10000,100,1e6);book.finish()
+    book.begin(pd.Timestamp('2005-01-04'),0,.010001,q,{},100.,short_observation=(.010001,.010001,101.,1.))
+    assert book.shorts[0]['shares']==100
+    assert book.short_value==10100
 
 
 def test_short_admission_respects_margin_credit_limit():
