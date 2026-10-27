@@ -71,6 +71,7 @@ def main():
     p.add_argument('--root',type=Path,default=Path(__file__).resolve().parents[2]/'results/options_risk_synthesis')
     p.add_argument('--source',type=Path,default=Path('C:/Users/hrudi/.codex/worktrees/selective-earnings-research/PEAD_Trading'))
     p.add_argument('--bootstrap',type=int,default=1000)
+    p.add_argument('--quiet',action='store_true')
     args=p.parse_args();rows=[];yearly=[];pairs={};register=[]
     factors=pd.read_csv(args.source/'data/selective_earnings_index/ff_daily.csv')
     factors['date']=pd.to_datetime(factors.date.astype(str),format='%Y%m%d')
@@ -100,13 +101,21 @@ def main():
                 missing_stock_marks=audit['missing_stock_marks'],cash_residual=audit['cash_residual'],
                 cash_interest=audit['cash_interest'],financing=audit['financing'],
                 stock_fees=audit['stock_fees'],option_fees=audit['option_fees'],
+                short_fees=audit.get('short_fees',0.),short_dividends=audit.get('short_dividends',0.),
+                short_borrow=audit.get('short_borrow',0.),margin_breaches=audit.get('margin_breaches',0),
                 max_carry_risk_nav=float(d.carry_risk_nav.max()),
                 min_free_cash=float(d.free_cash.min()),
+                max_funding_nav=float(np.maximum(0.,-d.free_cash/d.nav).max()),
+                max_long_short_gross=float(d.get('long_short_gross',pd.Series([np.nan])).max()),
                 max_remaining_carry_loss_nav=float(d.get('carry_remaining_loss_nav',pd.Series([np.nan])).max()),
                 attribution_residual=audit.get('attribution_residual',np.nan),
                 stock_pnl=float(t.loc[t.kind.eq('stock'),'pnl'].sum()) if len(t) else 0.,
                 carry_pnl=float(t.loc[t.kind.eq('carry'),'pnl'].sum()) if len(t) else 0.,
                 hedge_pnl=float(t.loc[t.kind.eq('hedge'),'pnl'].sum()) if len(t) else 0.)
+            stats['stock_reserve_exits']=int(t.reason.eq('terminal_reserve').sum()) if len(t) else 0
+            stats['stock_reserve_pnl']=float(t.loc[t.reason.eq('terminal_reserve'),'pnl'].sum()) if len(t) else 0.
+            stats['spy_short_pnl_net_carry']=(float(t.loc[t.kind.eq('spy_short'),'pnl'].sum())-
+                audit.get('short_dividends',0.)-audit.get('short_borrow',0.)) if len(t) else 0.
             stats['numerical_target_pass']=bool(stats['cagr']>=.12 and stats['excess_sharpe']>=1 and
                 stats['max_drawdown']>=-.20 and trades>=20 and abs(audit['cash_residual'])<.01 and
                 audit['missing_stock_marks']==0 and audit['missing_option_mark_calls']==0)
@@ -122,11 +131,16 @@ def main():
                 pairs[trial.name+'/'+key]=dict(parent=parent,
                     intervals=paired_difference(d,loaded[parent],args.bootstrap))
     table=pd.DataFrame(rows)
+    if table.empty:
+        raise FileNotFoundError('No completed per-account ledgers found; existing summaries were preserved. '
+                                'Run the study with licensed inputs or pass --root to a full local results directory.')
     pd.DataFrame(register).to_csv(args.root/'trial_register.csv',index=False)
     table.to_csv(args.root/'comparison.csv',index=False)
     pd.DataFrame(yearly).to_csv(args.root/'yearly.csv',index=False)
     (args.root/'paired_uncertainty.json').write_text(json.dumps(pairs,indent=2),encoding='utf-8')
-    if len(table):print(table[['trial','policy','capital','cagr','excess_sharpe','max_drawdown','financing','numerical_target_pass']].to_string(index=False))
+    if len(table) and not args.quiet:
+        print(table[['trial','policy','capital','cagr','excess_sharpe','max_drawdown','financing','numerical_target_pass']].to_string(index=False))
+    print(f'Saved {len(table)} completed account/scenario rows; {len(register)} trial vintages; all investment acceptance remains false.')
 
 
 if __name__=='__main__':main()

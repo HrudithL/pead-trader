@@ -6,9 +6,9 @@ All historical periods are development evidence. User approved implementation, t
 
 - Isolated branch `codex/options-risk-synthesis`, based on PR #19 `bb2b738`.
 - Baseline: 107 tests passed, 19 data-dependent skips.
-- New focused suite currently 24 tests passed. Code review found and reproduced important defects before accepting performance.
-- Current running governing experiment: `final_v6_development_all_suite`, source commit `b5ecfae`, 56 funded account/scenario combinations sharing read-only market inputs. Covers baseline, doubled fees, 1% additional per-leg option slippage, assumed one-lot participation floor, and 4% financing-spread stress. Default capacity has **no** one-lot floor.
-- Remaining: finish terminal audits; 2012–2013 consumed-history comparison; targeted compensation-screen revision; complete matched-stress reporting, independent attribution, full tests and draft PR.
+- Final verification: **30 focused tests; 137 full-suite passes and 19 data-dependent skips**. Code review found and reproduced important defects before accepting performance.
+- Completed governing experiment: `final_v6_development_all_suite`, source commit `b5ecfae`, 56 funded account/scenario combinations sharing read-only market inputs. Covers baseline, doubled fees, 1% additional per-leg option slippage, assumed one-lot participation floor, and 4% financing-spread stress. Default capacity has **no** one-lot floor.
+- Completed follow-ups and separate recent segments bring the governing/adaptive total to **196 account/scenario observations**. All terminal audits and paired reporting completed. Maximum attribution discrepancy across all completed observations is below $0.000001; no account is investment accepted. Final conclusions are in `docs/OPTIONS_RISK_SYNTHESIS_RESULTS_2026-10-26.md`.
 
 ## Preserved vintages and diagnoses
 
@@ -20,7 +20,12 @@ All historical periods are development evidence. User approved implementation, t
 | `reviewed_v3_development_all_base` | Intentionally stopped | Reviewer reproduced rounding of seven allowed shares into eight. Fixed executed integer shares and preserved an explicit superseded marker. |
 | `reviewed_v4_development_all_base` | Incomplete terminal gate | Options accounts completed; stock residuals prevented trial completion. Later tests reproduced fractional-unit dust and introduced raw-price rebasing through stock splits/DRIP. No off-ledger terminal liquidation. |
 | `final_v5_development_all_suite` | Failed; no accepted result | Tiny stock risk trim could queue a zero-share pending order. Regression reproduced it; zero requests now leave no pending exit. |
-| `final_v6_development_all_suite` | Running | Governing corrected initial policies and costs. Each trial freezes policy/source hashes before execution. |
+| `final_v6_development_all_suite` | Complete, 56 accounts | Governing corrected initial policies and costs. Each trial freezes policy/source hashes before execution. |
+| `final_recent_recent_all_suite` | Failed before trading | Native date32 was returned as Python date objects; normalization now has a regression test. |
+| `final_recent_v2_recent_all_suite` | Complete, 56 accounts | Separate 2012–2013 consumed-history comparison. |
+| `pricing_v1_development_options_suite` / `pricing_recent_v1_recent_options_suite` | Complete, 16 accounts each | Prior-IV compensation screen and matched controls; no improved edge. |
+| `linear_v1_development_equity_suite` | Intentionally stopped | Reviewer found rounding of vendor retx could change actual fixed SPY quantities. Replaced by split-factor-aware actual-price accounting. |
+| `linear_v2_development_equity_suite` / `linear_recent_v2_recent_equity_suite` | Complete, 26 accounts each | Direct SPY hedge and fees/funding; lower drawdown but lower return and alpha. |
 
 ## Accounting defects corrected before accepting results
 
@@ -52,4 +57,10 @@ The justified extra challenger is therefore a **pricing compensation screen**, n
 
 Use the existing Python 3.12/pandas 3 runtime. Explicit source checkout contains the preserved #19 native SPX quote/signal/SET caches; root `data/` supplies normalized stocks and event features. Licensed data remain local. `results/options_risk_synthesis/input_manifest.json` currently records SHA-256 for 51 consulted cache/input files. Fourteen yearly SPX caches were independently checked for unique date/option keys. Recent SPX spot uses native `D:/OptionMetrics/parquet/secprd2012/2013.parquet` rather than fabricated missing 2011 inputs.
 
-The original #19 engine and eight frozen source hashes remain unchanged. Original studies and user-protected worktrees were neither cleaned nor removed.
+The original #19 engine and eight frozen source hashes were verified unchanged. New checkout copies of `quote_store.py` and `validation.py` differ only by Git's LF/CRLF checkout normalization; normalized source is identical. The original freeze was not rewritten. The final input manifest has 53 simulation input fingerprints plus five native diagnostic fingerprints. Original studies and user-protected worktrees were neither cleaned nor removed.
+
+## Direct SPY follow-up
+
+The paid hedge's negative carry motivated a distinct linear hedge control, not a retuned put premium. The new comparison shorts actual SPY shares against trailing long-sleeve beta, excluding hedge returns from beta estimation. It reserves 150% of short value including sale proceeds; charges separate dividends, 1% assumed borrow, execution fees and RF+2% financing; and stages maintenance reductions against shared lagged ADV. Split factors, not rounded vendor return ratios, change actual share quantities. Synthetic ex-dividend and split tests, actual-price drift tests, fee counters and independent attribution were reviewed.
+
+At $1M in development, the direct hedge returned 7.29% / Sharpe 0.90 / drawdown −6.93%, compared with 10.37% / 0.67 / −28.67% for its funded parent. The paired Sharpe-improvement interval includes zero, and alpha preservation is not supported. The levered hedge is worse on CAGR and Sharpe. Therefore this is retained only as an informative risk-reduction control; it does not meet the requested joint objective.

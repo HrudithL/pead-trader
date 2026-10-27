@@ -1,5 +1,7 @@
 # Options and equity strategy evidence audit — 2026-10-26
 
+This is the preserved pre-implementation audit. The user subsequently approved execution; completed experiments and decisions are in [the final results report](OPTIONS_RISK_SYNTHESIS_RESULTS_2026-10-26.md).
+
 ## Status and objective
 
 This is a new independent audit of the open PRs, source code, preserved worktrees and saved daily ledgers. It is not a new backtest or a claim that a superior strategy has been built. The proposed implementation is awaiting the design approval required by `superpowers/brainstorming/SKILL.md`. No original worktree, frozen source, dataset or published result has been changed.

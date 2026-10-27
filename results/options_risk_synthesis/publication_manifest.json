@@ -1,0 +1,28 @@
+{
+  "scope": "Code, documentation and aggregate summaries/figures only",
+  "full_local_snapshot": "93893e797e7f0e9436184a9c77d421fcf70049ca",
+  "full_ledgers_published": false,
+  "raw_inputs_published": false,
+  "local_input_manifest_published": false,
+  "summary_sha256": {
+    "comparison.csv": "2b58d94b4608f5ed19d4f439e5c6abf28fa49a0be87ac0f6a6d98e6c09fd64d5",
+    "yearly.csv": "b7ce784f910f2fedf09aef4baf9ec9be8ddf999ac7ee69256bd0960806065f3d",
+    "paired_uncertainty.json": "9e4f5a342194683d5a69178c99bb1a46e68b80c8cdd60a7f26b5323a93254cf8",
+    "trial_register.csv": "d49ae2ec10d76ae2d2b1f7ed790f5a7a29d604020a26a27e5c88c15afd675c43",
+    "development_frontier.png": "2f8b5439fa82df464fb02d9901d08002adccf8f771f5167e7777a042b4eb417b",
+    "development_frontier.svg": "95411f26fef36d791706d93b0e65ddb94b0730a29e8208e2394b88941245cfe3",
+    "development_paths.png": "e1a96fbaf83545a7bd29d6a06e0256e4f540f2bab3a7a80096d4656c36951758"
+  },
+  "code_commit_lineage": {
+    "18b2bb8": "f7304a4",
+    "7ba0510": "23c4353",
+    "44b7858": "6e99f67",
+    "fa70754": "6d8910a",
+    "4af4768": "c222cf7",
+    "ce86084": "551c8e2",
+    "b5ecfae": "075abec",
+    "bd75d68": "6505cec",
+    "6f6003f": "5e8d094",
+    "b3a6217": "e5f9c66"
+  }
+}

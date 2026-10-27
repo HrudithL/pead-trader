@@ -1,0 +1,15 @@
+trial,state,smoke,policies,segment,stress,started_utc,failure_detail
+final_recent_recent_all_suite,incomplete,False,28,recent,suite,2026-10-26T07:58:53.806302+00:00,[]
+final_recent_v2_recent_all_suite,complete,False,28,recent,suite,2026-10-27T01:19:38.038747+00:00,[]
+final_v5_development_all_suite,incomplete,False,28,development,suite,2026-10-26T07:34:31.526212+00:00,"[{""completed"": false, ""reason"": ""Invalid stock sale fraction after negligible risk trim queued zero-share pending exit. Reproduced in test_negligible_partial_trim_does_not_queue_a_zero_share_exit and fixed in b5ecfae.""}]"
+final_v6_development_all_suite,complete,False,28,development,suite,2026-10-26T07:38:10.260490+00:00,[]
+initial_development_options_base,complete,False,3,development,base,2026-10-26T07:09:37.220158+00:00,[]
+initial_development_options_base_smoke,complete,True,3,development,base,2026-10-26T07:08:24.934981+00:00,[]
+linear_recent_v2_recent_equity_suite,complete,False,13,recent,suite,2026-10-27T01:34:41.002590+00:00,[]
+linear_v1_development_equity_suite,incomplete,False,13,development,suite,2026-10-27T01:19:38.038747+00:00,"[{""completed"": false, ""reason"": ""Stopped after review detected vendor-return rounding changing fixed SPY share quantity. Replaced by fixed-quantity, split-factor-aware linear_v2.""}]"
+linear_v2_development_equity_suite,complete,False,13,development,suite,2026-10-27T01:24:28.470933+00:00,[]
+pricing_recent_v1_recent_options_suite,complete,False,8,recent,suite,2026-10-27T01:34:40.984492+00:00,[]
+pricing_v1_development_options_suite,complete,False,8,development,suite,2026-10-27T01:24:28.177364+00:00,[]
+reviewed_v2_development_equity_base_smoke,complete,True,4,development,base,2026-10-26T07:17:38.352858+00:00,[]
+reviewed_v3_development_all_base,incomplete,False,8,development,base,2026-10-26T07:20:51.826034+00:00,"[{""completed"": false, ""reason"": ""Stopped after independently reproduced one-share stock exit capacity rounding defect. Replaced by reviewed_v4; protocol and incomplete-run record preserved.""}]"
+reviewed_v4_development_all_base,incomplete,False,8,development,base,2026-10-26T07:24:51.865801+00:00,"[{""completed"": false, ""reason"": ""Strict terminal stock-position gate failed. Completed options ledgers preserved; stock results not accepted. Subsequent share-unit/dust regression tests and failure diagnostics added.""}]"

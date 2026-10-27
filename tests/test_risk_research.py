@@ -357,3 +357,16 @@ def test_native_spot_date32_is_normalized(tmp_path):
     pd.DataFrame(dict(secid=[108105],date=[datetime.date(2012,1,3)],close=[1250.])).to_parquet(tmp_path/'secprd2012.parquet')
     assert spot_for_year(tmp_path,2012,tmp_path)=={pd.Timestamp('2012-01-03'):1250.}
 
+
+def test_summary_only_checkout_cannot_overwrite_published_aggregates(tmp_path,monkeypatch):
+    from pead.risk_research.report import main
+    root=tmp_path/'summaries';root.mkdir()
+    existing=root/'comparison.csv';existing.write_text('published,summary\n1,2\n')
+    source=tmp_path/'source';factors=source/'data/selective_earnings_index'
+    factors.mkdir(parents=True)
+    (factors/'ff_daily.csv').write_text('date,MKT_RF,SMB,HML,RF\n20000103,1,0,0,0\n')
+    monkeypatch.setattr('sys.argv',['report','--root',str(root),'--source',str(source),'--quiet'])
+    with pytest.raises(FileNotFoundError,match='ledgers'):
+        main()
+    assert existing.read_text()=='published,summary\n1,2\n'
+
