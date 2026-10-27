@@ -19,11 +19,16 @@ class Ledger:
         self.stock_fees=0.;self.option_fees=0.;self.premium_spent=0.;self.hedge_budget=0.
         self.missing_marks=0;self.missing_stock_marks=0;self.skips={};self.used={}
         self.stock_pnl_today=0.;self.last_year=None;self.market_history=[];self.stock_history=[]
+        self.shorts=[];self.short_cashflows=0.;self.short_dividends=0.;self.short_borrow=0.
+        self.margin_breaches=0
         self.liquidity=replace(LIQUIDITY,small_lot_floor=policy.small_lot_floor)
 
     @property
     def collateral(self):
-        return sum(p['width']*100*p['lots'] for p in self.options if p['role']=='carry')
+        return sum(p['width']*100*p['lots'] for p in self.options if p['role']=='carry')+1.5*self.short_value
+
+    @property
+    def short_value(self):return sum(p['value'] for p in self.shorts)
 
     @property
     def stock_value(self):return sum(p['value'] for p in self.stocks)
@@ -63,10 +68,11 @@ class Ledger:
         return value,True
 
     def current_nav(self):
-        return self.cash+self.stock_value+sum(self.mark_option(p)[0]-self.policy.commission*len(p['structure'].legs)*p['lots'] for p in self.options)
+        return self.cash+self.stock_value-self.short_value+sum(self.mark_option(p)[0]-self.policy.commission*len(p['structure'].legs)*p['lots'] for p in self.options)
 
     def begin(self,date,rf,market,quotes,stock_returns,spot,settlements=None,
-              stock_capacity=None,funding_rf=None,quote_lookup=None,stock_prices=None):
+              stock_capacity=None,funding_rf=None,quote_lookup=None,stock_prices=None,
+              short_observation=None):
         """Apply beginning cash carry, actual stock returns and native resolution."""
         if not np.isfinite([rf,market,spot]).all() or spot<=0:raise ValueError('invalid market inputs')
         self.date=pd.Timestamp(date);self.q=self._quotes(quotes) if quote_lookup is None else quote_lookup
@@ -82,6 +88,19 @@ class Ledger:
         else:
             cost=-free*(max(0.,rf if funding_rf is None else funding_rf)+self.policy.financing_spread/252)
             self.cash-=cost;self.financing+=cost
+        if self.shorts:
+            if short_observation is None:raise ValueError('actual SPY return/retx/price required')
+            total,ex_div,price=short_observation
+            if not np.isfinite([total,ex_div,price]).all() or price<=0 or min(total,ex_div)<-1:
+                raise ValueError('invalid SPY observation')
+            if total-ex_div < -1e-6:raise ValueError('inconsistent SPY dividend returns')
+            for held in self.shorts:
+                prior=held['value']
+                dividend=prior*max(0.,total-ex_div)
+                borrow=prior*self.policy.short_borrow_rate/252
+                self.cash-=dividend+borrow;self.short_cashflows-=dividend+borrow
+                self.short_dividends+=dividend;self.short_borrow+=borrow
+                held['value']=prior*(1+ex_div);held['shares']=held['value']/price
         for p in self.stocks:
             ret=stock_returns.get(p['permno'],np.nan)
             if not np.isfinite(ret) or ret < -1:
@@ -219,7 +238,8 @@ class Ledger:
         if not np.isfinite([price,desired,cost,adv]).all() or min(price,adv)<=0 or cost<0:
             self.skip('invalid_stock_entry');return 0.
         free=self.cash-self.collateral-self.exit_reserve
-        leverage=max(0.,self.policy.equity_scale-1.)*self.previous_nav
+        leverage=(self.policy.funding_limit if self.policy.linear_hedge else
+                  max(0.,self.policy.equity_scale-1.))*self.previous_nav
         capacity=np.inf if self.stock_capacity is None else max(0.,self.stock_capacity.get(int(permno),0.)-self.used_stock.get(int(permno),0.))
         dollars=min(desired,adv*.05,capacity,max(0.,(free+leverage)/(1+cost)))
         # A levered control pays its entry costs in addition to the target debt.
@@ -263,7 +283,42 @@ class Ledger:
 
     def reconciliation(self):
         return self.cash-(self.initial+self.cash_interest-self.financing+
-                          self.option_cashflows+self.stock_cashflows)
+                          self.option_cashflows+self.stock_cashflows+self.short_cashflows)
+
+    def rebalance_short(self,target,price,adv):
+        """Actual SPY shares, 150% collateral including sale proceeds; FIFO covers."""
+        if not np.isfinite([target,price,adv]).all() or min(price,adv)<=0:return
+        cost=.0002*(2 if self.policy.commission==3 else 1)
+        held=sum(p['shares'] for p in self.shorts);desired=max(0.,np.floor(target/price))
+        capacity=max(0.,adv*.05-self.used_stock.get(84398,0.))
+        if desired>held:
+            free=self.cash-self.collateral-self.exit_reserve
+            room=max(0.,free+self.policy.funding_limit*self.previous_nav)
+            shares=min(np.floor(desired-held),np.floor(capacity/price),
+                       np.floor(room/((.5+cost)*price)))
+            if shares<1:self.skip('short_margin_or_capacity');return
+            value=shares*price;fee=value*cost
+            self.cash+=value-fee;self.short_cashflows+=value-fee
+            self.shorts.append(dict(value=value,shares=shares,credit=value,entry_fee=fee,entry_date=self.date))
+            self.used_stock[84398]=self.used_stock.get(84398,0.)+value
+        elif desired<held:
+            remaining=held-desired
+            for p in list(self.shorts):
+                room=max(0.,capacity)
+                allowed=(p['shares'] if room>=p['value'] else np.floor(room/price))
+                shares=min(p['shares'],remaining,allowed)
+                if shares<=0:break
+                fraction=shares/p['shares'];value=p['value']*fraction;fee=value*cost
+                self.cash-=value+fee;self.short_cashflows-=value+fee
+                self.trades.append(dict(kind='spy_short',entry_date=p['entry_date'],exit_date=self.date,
+                    quantity=shares,pnl=(p['credit']-p['entry_fee'])*fraction-value-fee,
+                    reason='beta_rebalance',permno=84398))
+                remaining-=shares;capacity-=value
+                self.used_stock[84398]=self.used_stock.get(84398,0.)+value
+                if fraction==1:self.shorts.remove(p)
+                else:
+                    for key in ['value','shares','credit','entry_fee']:p[key]*=1-fraction
+                if remaining<=1e-9:break
 
     def finish(self):
         self.nav=self.current_nav()
@@ -276,7 +331,10 @@ class Ledger:
                       for p in self.options if p['role']=='carry')
         self.daily.append(dict(date=self.date,nav=self.nav,ret=ret,rf=self.rf,benchmark=self.market,
             cash=self.cash,free_cash=self.cash-self.collateral,stock_value=self.stock_value,
-            option_value=self.nav-self.cash-self.stock_value,collateral=self.collateral,
+            option_value=self.nav-self.cash-self.stock_value+self.short_value,collateral=self.collateral,
+            short_stock_value=self.short_value,long_short_gross=(self.stock_value+self.short_value)/self.nav,
+            long_short_net=(self.stock_value-self.short_value)/self.nav,
+            short_dividends_cumulative=self.short_dividends,short_borrow_cumulative=self.short_borrow,
             carry_admission_risk=carry_risk,carry_risk_nav=carry_risk/self.nav,
             carry_remaining_loss=remaining,carry_remaining_loss_nav=remaining/self.nav,
             hedge_delta=self.delta_units('hedge'),carry_delta=self.delta_units('carry'),

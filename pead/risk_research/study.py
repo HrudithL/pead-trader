@@ -74,6 +74,7 @@ def spot_for_year(source,year,om):
     if year<=2010:q=pd.read_parquet(p)
     else:
         q=pd.read_parquet(om/f'secprd{year}.parquet',columns=['secid','date','close'],filters=[('secid','=',108105)])
+    q['date']=pd.to_datetime(q.date)
     q=q[q.date.dt.year==year]
     if q.date.duplicated().any():raise ValueError('duplicate native spot')
     return q.set_index('date')['close'].abs().to_dict()
@@ -102,9 +103,9 @@ def stock_events(data,b):
 
 def equity_day_inputs(data,year,ids):
     q=pd.read_parquet(data/f'normalized_equity/equity_{year}.parquet',
-        columns=['date','permno','ret','prc','prc_is_bidask_avg','vol'],filters=[('permno','in',list(ids))])
+        columns=['date','permno','ret','retx','prc','prc_is_bidask_avg','vol'],filters=[('permno','in',list(ids))])
     prior=pd.read_parquet(data/f'normalized_equity/equity_{year-1}.parquet',
-        columns=['date','permno','ret','prc','prc_is_bidask_avg','vol'],filters=[('permno','in',list(ids))])
+        columns=['date','permno','ret','retx','prc','prc_is_bidask_avg','vol'],filters=[('permno','in',list(ids))])
     q=pd.concat([prior,q],ignore_index=True).sort_values(['permno','date'])
     q['dollars']=q.prc.abs()*pd.to_numeric(q.vol,errors='coerce')
     q['prior_adv']=q.groupby('permno',sort=False).dollars.transform(lambda s:s.rolling(21,min_periods=10).mean().shift(1))
@@ -158,9 +159,13 @@ def step(book,row,chain,spot,stock,events,credit,hedges,resolutions,end,quote_lo
         raw_prices={} if stock is None else dict(zip(stock.permno,stock.prc.abs()))
     else:returns,stock_capacity,prices,raw_prices=stock_pack
     actual={ex:v for ex,(day,v) in resolutions.items() if day==row.date}
+    spy=(None if stock is None else stock[stock.permno.eq(84398)])
+    spy_quote=spy.iloc[0] if spy is not None and len(spy) else None
+    short_observation=(None if spy_quote is None else
+                       (float(spy_quote.ret),float(spy_quote.retx),abs(float(spy_quote.prc))))
     book.begin(row.date,row.cash_rf,row.benchmark,chain,returns,spot,actual,
         stock_capacity=stock_capacity,funding_rf=row.funding_rf,quote_lookup=quote_lookup,
-        stock_prices=raw_prices)
+        stock_prices=raw_prices,short_observation=short_observation)
     # Evaluation uses the published contemporaneous risk-free proxy; cash earns
     # only the separately lagged/haircut series applied above.
     book.rf=row.rf;book.chain=chain
@@ -234,6 +239,19 @@ def step(book,row,chain,spot,stock,events,credit,hedges,resolutions,end,quote_lo
                     if lots>0 and book.open_option(st,lots,'carry',resolutions[st.expiry][0],chain):
                         funded=True;break
                 if not funded:book.skip('no_carry_risk_cash_capacity_or_hedge');break
+    if book.policy.linear_hedge:
+        if spy_quote is None or spy_quote.prc_is_bidask_avg:
+            book.skip('missing_executable_spy_price')
+        else:
+            free=book.cash-book.collateral-book.exit_reserve
+            maintenance=free < -book.policy.funding_limit*max(book.current_nav(),0.)
+            if maintenance:book.margin_breaches+=1
+            if row.weekly_entry or not book.stocks or row.date==end or maintenance:
+                beta=0.
+                if len(book.stock_history)>=60 and book.stock_value>0 and not maintenance and row.date<end:
+                    beta=float(lagged_beta(pd.Series(book.stock_history+[0.]),pd.Series(book.market_history+[0.])).iloc[-1])
+                target=min(book.stock_value,beta*book.previous_nav)
+                book.rebalance_short(target,abs(float(spy_quote.prc)),float(spy_quote.prior_adv))
     book.finish()
 
 
@@ -247,10 +265,15 @@ def main():
     p.add_argument('--stress',choices=['base','double_fee','slippage','lot_floor','funding4','suite'],default='base')
     p.add_argument('--label',default='initial')
     p.add_argument('--pricing-revision',action='store_true',help='adaptive, frozen 1.2x prior IV/RV challenger')
+    p.add_argument('--linear-revision',action='store_true',help='funded direct SPY beta hedge control')
     p.add_argument('--smoke',action='store_true')
     args=p.parse_args();chosen=policies(args.family)
     if args.pricing_revision:
         chosen=[Policy('carry_risk20',carry=True),Policy('carry_rich_iv',carry=True,min_iv_rv=1.2)]
+    if args.linear_revision:
+        chosen=[Policy('equity_funded',equity_scale=1.),Policy('equity_cash80',equity_scale=.8),
+                Policy('equity_beta_neutral',equity_scale=1.,linear_hedge=True,funding_limit=.20),
+                Policy('equity_beta_levered',equity_scale=1.2,gross_target=1.2,linear_hedge=True,funding_limit=.50)]
     if args.stress=='suite':
         original=chosen.copy()
         chosen += [replace(x,name=x.name+'__fee2',commission=3.) for x in original]
@@ -288,7 +311,10 @@ def main():
                ([100_000,1_000_000] if policy.carry else [1_000_000,10_000_000])]
     empty_events=ev.iloc[:0];start=time.monotonic()
     for year,yearrows in b.groupby(b.date.dt.year,sort=True):
-        q=quotes_for_year(args.source,int(year),allcal)
+        need_options=any(x.policy.carry or x.policy.hedge for x in books)
+        q=(quotes_for_year(args.source,int(year),allcal) if need_options else
+           pd.DataFrame(columns=['date','optionid','cp','strike','expiry','bid','ask','prior_delta','delta',
+                                 'prior_oi','prior_volume','iv','standard_contract','cfadj']))
         if args.pricing_revision:
             prev=args.source/f'data/selective_earnings_index/spx_quotes_{int(year)-1}.parquet'
             if prev.exists():
@@ -301,7 +327,9 @@ def main():
         if q.duplicated(['date','optionid']).any():raise ValueError('duplicate native option keys')
         qgroups={day:g for day,g in q.groupby('date',sort=False)}
         spots=spot_for_year(args.source,int(year),args.optionmetrics)
-        stocks=equity_day_inputs(args.data,int(year),ev.permno.unique()) if len(ev) else {}
+        ids=set(ev.permno.unique())
+        if args.linear_revision:ids.add(84398)
+        stocks=equity_day_inputs(args.data,int(year),ids) if len(ids) else {}
         for row in yearrows.itertuples(index=False):
             chain=qgroups.get(row.date,q.iloc[:0]);spot=spots.get(row.date)
             if spot is None:raise ValueError(f'missing native SPX spot {row.date}')
@@ -346,11 +374,12 @@ def main():
             missing_option_mark_calls=book.missing_marks,missing_stock_marks=book.missing_stock_marks,
             skips=book.skips,final_nav=book.nav,investment_accepted=False,
             terminal_stock_count=len(book.stocks),terminal_stock_value=book.stock_value,
-            terminal_option_count=len(book.options),
+            terminal_option_count=len(book.options),terminal_short_count=len(book.shorts),
+            short_dividends=book.short_dividends,short_borrow=book.short_borrow,margin_breaches=book.margin_breaches,
             attribution_residual=book.nav-(book.initial+book.cash_interest-book.financing+
-                                          sum(t['pnl'] for t in book.trades)))
+                                          sum(t['pnl'] for t in book.trades)-book.short_dividends-book.short_borrow))
         (folder/'audit.json').write_text(json.dumps(audit,indent=2),encoding='utf-8')
-        if book.stocks or book.options:
+        if book.stocks or book.options or book.shorts:
             unresolved.append(dict(scenario=folder.name,stock_count=len(book.stocks),
                 stock_value=book.stock_value,options=len(book.options),
                 stock_share_max=max([s['shares'] for s in book.stocks],default=0.)))

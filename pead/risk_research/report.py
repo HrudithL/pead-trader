@@ -27,16 +27,22 @@ def paired_difference(candidate,parent,repetitions=1000,seed=20261026):
     if repetitions<1:raise ValueError('positive repetitions required')
     groups=[g.index.to_numpy() for _,g in a.groupby(pd.to_datetime(a.date).dt.to_period('M'),sort=True)]
     rng=np.random.default_rng(seed);n=len(groups);draw=[]
+    aa=a[['ret','rf','benchmark']].to_numpy(float);bb=b[['ret','rf','benchmark']].to_numpy(float)
+    def sample(values,ix):
+        r,rf,m=values[ix].T;x=r-rf;y=m-rf
+        wealth=np.r_[1.,np.cumprod(1+r)];sd=x.std(ddof=1)
+        beta=np.cov(x,y)[0,1]/y.var(ddof=1) if y.var(ddof=1)>1e-15 else 0.
+        return np.array([wealth[-1]**(252/len(r))-1,
+            x.mean()/sd*np.sqrt(252) if sd>1e-12 else 0.,
+            np.min(wealth/np.maximum.accumulate(wealth)-1),
+            (x.mean()-beta*y.mean())*252])
     # Calendar blocks are jointly sampled; portfolio and benchmark relationships
     # survive each draw. Intervals condition on the existing research search.
     for _ in range(repetitions):
         starts=rng.integers(n,size=int(np.ceil(n/3)))
         months=np.concatenate([(i+np.arange(3))%n for i in starts])[:n]
         ix=np.concatenate([groups[i] for i in months])
-        def sample(d):
-            z=d.iloc[ix].copy();z['date']=pd.bdate_range('2000-01-03',periods=len(z));return statistics(z)
-        ca,pa=sample(a),sample(b)
-        draw.append([ca[k]-pa[k] for k in ['cagr','excess_sharpe','max_drawdown','market_alpha']])
+        draw.append(sample(aa,ix)-sample(bb,ix))
     q=np.quantile(draw,[.025,.5,.975],axis=0)
     return {k:dict(zip(['p025','p50','p975'],map(float,q[:,i])))
             for i,k in enumerate(['cagr','sharpe','max_drawdown','market_alpha'])}
@@ -65,12 +71,20 @@ def main():
     p.add_argument('--root',type=Path,default=Path(__file__).resolve().parents[2]/'results/options_risk_synthesis')
     p.add_argument('--source',type=Path,default=Path('C:/Users/hrudi/.codex/worktrees/selective-earnings-research/PEAD_Trading'))
     p.add_argument('--bootstrap',type=int,default=1000)
-    args=p.parse_args();rows=[];yearly=[];pairs={}
+    args=p.parse_args();rows=[];yearly=[];pairs={};register=[]
     factors=pd.read_csv(args.source/'data/selective_earnings_index/ff_daily.csv')
     factors['date']=pd.to_datetime(factors.date.astype(str),format='%Y%m%d')
     for trial in sorted(args.root.glob('*')):
-        if not (trial/'complete.json').exists() or 'smoke' in trial.name:continue
+        if not (trial/'protocol.json').exists():continue
         protocol=json.loads((trial/'protocol.json').read_text());loaded={}
+        state='complete' if (trial/'complete.json').exists() else 'incomplete'
+        reasons=[]
+        for marker in ['failure.json','incomplete.json','superseded.json']:
+            if (trial/marker).exists():reasons.append(json.loads((trial/marker).read_text()))
+        register.append(dict(trial=trial.name,state=state,smoke='smoke' in trial.name,
+            policies=len(protocol['policies']),segment=protocol['segment'],stress=protocol['stress'],
+            started_utc=protocol.get('started_utc'),failure_detail=json.dumps(reasons)))
+        if state!='complete' or 'smoke' in trial.name:continue
         for folder in sorted(trial.iterdir()):
             if not folder.is_dir() or not (folder/'daily.csv.gz').exists():continue
             d=pd.read_csv(folder/'daily.csv.gz',parse_dates=['date'])
@@ -79,13 +93,17 @@ def main():
             stats.update(factor_alpha(d,factors));label=folder.name.rsplit('_',1)[0]
             trades=int(t.entry_date.nunique()) if len(t) else 0
             stats.update(trial=trial.name,policy=label,capital=int(folder.name.rsplit('_',1)[1]),
-                segment=protocol['segment'],stress=protocol['stress'],distinct_entries=trades,
+                segment=protocol['segment'],stress=(label.split('__',1)[1] if '__' in label else
+                    ('base' if protocol['stress']=='suite' else protocol['stress'])),
+                base_policy=label.split('__',1)[0],distinct_entries=trades,
                 missing_option_mark_calls=audit['missing_option_mark_calls'],
                 missing_stock_marks=audit['missing_stock_marks'],cash_residual=audit['cash_residual'],
                 cash_interest=audit['cash_interest'],financing=audit['financing'],
                 stock_fees=audit['stock_fees'],option_fees=audit['option_fees'],
                 max_carry_risk_nav=float(d.carry_risk_nav.max()),
                 min_free_cash=float(d.free_cash.min()),
+                max_remaining_carry_loss_nav=float(d.get('carry_remaining_loss_nav',pd.Series([np.nan])).max()),
+                attribution_residual=audit.get('attribution_residual',np.nan),
                 stock_pnl=float(t.loc[t.kind.eq('stock'),'pnl'].sum()) if len(t) else 0.,
                 carry_pnl=float(t.loc[t.kind.eq('carry'),'pnl'].sum()) if len(t) else 0.,
                 hedge_pnl=float(t.loc[t.kind.eq('hedge'),'pnl'].sum()) if len(t) else 0.)
@@ -98,11 +116,13 @@ def main():
                 yearly.append(dict(trial=trial.name,scenario=folder.name,year=int(year),**statistics(g)))
         for key,d in loaded.items():
             policy,capital=key.rsplit('_',1)
-            parent=('equity_funded' if policy.startswith('equity_') else 'carry_risk20')+'_'+capital
+            suffix=('__'+policy.split('__',1)[1]) if '__' in policy else ''
+            parent=('equity_funded' if policy.startswith('equity_') else 'carry_risk20')+suffix+'_'+capital
             if parent in loaded and parent!=key:
                 pairs[trial.name+'/'+key]=dict(parent=parent,
                     intervals=paired_difference(d,loaded[parent],args.bootstrap))
     table=pd.DataFrame(rows)
+    pd.DataFrame(register).to_csv(args.root/'trial_register.csv',index=False)
     table.to_csv(args.root/'comparison.csv',index=False)
     pd.DataFrame(yearly).to_csv(args.root/'yearly.csv',index=False)
     (args.root/'paired_uncertainty.json').write_text(json.dumps(pairs,indent=2),encoding='utf-8')

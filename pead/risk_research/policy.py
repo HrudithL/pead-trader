@@ -46,6 +46,9 @@ class Policy:
     stock_vol_target: float=.12
     gross_target: float=0.
     min_iv_rv: float=0.
+    linear_hedge: bool=False
+    short_borrow_rate: float=.01
+    funding_limit: float=.20
     hedge_cover: float=.25
     financing_spread: float=.02
     commission: float=1.50
@@ -63,6 +66,8 @@ class Policy:
             raise ValueError('invalid equity scale or premium budget')
         if not 0<=self.gross_target<=1.2:raise ValueError('gross target outside study limits')
         if self.min_iv_rv<0:raise ValueError('invalid compensation threshold')
+        if not 0<=self.funding_limit<=.5 or self.short_borrow_rate<0:
+            raise ValueError('invalid funding/short borrow limit')
         if min(self.commission,self.slippage,self.financing_spread,self.market_vol_target,self.stock_vol_target)<0:
             raise ValueError('negative costs or volatility target')
         if not 0<=self.hedge_cover<=1 or self.small_lot_floor not in (0,1):

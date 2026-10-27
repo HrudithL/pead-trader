@@ -300,3 +300,51 @@ def test_prior_iv_uses_only_adjacent_previous_session():
     q.loc[1,'iv']=9.
     assert attach_prior_iv(q,cal).prior_iv.iloc[1]==.2
 
+
+def test_spy_short_proceeds_are_part_of_150pct_collateral():
+    book=make_ledger(equity_scale=1.,linear_hedge=True)
+    q=chain().iloc[:0];book.begin(pd.Timestamp('2005-01-03'),0,0,q,{},100.)
+    book.rebalance_short(10_000,100.,1_000_000.)
+    assert book.cash==pytest.approx(110_000-2)
+    assert book.short_value==10_000
+    assert book.collateral==15_000
+    assert book.current_nav()==pytest.approx(100_000-2)
+
+
+def test_spy_short_ex_dividend_drop_does_not_create_free_profit():
+    book=make_ledger(equity_scale=1.,linear_hedge=True,short_borrow_rate=0.)
+    q=chain().iloc[:0];book.begin(pd.Timestamp('2005-01-03'),0,0,q,{},100.)
+    book.rebalance_short(10_000,100.,1_000_000.);book.finish()
+    book.begin(pd.Timestamp('2005-01-04'),0,0,q,{},100.,short_observation=(0.,-.01,99.))
+    assert book.short_value==9900
+    assert book.short_dividends==100
+    assert book.current_nav()==pytest.approx(99_998)
+    book.rebalance_short(0.,99.,1_000_000.);book.finish()
+    assert book.reconciliation()==pytest.approx(0,abs=1e-8)
+
+
+def test_spy_split_changes_share_count_without_profit():
+    book=make_ledger(equity_scale=1.,linear_hedge=True,short_borrow_rate=0.)
+    q=chain().iloc[:0];book.begin(pd.Timestamp('2005-01-03'),0,0,q,{},100.)
+    book.rebalance_short(10_000,100.,1_000_000.);book.finish()
+    book.begin(pd.Timestamp('2005-01-04'),0,0,q,{},100.,short_observation=(0.,0.,50.))
+    assert book.shorts[0]['shares']==200
+    assert book.short_value==10000
+    assert book.current_nav()==pytest.approx(99998)
+
+
+def test_short_admission_respects_margin_credit_limit():
+    book=make_ledger(equity_scale=1.,linear_hedge=True,funding_limit=0.)
+    q=chain().iloc[:0];book.begin(pd.Timestamp('2005-01-03'),0,0,q,{},100.)
+    book.cash=1000
+    book.rebalance_short(10000.,100.,1_000_000.)
+    assert book.cash-book.collateral>=0
+    assert book.short_value<=1900
+
+
+def test_native_spot_date32_is_normalized(tmp_path):
+    import datetime
+    from pead.risk_research.study import spot_for_year
+    pd.DataFrame(dict(secid=[108105],date=[datetime.date(2012,1,3)],close=[1250.])).to_parquet(tmp_path/'secprd2012.parquet')
+    assert spot_for_year(tmp_path,2012,tmp_path)=={pd.Timestamp('2012-01-03'):1250.}
+
