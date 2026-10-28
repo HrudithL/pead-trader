@@ -46,7 +46,7 @@ reports/ reference/      legacy PDFs (pre-framework, pre-correction numbers) and
 tests/                   test_framework.py (engine reproduces the original scripts), test_fixes.py (the four fixes)
 ```
 
-## 4. Strategy catalog (59 registered; numbers live in `results/leaderboard.md`, not here)
+## 4. Strategy catalog (83 registered; numbers live in `results/leaderboard.md`, not here)
 
 `status`: `validated` = the engine reproduces the original script exactly (NOT "has an edge"); `research` = chosen/tuned in-sample or exploratory; `reference` = kept for comparison.
 
@@ -60,9 +60,27 @@ tests/                   test_framework.py (engine reproduces the original scrip
 
 **Long-only (4, no legacy twin):** `steady_drift` (top surprise decile, 60-session holds, calm stocks sized up, idle money in T-bills, exposure throttled to ~10% volatility), `steady_drift_calm` (8% target), `steady_drift_core` (no throttle), `steady_drift_plus` (smaller, more numerous positions, 80% cap, 12% target; **the best equity strategy that obeys no-borrowing and no look-ahead**, status research). Evidence and limits: `docs/STEADY_DRIFT.md`; open items: `docs/ROADMAP.md`.
 
+**Research-library candidates (24, all `research`, no legacy twin, all built on `steady_drift_plus`, 2026-10-27/28).** None is promoted; most are null results, kept so the trial count is honest. Write-ups: `docs/EQ23_REACTION_CONFIRMED.md`, `docs/OV02_SUE_MOMENTUM.md`, `docs/EQ24_OVERNIGHT_GAP.md`, `docs/EQ28_ERA_DECAY.md`, `docs/OV03_TREND_BREADTH_GATE.md`.
+- `steady_drift_plus_{confirm_pos,confirm_notneg,confirm_z,contrarian,lag1,lag2}`: day-0 reaction filters and entry-lag controls (filters raise search Sharpe, not holdout; lag1 costs ~0.6 CAGR points)
+- `steady_drift_plus_mom_{filter,tilt,contrarian,randdrop0..4}`: prior 12-1 month momentum; no better than dropping random names
+- `steady_drift_plus_orj_{only,sue_and_orj,comp,weak_gap}`: overnight-gap surprise; worse than SUE alone
+- `steady_drift_plus_{decay,decay60}`: exposure scaled by recent top-decile drift; lowers return, worse holdout
+- `steady_drift_plus_{trend,breadth_only,gate,gate_half}`: market-trend / earnings-breadth gates; `gate_half` (Sharpe 1.28, MDD -15.1%, holdout Sharpe 1.01) is the one candidate worth a stress test (beats random gates at p about 0.05-0.08, but lower CAGR 10.2% vs 12.1%)
+
 **Options (8):** `options_cap20`, `options_cap30`, `options_worst_case` (corrected: ask in / bid out); `options_cap20_midfill`, `options_cap30_midfill` (the previous mid-fill convention); `options_cap20_legacy`, `options_cap30_legacy`, `options_cap40_legacy` (the originally reported, overstated numbers).
 
 **Portfolio (3):** `hedged_blend` (0.8x equity sleeve + 1.6x options sleeve on one NAV), `calm_blend`, `legacy_blend`. Blend weights were chosen when the options sleeve looked good and were not re-optimised.
+
+## 4b. Evaluation and guard-rail infrastructure (added 2026-10-27/28)
+
+- `pead/core/stats.py` (active-window CAGR/Sharpe/Sortino/drawdown incl. initial capital, PSR, DSR, block bootstrap, HAC alpha); additive, `metrics.summarize` still reports the legacy full-calendar numbers.
+- `pead/core/outcomes.py`: outcome firewall. `EquityStrategy.backtest` hides `hold_ret`, `exit_*`, `holding_*` from `weights()` unless the strategy lists them in `outcome_columns_allowed` (only `volatility_filter`, `calm_weighted_filter` and their legacy twins do).
+- `pead/core/splits.py` + `pead/eval/protocols/v1.json`: 70% search / 30% holdout by announcement quarter (search 1996Q2..2008Q2, holdout 2008Q3..2013Q4, "burned"); `python -m pead eval <name>` writes `results/<name>/evaluation.json`; `python -m pead trials` counts the trial registry (`results/trials.jsonl`, append-only, 64 backfilled + new variants; a lower bound). Gate constants in `v1.json` are proposals.
+- `pead/core/event_stats.py` (quarter-clustered IC, decile spread, clustered OLS, era interaction), `pead/core/gap_features.py`, `decay.py`, `market_state.py`; engine hooks `with_entry_lag` and `exposure_scale` (both no-ops by default).
+- `pead/reporting/option_spreads.py` + `scripts/option_spread_report.py` (reads the D: extract read-only), `scripts/{loo_report,placebo_report,gate_placebo,signal_report,era_interaction,backfill_trials}.py`.
+- Tests added: `tests/{pit_kit,test_lookahead,test_metrics,test_guardrails,test_eval,test_pit_data,test_event_stats,test_reaction_confirmation,test_momentum,test_orj,test_decay,test_market_state,test_option_spreads}.py`; the data-dependent ones need `PEAD_DATA_DIR`.
+- Findings docs: `docs/SIGNAL_REPORT.md` (analyst SUE beats seasonal; spread 3.9% search -> 1.3% holdout), `docs/LOO_STEADY_DRIFT_PLUS.md` (no concentration problem), `docs/PLACEBO_STEADY_DRIFT_PLUS.md` (real Sharpe 1.19 beats all 200 shuffled placebos, mean 0.83), `docs/OPT01_GO_NO_GO.md` (no-go for OPT-02/04/05/06), `docs/DATA_GAPS.md`.
+- Leaderboard caveat: `results/leaderboard.md` ranks raw Sharpe/CAGR with no uncertainty; its "best annualized_return" can name a 12.10% variant over `steady_drift_plus` (12.07%) on noise. The MT-04 leaderboard v2 is not built.
 
 ## 5. Ideas that exist but are NOT registered strategies
 
@@ -112,6 +130,8 @@ Eighteen merged local branch labels were deleted with `git branch -d`. Still pre
 **Rule for removing a worktree:** never `git worktree remove` (git treats git-ignored data folders as disposable and `--force` deletes them recursively). Verify the backup, move the folder aside (a rename deletes nothing), then `git worktree prune`. Delete a branch only with `git branch -d`, which refuses unmerged work.
 
 ## 8. Open decisions
+
+0. **Plan decisions D1-D6** (`docs/plans/research_library_2026-10-27/MASTER_ROADMAP.md`): D1 (70% split) is implemented as recommended; D2 downloads (risk-free, Fama-French) and D5 gate constants still need the owner; D6 (post-2013 data) remains the only way to a real holdout.
 
 1. **Re-select the strategy constants and blend weights on a search window** (pick the dials on early history, test on later history). Expected to lower the numbers further.
 2. **Copy the OptionMetrics extract (131 files, 32.9 GB) onto `C:`?** The options stages read it from the external drive `D:\OptionMetrics\parquet`, and that drive was unplugged twice on 2026-10-20. Earlier policy was "never copied"; this is the owner's call.
