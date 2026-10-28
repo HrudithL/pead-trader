@@ -62,3 +62,9 @@
 {"family": "equity-longonly", "note": "backfill", "params": {}, "sharpe_daily": 0.07516171445954059, "strategy": "steady_drift_plus", "ts": "2026-10-28T14:02:54+00:00", "window": "full"}
 {"family": "equity-volatility", "note": "backfill", "params": {}, "sharpe_daily": 0.056115894242828826, "strategy": "volatility_filter", "ts": "2026-10-28T14:02:54+00:00", "window": "full"}
 {"family": "equity-volatility", "note": "backfill", "params": {}, "sharpe_daily": 0.07746319576229559, "strategy": "volatility_filter_legacy", "ts": "2026-10-28T14:02:54+00:00", "window": "full"}
+{"family": "equity-longonly", "note": "EQ-23 variant, search window", "params": {}, "sharpe_daily": 0.09381798569747732, "strategy": "steady_drift_plus_confirm_pos", "ts": "2026-10-28T20:14:58+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "EQ-23 variant, search window", "params": {}, "sharpe_daily": 0.09370404039899018, "strategy": "steady_drift_plus_confirm_notneg", "ts": "2026-10-28T20:14:58+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "EQ-23 variant, search window", "params": {}, "sharpe_daily": 0.09370223903534397, "strategy": "steady_drift_plus_confirm_z", "ts": "2026-10-28T20:14:58+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "EQ-23 variant, search window", "params": {}, "sharpe_daily": 0.09133132476581675, "strategy": "steady_drift_plus_contrarian", "ts": "2026-10-28T20:14:58+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "EQ-23 variant, search window", "params": {}, "sharpe_daily": 0.08160273611208511, "strategy": "steady_drift_plus_lag1", "ts": "2026-10-28T20:14:59+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "EQ-23 variant, search window", "params": {}, "sharpe_daily": 0.07919266609135875, "strategy": "steady_drift_plus_lag2", "ts": "2026-10-28T20:14:59+00:00", "window": "search"}

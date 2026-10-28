@@ -1,0 +1,29 @@
+{
+  "name": "steady_drift_plus_lag2",
+  "protocol": "v1",
+  "holdout_kind": "burned",
+  "search_end": "2008-06-30",
+  "search": {
+    "n_days": 3398,
+    "cagr": 0.11940930393078575,
+    "sharpe": 1.2571446008274767,
+    "sharpe_daily": 0.07919266609135875,
+    "max_drawdown": -0.16978739129941778,
+    "skew": -0.11405630127351468,
+    "kurtosis": 6.407374247311712,
+    "psr_0": 0.9999976275351954
+  },
+  "holdout": {
+    "n_days": 1510,
+    "cagr": 0.09503262497743803,
+    "sharpe": 0.8586573279265718,
+    "sharpe_daily": 0.05409032740754632,
+    "max_drawdown": -0.18112903278643566,
+    "skew": -0.27456960906933164,
+    "kurtosis": 6.82296725166302,
+    "psr_0": 0.9813009064022166
+  },
+  "degradation_sharpe_ratio": 0.6830219271207044,
+  "dsr_holdout": 0.9131115584421099,
+  "dsr_n_trials": 9
+}
