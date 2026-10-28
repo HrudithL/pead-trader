@@ -1,0 +1,29 @@
+{
+  "name": "steady_drift_plus_mom_randdrop1",
+  "protocol": "v1",
+  "holdout_kind": "burned",
+  "search_end": "2008-06-30",
+  "search": {
+    "n_days": 3398,
+    "cagr": 0.09244256901133885,
+    "sharpe": 1.3472990422360842,
+    "sharpe_daily": 0.08487186208076636,
+    "max_drawdown": -0.11949970103516039,
+    "skew": -0.1272919531762979,
+    "kurtosis": 7.035088778664635,
+    "psr_0": 0.999999505736234
+  },
+  "holdout": {
+    "n_days": 1510,
+    "cagr": 0.07034507565966197,
+    "sharpe": 0.7518435918948879,
+    "sharpe_daily": 0.0473616944993193,
+    "max_drawdown": -0.1836118164077949,
+    "skew": -0.3056577148668018,
+    "kurtosis": 9.125460546699653,
+    "psr_0": 0.9658136588981906
+  },
+  "degradation_sharpe_ratio": 0.5580376503846308,
+  "dsr_holdout": 0.8724779671551162,
+  "dsr_n_trials": 14
+}

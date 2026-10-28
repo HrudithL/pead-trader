@@ -1,0 +1,29 @@
+{
+  "name": "steady_drift_plus_mom_tilt",
+  "protocol": "v1",
+  "holdout_kind": "burned",
+  "search_end": "2008-06-30",
+  "search": {
+    "n_days": 3398,
+    "cagr": 0.13537171791272584,
+    "sharpe": 1.369145399600121,
+    "sharpe_daily": 0.08624805323881125,
+    "max_drawdown": -0.1648859116432866,
+    "skew": -0.14811614342144028,
+    "kurtosis": 6.324573992335571,
+    "psr_0": 0.9999996666453848
+  },
+  "holdout": {
+    "n_days": 1510,
+    "cagr": 0.08939487111263,
+    "sharpe": 0.8096358177753057,
+    "sharpe_daily": 0.051002262532473024,
+    "max_drawdown": -0.1911998159078543,
+    "skew": -0.5361217744884323,
+    "kurtosis": 8.17462521756769,
+    "psr_0": 0.9744273716876782
+  },
+  "degradation_sharpe_ratio": 0.591343927395711,
+  "dsr_holdout": 0.8968076163627293,
+  "dsr_n_trials": 11
+}
