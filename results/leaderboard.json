@@ -1,16 +1,16 @@
 {
   "equity": {
     "sharpe": {
-      "strategy": "calm_rank_tilt",
-      "value": 1.465455062709722
+      "strategy": "steady_drift_plus_react_flat",
+      "value": 2.266080561214987
     },
     "annualized_return": {
       "strategy": "steady_drift_plus_mom_tilt",
       "value": 0.12102348972447596
     },
     "calmar": {
-      "strategy": "steady_drift_plus_gate_half",
-      "value": 0.6734688905273716
+      "strategy": "steady_drift_plus_react_flat",
+      "value": 1.427104416436457
     }
   },
   "options": {

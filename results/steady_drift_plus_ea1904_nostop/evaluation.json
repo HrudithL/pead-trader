@@ -1,0 +1,29 @@
+{
+  "name": "steady_drift_plus_ea1904_nostop",
+  "protocol": "v1",
+  "holdout_kind": "burned",
+  "search_end": "2008-06-30",
+  "search": {
+    "n_days": 3398,
+    "cagr": 0.08267913256202886,
+    "sharpe": 1.320871424460894,
+    "sharpe_daily": 0.08320707864321818,
+    "max_drawdown": -0.08904189397918938,
+    "skew": -0.07578426173906415,
+    "kurtosis": 16.598179411484253,
+    "psr_0": 0.9999990826612237
+  },
+  "holdout": {
+    "n_days": 1510,
+    "cagr": 0.00339586914698331,
+    "sharpe": 0.08267818894942548,
+    "sharpe_daily": 0.005208236352604486,
+    "max_drawdown": -0.17208943142020827,
+    "skew": -1.1781520646128258,
+    "kurtosis": 23.95046666127031,
+    "psr_0": 0.579918460191765
+  },
+  "degradation_sharpe_ratio": 0.06259366916289381,
+  "dsr_holdout": 0.21295275770390293,
+  "dsr_n_trials": 47
+}

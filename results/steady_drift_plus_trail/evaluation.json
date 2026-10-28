@@ -1,0 +1,29 @@
+{
+  "name": "steady_drift_plus_trail",
+  "protocol": "v1",
+  "holdout_kind": "burned",
+  "search_end": "2008-06-30",
+  "search": {
+    "n_days": 3398,
+    "cagr": 0.09717826242862793,
+    "sharpe": 1.6955784381937096,
+    "sharpe_daily": 0.10681140180628233,
+    "max_drawdown": -0.08116540350804746,
+    "skew": 0.14108329951177928,
+    "kurtosis": 13.770205510358444,
+    "psr_0": 0.9999999996361658
+  },
+  "holdout": {
+    "n_days": 1510,
+    "cagr": 0.0478623110074905,
+    "sharpe": 0.5472383048530214,
+    "sharpe_daily": 0.03447277291737251,
+    "max_drawdown": -0.15640605204876246,
+    "skew": -1.0435476725508166,
+    "kurtosis": 22.026915155014425,
+    "psr_0": 0.9051925863055931
+  },
+  "degradation_sharpe_ratio": 0.32274431694000033,
+  "dsr_holdout": 0.6386327880120946,
+  "dsr_n_trials": 45
+}
