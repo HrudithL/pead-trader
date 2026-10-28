@@ -95,6 +95,10 @@ class EquityStrategy(Strategy):
     def weights(self, events: pd.DataFrame) -> np.ndarray:
         raise NotImplementedError
 
+    def exposure_scale(self, uni: EquityUniverse):
+        """Optional per-calendar-day multiplier in [0, 1] applied to the risk exposure (None = off). Must use data through t-1 only."""
+        return None
+
     def params(self) -> dict:
         s = self.sizing
         return dict(base_unit_fraction=s.base_unit_fraction, max_gross_leverage=s.max_gross_leverage,
@@ -110,7 +114,8 @@ class EquityStrategy(Strategy):
         if self.long_only_cash or self.risk_target_vol:
             from pead.core.rates import daily_rf
             run = apply_cash_and_risk_target(run, daily_rf(uni.calendar), uni.initial_capital,
-                                             target_vol=self.risk_target_vol, cash_yield=self.long_only_cash)
+                                             target_vol=self.risk_target_vol, cash_yield=self.long_only_cash,
+                                             exposure_scale=self.exposure_scale(uni))
         if self.beta_overlay:
             run = apply_beta_overlay(run, uni.vwretd, uni.initial_capital, beta=self.beta_overlay)
         return run
