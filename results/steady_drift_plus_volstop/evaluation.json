@@ -1,0 +1,29 @@
+{
+  "name": "steady_drift_plus_volstop",
+  "protocol": "v1",
+  "holdout_kind": "burned",
+  "search_end": "2008-06-30",
+  "search": {
+    "n_days": 3398,
+    "cagr": 0.12786955824243518,
+    "sharpe": 1.4155982585211038,
+    "sharpe_daily": 0.0891743082957848,
+    "max_drawdown": -0.1610931300429782,
+    "skew": -0.16072451865336934,
+    "kurtosis": 6.239816383946883,
+    "psr_0": 0.9999998583793666
+  },
+  "holdout": {
+    "n_days": 1510,
+    "cagr": 0.08451251233312584,
+    "sharpe": 0.7839062708498047,
+    "sharpe_daily": 0.04938145342506249,
+    "max_drawdown": -0.20850667349116148,
+    "skew": -0.5742420239741098,
+    "kurtosis": 7.280459597522984,
+    "psr_0": 0.9704950734683567
+  },
+  "degradation_sharpe_ratio": 0.5537632348239556,
+  "dsr_holdout": 0.5334767471166121,
+  "dsr_n_trials": 54
+}

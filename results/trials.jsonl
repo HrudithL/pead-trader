@@ -112,3 +112,5 @@
 {"family": "equity-longonly", "note": "library candidate, search window", "params": {}, "sharpe_daily": 0.09369045344991851, "strategy": "steady_drift_plus_react_contra", "ts": "2026-10-28T22:09:20+00:00", "window": "search"}
 {"family": "equity-longonly", "note": "library candidate, search window", "params": {}, "sharpe_daily": 0.20346841415554828, "strategy": "steady_drift_plus_react_flat", "ts": "2026-10-28T22:09:21+00:00", "window": "search"}
 {"family": "equity-longonly", "note": "MT-05 identical to base; counted once", "params": {}, "sharpe_daily": 0.0749, "strategy": "steady_drift_plus_dlret", "ts": "2026-10-28T22:14:13+00:00", "window": "full"}
+{"family": "equity-longonly", "note": "OV-04/07, search window", "params": {}, "sharpe_daily": 0.0891743082957848, "strategy": "steady_drift_plus_volstop", "ts": "2026-10-28T22:22:04+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "OV-04/07, search window", "params": {}, "sharpe_daily": 0.07975314818061335, "strategy": "steady_drift_plus_multifactor", "ts": "2026-10-28T22:22:04+00:00", "window": "search"}

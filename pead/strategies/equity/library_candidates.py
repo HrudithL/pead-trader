@@ -15,6 +15,7 @@ import numpy as np
 
 from pead.core.event_signals import add_sue_signals
 from pead.core.gap_features import add_gap_features
+from pead.strategies.equity.steady_drift_momentum import causal_rank, momentum_12_1
 from pead.engines.exits import with_calendar_hold, with_path_exits
 from pead.strategies import weights as W
 from pead.strategies.equity.steady_drift import SteadyDriftPlus
@@ -43,12 +44,19 @@ class _Candidate(SteadyDriftPlus):
         adv = np.nan_to_num(events["avg_dollar_volume_21d"].astype(float).to_numpy(), nan=0.0)
         return W.causal_inverse_variance(events, self.mask(events) & (adv >= self.min_dollar_volume))
 
+    vol_stop_mult = None                     # OV-04: stop = clip(mult x tvol_60d x sqrt(20), 5%, 25%) per event
+
     def backtest(self, uni):
         ev = add_sue_signals(add_gap_features(uni.events))
         ev["react"] = uni.ret_raw[ev["entry_row_idx"].to_numpy()]
+        ev["mom_rank_pct"] = causal_rank(momentum_12_1(dataclasses.replace(uni, events=ev)), ev["day0_date"])
+        ev["ivol_rank"] = causal_rank(ev["ivol_252d"].to_numpy(float), ev["day0_date"])
         u = dataclasses.replace(uni, events=ev)
+        stop = self.stop_pct
+        if self.vol_stop_mult:
+            stop = np.clip(self.vol_stop_mult * np.nan_to_num(ev["tvol_60d"].to_numpy(float), nan=0.02) * np.sqrt(20), 0.05, 0.25)
         u = with_calendar_hold(u, self.cal_days) if self.cal_days else with_path_exits(
-            u, self.max_hold, self.stop_pct, self.trail_act, self.trail_amt)
+            u, self.max_hold, stop, self.trail_act, self.trail_amt)
         return super().backtest(u)
 
     def base_mask(self, ev):
@@ -105,3 +113,17 @@ _make("react_contra", "Top-decile SUE whose day-0 reaction is <= -0.5%", lambda 
       arm="contrarian")
 _make("react_flat", "Top-decile SUE with a flat (|r| < 0.5%) day-0 reaction",
       lambda s, e: s.base_mask(e) & (np.abs(e["react"].to_numpy(float)) < 0.005), arm="flat")
+
+# ---- OV-04 volatility-scaled stop (close-to-close proxy; no ATR data)
+_make("volstop", "steady_drift_plus with a per-event stop of 3 x 20-day-scaled trailing volatility (5%-25%)", lambda s, e: s.base_mask(e),
+      arm="volstop", vol_stop_mult=3.0)
+
+# ---- OV-07 multifactor composite: mean of SUE, momentum and calm (low idiosyncratic vol) PIT ranks
+def _composite(s, e):
+    calm = 1.0 - e["ivol_rank"].to_numpy(float)
+    c = np.nanmean(np.vstack([e["sue_rank_pct"].to_numpy(float), e["mom_rank_pct"].to_numpy(float), calm]), axis=0)
+    ok = np.isfinite(e["sue_rank_pct"].to_numpy(float)) & np.isfinite(e["mom_rank_pct"].to_numpy(float)) & np.isfinite(calm)
+    return ok & (c >= 0.8)
+
+
+_make("multifactor", "Mean of SUE, 12-1 momentum and calmness ranks >= 0.8 (OV-07)", _composite, arm="multifactor")

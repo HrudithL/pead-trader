@@ -1,0 +1,5 @@
+liquidity_quintile,n,quote_share,median_half_spread_bps,notional_wtd_half_spread_bps,engine_one_way_bps
+2,813,0.99,7.24,8.73,15
+3,2983,0.98,9.29,15.12,10
+4,3916,0.97,7.66,12.67,7
+5,4249,0.97,4.8,8.5,5
