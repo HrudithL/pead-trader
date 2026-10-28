@@ -5,12 +5,12 @@
       "value": 1.465455062709722
     },
     "annualized_return": {
-      "strategy": "steady_drift_plus",
-      "value": 0.12065694258350401
+      "strategy": "steady_drift_plus_mom_tilt",
+      "value": 0.12102348972447596
     },
     "calmar": {
-      "strategy": "steady_drift_calm",
-      "value": 0.6007028867597458
+      "strategy": "steady_drift_plus_gate_half",
+      "value": 0.6734688905273716
     }
   },
   "options": {
