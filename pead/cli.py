@@ -3,6 +3,8 @@
   list                          every registered strategy with its family and status
   run <sel...> [--jobs N]       backtest strategies (names, 'all', 'equity', 'options', 'family:x', 'prefix*')
   report <name...>              (re)build the per-strategy report from a saved run
+  eval <name...>                search/holdout evaluation of a saved run (writes evaluation.json)
+  trials [--family f]           count of logged trials (deflated-Sharpe denominator)
   compare [<name...>]           comprehensive cross-strategy report (correlations, combinations, attribution)
   portfolio                     optimal equity + options hedged blend
   paper [--no-pdf]              rebuild the research paper (numbers, tables, figures, PDF) from results/
@@ -37,6 +39,12 @@ def main(argv=None):
 
     p = sub.add_parser("report")
     p.add_argument("names", nargs="+")
+
+    p = sub.add_parser("eval")
+    p.add_argument("names", nargs="+")
+
+    p = sub.add_parser("trials")
+    p.add_argument("--family", default=None)
 
     p = sub.add_parser("compare")
     p.add_argument("names", nargs="*")
@@ -74,6 +82,19 @@ def main(argv=None):
             except KeyError:
                 pass
             print("wrote", build_strategy_report(r))
+    elif args.cmd == "eval":
+        import json
+        from pead.core.data import load_equity_universe
+        from pead.eval.harness import evaluate, write_evaluation
+        from pead.strategies import registry
+        q = load_equity_universe().events["ann_quarter"]
+        for n in args.names:
+            ev = evaluate(n, q, family=registry.get(n).family)
+            write_evaluation(ev)
+            print(json.dumps(ev, indent=2, default=float))
+    elif args.cmd == "trials":
+        from pead.eval import registry as trials
+        print(f"{trials.n_trials(args.family)} trials" + (f" in family {args.family}" if args.family else ""))
     elif args.cmd == "compare":
         from pead.reporting.comprehensive import build_comprehensive_report
         print("wrote", build_comprehensive_report(args.names or None))

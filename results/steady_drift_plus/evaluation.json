@@ -1,0 +1,29 @@
+{
+  "name": "steady_drift_plus",
+  "protocol": "v1",
+  "holdout_kind": "burned",
+  "search_end": "2008-06-30",
+  "search": {
+    "n_days": 3398,
+    "cagr": 0.131477562446779,
+    "sharpe": 1.3750065469848096,
+    "sharpe_daily": 0.08661727081922513,
+    "max_drawdown": -0.16706821740937883,
+    "skew": -0.09222964368252849,
+    "kurtosis": 6.394520779252293,
+    "psr_0": 0.9999997181982615
+  },
+  "holdout": {
+    "n_days": 1510,
+    "cagr": 0.09668390208545885,
+    "sharpe": 0.8718218856854486,
+    "sharpe_daily": 0.05491961659683522,
+    "max_drawdown": -0.18650584569283202,
+    "skew": -0.4434161339681177,
+    "kurtosis": 7.527427278073786,
+    "psr_0": 0.9822601940238421
+  },
+  "degradation_sharpe_ratio": 0.6340492615087745,
+  "dsr_holdout": null,
+  "dsr_note": "trial registry has <2 trials for this family; DSR withheld"
+}
