@@ -5,6 +5,8 @@ top-quartile SUE and a positive day-0 reaction exceeds c = 0.15 (fixed from the 
 ~22nd percentile, before any backtest). The gate at the close of t-1 scales day t's exposure to 1 (ON) or s_off; cash earns the
 T-bill rate. Never levers.
 """
+import dataclasses
+
 import numpy as np
 
 from pead.core.market_state import earnings_breadth, gate_scale, trend_gate
@@ -51,3 +53,25 @@ _variant("trend", True, False, 0.0, "Steady Drift Plus, in cash when the market 
 _variant("breadth_only", False, True, 0.0, "Control: earnings-breadth gate alone", status="reference")
 _variant("gate", True, True, 0.0, "Steady Drift Plus, trend AND earnings-breadth gate (off = all cash)")
 _variant("gate_half", True, True, 0.5, "Trend and breadth gate, half exposure when off")
+
+
+@register
+class SteadyDriftPlusGateEntry(SteadyDriftGate):
+    """Variant B (weaker brake): no exposure scaling; events whose gate is OFF at their day-0 close get weight 0."""
+    name = "steady_drift_plus_gate_entry"
+    description = "Trend and breadth gate applied only to new entries (events entering while the gate is OFF are skipped)"
+
+    def exposure_scale(self, uni):
+        return None
+
+    def weights(self, events):
+        w = super().weights(events)
+        on = events["gate_on_day0"].to_numpy(dtype=bool) if "gate_on_day0" in events.columns else np.ones(len(events), bool)
+        return np.where(on, w, 0.0)
+
+    def backtest(self, uni):
+        g = self.gate(uni)
+        idx = uni.calendar.get_indexer(uni.events["day0_date"])
+        ev = uni.events.copy()
+        ev["gate_on_day0"] = np.where(idx >= 0, g[np.maximum(idx, 0)], True)
+        return super().backtest(dataclasses.replace(uni, events=ev))

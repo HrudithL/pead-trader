@@ -1,0 +1,29 @@
+{
+  "name": "steady_drift_plus_gate_entry",
+  "protocol": "v1",
+  "holdout_kind": "burned",
+  "search_end": "2008-06-30",
+  "search": {
+    "n_days": 3398,
+    "cagr": 0.09245429386767157,
+    "sharpe": 1.3658550621775825,
+    "sharpe_daily": 0.08604078146382253,
+    "max_drawdown": -0.09059760415625728,
+    "skew": -0.11645462474537358,
+    "kurtosis": 11.936953802889867,
+    "psr_0": 0.9999996105577547
+  },
+  "holdout": {
+    "n_days": 1510,
+    "cagr": 0.1015955703242728,
+    "sharpe": 1.0857997450604708,
+    "sharpe_daily": 0.06839895473922235,
+    "max_drawdown": -0.12207506913896116,
+    "skew": -0.31883209155545333,
+    "kurtosis": 7.457746090688486,
+    "psr_0": 0.9955886360904272
+  },
+  "degradation_sharpe_ratio": 0.7949597106807076,
+  "dsr_holdout": 0.9633758798510289,
+  "dsr_n_trials": 37
+}
