@@ -19,6 +19,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from pead.core.outcomes import firewall
 from pead.core.data import EquityUniverse, OptionsUniverse, load_equity_universe, load_options_universe
 from pead.engines.equity import (EquityRun, Sizing, run_equity_backtest, apply_beta_overlay, with_fixed_hold,
                                  apply_cash_and_risk_target)
@@ -59,6 +60,8 @@ class Strategy:
     description: str = ""
     thesis: str = ""                       # why this should make money
     live_ready: bool = False               # True when the live engine can run it
+    causal: bool = True                    # False when the strategy/engine mode uses information from after the decision date
+    outcome_columns_allowed: tuple = ()    # outcome columns (pead.core.outcomes) weights() may read; each use must be guarded
 
     def params(self) -> dict:
         return {}
@@ -103,7 +106,7 @@ class EquityStrategy(Strategy):
     def backtest(self, uni: EquityUniverse) -> EquityRun:
         if self.hold_sessions:
             uni = with_fixed_hold(uni, self.hold_sessions)
-        run = run_equity_backtest(uni, self.weights(uni.events), self.sizing)
+        run = run_equity_backtest(uni, self.weights(firewall(uni.events, self.outcome_columns_allowed)), self.sizing)
         if self.long_only_cash or self.risk_target_vol:
             from pead.core.rates import daily_rf
             run = apply_cash_and_risk_target(run, daily_rf(uni.calendar), uni.initial_capital,
