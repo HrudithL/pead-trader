@@ -74,3 +74,11 @@ def test_seasonal_rank_ignores_missing_values_in_the_pool():
     ok = ~np.isnan(v)
     r = rank_pct(pd.Series(v[ok]), q[ok].reset_index(drop=True), mode="prior_quarters")
     assert r.dropna().max() <= 1.0 + 1e-12 and r.dropna().max() > 0.95
+
+
+def test_per_event_stop_array_is_used_event_by_event():
+    r = np.zeros(N)
+    r[13] = -0.07
+    u = make_universe([dict(day0=10, exit=20), dict(day0=10, exit=20)], [r, r])
+    out = with_path_exits(u, 30, stop_pct=np.array([0.05, 0.10]))
+    assert out.events["exit_row_idx"].iloc[0] % N == 13 and out.events["exit_row_idx"].iloc[1] % N == 40

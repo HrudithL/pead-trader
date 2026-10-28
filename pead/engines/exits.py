@@ -26,9 +26,9 @@ def _set_exit(uni, ev, exit_row):
     return dataclasses.replace(uni, events=ev.reset_index(drop=True))
 
 
-def with_path_exits(uni, max_hold: int, stop_pct: float = None, trail_activation: float = None, trail_amount: float = None):
+def with_path_exits(uni, max_hold: int, stop_pct=None, trail_activation: float = None, trail_amount: float = None):
     """Time exit after `max_hold` sessions, plus an optional close-based percent stop and a LATCHED trailing stop.
-    Wealth path v_k = prod(1 + raw ret) from the entry close. Stop: first k with v_k <= 1 - stop_pct. Trail: once the running peak
+    `stop_pct` may be a scalar or one value per event (a volatility-scaled stop). Wealth path v_k = prod(1 + raw ret) from the entry close. Stop: first k with v_k <= 1 - stop_pct. Trail: once the running peak
     reaches 1 + trail_activation it stays active; exit at the first k with v_k <= peak_k * (1 - trail_amount). The earliest trigger wins;
     with no stop it reproduces `with_fixed_hold` exactly."""
     held = with_fixed_hold(uni, max_hold)
@@ -45,7 +45,8 @@ def with_path_exits(uni, max_hold: int, stop_pct: float = None, trail_activation
         v = np.cumprod(1.0 + seg)
         hit = np.zeros(len(v), bool)
         if stop_pct is not None:
-            hit |= v <= 1.0 - stop_pct
+            sp = stop_pct[i] if np.ndim(stop_pct) else stop_pct
+            hit |= v <= 1.0 - sp
         if trail_activation is not None and trail_amount is not None:
             peak = np.maximum.accumulate(np.maximum(v, 1.0))
             active = peak >= 1.0 + trail_activation
