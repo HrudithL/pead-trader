@@ -1,0 +1,29 @@
+{
+  "name": "steady_drift_plus_orj_weak_gap",
+  "protocol": "v1",
+  "holdout_kind": "burned",
+  "search_end": "2008-06-30",
+  "search": {
+    "n_days": 3398,
+    "cagr": 0.0706472743294928,
+    "sharpe": 1.514771634000419,
+    "sharpe_daily": 0.09542164372904906,
+    "max_drawdown": -0.10208355189150675,
+    "skew": -0.0914040442081105,
+    "kurtosis": 7.2824434196425125,
+    "psr_0": 0.9999999808589202
+  },
+  "holdout": {
+    "n_days": 1510,
+    "cagr": 0.05184430114836558,
+    "sharpe": 0.7473542913399364,
+    "sharpe_daily": 0.04707889514624725,
+    "max_drawdown": -0.13301566555004174,
+    "skew": -0.057719546136470734,
+    "kurtosis": 10.092752749857333,
+    "psr_0": 0.965754958916411
+  },
+  "degradation_sharpe_ratio": 0.4933775326688813,
+  "dsr_holdout": 0.8492042606371749,
+  "dsr_n_trials": 21
+}

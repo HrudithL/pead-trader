@@ -1,0 +1,29 @@
+{
+  "name": "steady_drift_plus_orj_sue_and_orj",
+  "protocol": "v1",
+  "holdout_kind": "burned",
+  "search_end": "2008-06-30",
+  "search": {
+    "n_days": 3398,
+    "cagr": 0.1001087922942645,
+    "sharpe": 1.4154362344488742,
+    "sharpe_daily": 0.08916410173860562,
+    "max_drawdown": -0.11887811483616151,
+    "skew": -0.16521198122558892,
+    "kurtosis": 7.93758917944698,
+    "psr_0": 0.9999998506486799
+  },
+  "holdout": {
+    "n_days": 1510,
+    "cagr": 0.06679743631173829,
+    "sharpe": 0.6971117678620331,
+    "sharpe_daily": 0.04391391366141734,
+    "max_drawdown": -0.19680537126877962,
+    "skew": -0.5056909634749707,
+    "kurtosis": 11.476777215498903,
+    "psr_0": 0.9538210519595112
+  },
+  "degradation_sharpe_ratio": 0.4925066568848057,
+  "dsr_holdout": 0.8164401570850907,
+  "dsr_n_trials": 19
+}
