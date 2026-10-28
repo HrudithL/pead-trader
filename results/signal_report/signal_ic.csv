@@ -1,0 +1,11 @@
+signal,window,n_events,n_quarters,mean_ic,ic_t,pct_positive,spread,spread_t
+sue_primary,search,119421,49,0.0632,7.0365,0.8776,0.0389,5.7934
+sue_primary,holdout,61201,22,0.0386,4.0345,0.8636,0.0126,1.162
+sue_analyst,search,119421,49,0.0632,7.0365,0.8776,0.0389,5.7934
+sue_analyst,holdout,61201,22,0.0386,4.0345,0.8636,0.0126,1.162
+sue_seasonal,search,102108,49,0.0468,3.5469,0.7347,0.0145,1.1982
+sue_seasonal,holdout,56382,22,0.0356,2.2575,0.8182,0.0106,0.994
+sue_analyst_r,search,119421,49,0.0632,7.0059,0.8776,0.0391,5.8853
+sue_analyst_r,holdout,61201,22,0.0386,4.0455,0.8636,0.0119,1.1312
+sue_rank_pct,search,119421,49,0.0632,7.0059,0.8776,0.0391,5.8853
+sue_rank_pct,holdout,61201,22,0.0386,4.0455,0.8636,0.0119,1.1312
