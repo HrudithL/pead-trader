@@ -1,0 +1,29 @@
+{
+  "name": "steady_drift_plus_trend",
+  "protocol": "v1",
+  "holdout_kind": "burned",
+  "search_end": "2008-06-30",
+  "search": {
+    "n_days": 3398,
+    "cagr": 0.09340627331913587,
+    "sharpe": 1.345095444451201,
+    "sharpe_daily": 0.08473304846818508,
+    "max_drawdown": -0.12131774354877012,
+    "skew": -0.4345355745293346,
+    "kurtosis": 10.395676565866033,
+    "psr_0": 0.9999992495330439
+  },
+  "holdout": {
+    "n_days": 1510,
+    "cagr": 0.07997346216538426,
+    "sharpe": 0.9448561464413859,
+    "sharpe_daily": 0.05952034257654128,
+    "max_drawdown": -0.14421215628375128,
+    "skew": -0.2378581919450926,
+    "kurtosis": 7.6225069539254315,
+    "psr_0": 0.9889694043952162
+  },
+  "degradation_sharpe_ratio": 0.7024454289389755,
+  "dsr_holdout": 0.9304982024326731,
+  "dsr_n_trials": 24
+}

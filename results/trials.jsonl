@@ -82,3 +82,7 @@
 {"family": "equity-longonly", "note": "EQ-24 variant, search window", "params": {}, "sharpe_daily": 0.09542164372904906, "strategy": "steady_drift_plus_orj_weak_gap", "ts": "2026-10-28T20:33:07+00:00", "window": "search"}
 {"family": "equity-longonly", "note": "EQ-28 variant, search window", "params": {}, "sharpe_daily": 0.09178235417727569, "strategy": "steady_drift_plus_decay", "ts": "2026-10-28T20:35:40+00:00", "window": "search"}
 {"family": "equity-longonly", "note": "EQ-28 variant, search window", "params": {}, "sharpe_daily": 0.09352234422772258, "strategy": "steady_drift_plus_decay60", "ts": "2026-10-28T20:35:40+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "OV-03 variant, search window", "params": {}, "sharpe_daily": 0.08473304846818508, "strategy": "steady_drift_plus_trend", "ts": "2026-10-28T21:02:36+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "OV-03 variant, search window", "params": {}, "sharpe_daily": 0.07447505322445766, "strategy": "steady_drift_plus_breadth_only", "ts": "2026-10-28T21:02:36+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "OV-03 variant, search window", "params": {}, "sharpe_daily": 0.07882196593654203, "strategy": "steady_drift_plus_gate", "ts": "2026-10-28T21:02:36+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "OV-03 variant, search window", "params": {}, "sharpe_daily": 0.09101139859454511, "strategy": "steady_drift_plus_gate_half", "ts": "2026-10-28T21:02:36+00:00", "window": "search"}
