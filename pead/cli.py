@@ -4,6 +4,7 @@
   run <sel...> [--jobs N]       backtest strategies (names, 'all', 'equity', 'options', 'family:x', 'prefix*')
   report <name...>              (re)build the per-strategy report from a saved run
   eval <name...>                search/holdout evaluation of a saved run (writes evaluation.json)
+  leaderboard2                  leaderboard with bootstrap CIs, holdout split and DSR (results/leaderboard_v2.md)
   trials [--family f]           count of logged trials (deflated-Sharpe denominator)
   compare [<name...>]           comprehensive cross-strategy report (correlations, combinations, attribution)
   portfolio                     optimal equity + options hedged blend
@@ -42,6 +43,8 @@ def main(argv=None):
 
     p = sub.add_parser("eval")
     p.add_argument("names", nargs="+")
+
+    sub.add_parser("leaderboard2")
 
     p = sub.add_parser("trials")
     p.add_argument("--family", default=None)
@@ -92,6 +95,12 @@ def main(argv=None):
             ev = evaluate(n, q, family=registry.get(n).family)
             write_evaluation(ev)
             print(json.dumps(ev, indent=2, default=float))
+    elif args.cmd == "leaderboard2":
+        from pead.core.data import load_equity_universe
+        from pead.eval import leaderboard
+        df = leaderboard.build(load_equity_universe().events["ann_quarter"])
+        leaderboard.write(df)
+        print(f"wrote results/leaderboard_v2.md ({len(df)} runs)")
     elif args.cmd == "trials":
         from pead.eval import registry as trials
         print(f"{trials.n_trials(args.family)} trials" + (f" in family {args.family}" if args.family else ""))
