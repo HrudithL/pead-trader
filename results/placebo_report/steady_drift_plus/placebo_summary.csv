@@ -1,0 +1,10 @@
+,value
+strategy,steady_drift_plus
+real_cagr,0.12065694258350401
+real_sharpe,1.1931552274391515
+placebo_cagr_mean,0.08051867459978782
+placebo_cagr_max,0.09152834697158063
+placebo_sharpe_mean,0.8253152393303363
+placebo_sharpe_max,0.9284931688599624
+n_seeds,200
+empirical_p_sharpe,0.004975124378109453
