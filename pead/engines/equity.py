@@ -333,6 +333,28 @@ def with_fixed_hold(uni: EquityUniverse, hold_sessions: int) -> EquityUniverse:
                           initial_capital=uni.initial_capital, extras=uni.extras, panel_permno=uni.panel_permno)
 
 
+def with_entry_lag(uni: EquityUniverse, k: int) -> EquityUniverse:
+    """Same universe, but every position enters `k` sessions AFTER the day0 close (the day0..day0+k return is neither earned nor
+    sized on). `day0_date` is overwritten with the lagged entry date because the engine books costs and quarterly sizing from it;
+    the original is kept in `day0_date_orig`. Events whose lagged entry would leave the stock's own run of rows are dropped."""
+    if k == 0:
+        return uni
+    if uni.panel_permno is None:
+        raise ValueError("entry lag needs the panel permno array")
+    ev = uni.events
+    pp = uni.panel_permno
+    entry = ev["entry_row_idx"].to_numpy()
+    new = entry + k
+    ok = (new < len(pp)) & (pp[np.minimum(new, len(pp) - 1)] == pp[entry]) & (new < ev["exit_row_idx"].to_numpy())
+    out = ev.loc[ok].copy()
+    out["day0_date_orig"] = out["day0_date"]
+    out["entry_row_idx"] = new[ok]
+    out["day0_date"] = pd.to_datetime(uni.panel_date[new[ok]])
+    return EquityUniverse(events=out.reset_index(drop=True), ret_mktadj=uni.ret_mktadj, ret_raw=uni.ret_raw,
+                          panel_date=uni.panel_date, calendar=uni.calendar, vwretd=uni.vwretd,
+                          initial_capital=uni.initial_capital, extras=uni.extras, panel_permno=uni.panel_permno)
+
+
 def apply_cash_and_risk_target(run: EquityRun, rf: np.ndarray, initial_capital: float, target_vol: float = None,
                                lookback: int = 60, cost_bps: float = 10.0, cash_yield: bool = True) -> EquityRun:
     """Long-only wrapper: idle cash earns `rf`, and total exposure is scaled to hold risk roughly constant.
