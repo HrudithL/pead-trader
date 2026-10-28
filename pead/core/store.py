@@ -8,7 +8,9 @@
     results/leaderboard.json|.md        best strategy so far by asset class and metric
     results/comprehensive/              cross-strategy report
 """
+import hashlib
 import json
+import platform
 import subprocess
 from datetime import datetime, timezone
 
@@ -34,6 +36,29 @@ def _git_rev():
         return None
 
 
+def _git_dirty():
+    try:
+        out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO_ROOT, capture_output=True,
+                             text=True, timeout=20)
+        return bool(out.stdout.strip())
+    except Exception:
+        return None
+
+
+def data_fingerprint():
+    """Short hash of the names and sizes of the key input files (not mtimes, so it is stable across clones). Two runs with the
+    same fingerprint read the same data vintage; a rebuilt derived file changes it."""
+    import hashlib
+    from pead.common.paths import DATA_DIR
+    files = [DATA_DIR / "equity_vol_panel.parquet", DATA_DIR / "events" / "equity_events_1996_2013.parquet",
+             *sorted((DATA_DIR / "normalized_equity").glob("*.parquet"))]
+    h = hashlib.sha1()
+    for f in files:
+        if f.exists():
+            h.update(f"{f.name}:{f.stat().st_size};".encode())
+    return h.hexdigest()[:12]
+
+
 def _jsonable(o):
     if isinstance(o, dict):
         return {k: _jsonable(v) for k, v in o.items()}
@@ -54,7 +79,9 @@ def save_result(result) -> "Path":
         result.positions.to_parquet(d / "positions.parquet", index=False)
     payload = dict(result.meta, summary=_jsonable(result.summary),
                    run=dict(timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"), git_rev=_git_rev(),
-                            pandas=pd.__version__))
+                            pandas=pd.__version__, python=platform.python_version(), git_dirty=_git_dirty(),
+                            data_fingerprint=data_fingerprint(),
+                            params_hash=hashlib.sha1(json.dumps(_jsonable(result.meta.get("params", {})), sort_keys=True).encode()).hexdigest()[:12]))
     (d / "summary.json").write_text(json.dumps(_jsonable(payload), indent=2))
     update_leaderboard()
     return d

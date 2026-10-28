@@ -54,3 +54,17 @@ def test_trial_registry_is_append_only_and_feeds_dsr(tmp_path):
     v = registry.trial_sharpe_variance("fam_a", p)
     assert v > 0
     assert stats.dsr(0.08, 4000, 0.0, 3.0, registry.n_trials("fam_a", p), v) < stats.psr(0.08, 4000, 0.0, 3.0)
+
+
+def test_manifest_fields_are_written_by_save_result(tmp_path, monkeypatch):
+    import json
+    import pead.core.store as store
+    from pead.strategies.base import BacktestResult
+    monkeypatch.setattr(store, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(store, "update_leaderboard", lambda: None)
+    daily = pd.DataFrame({"date": pd.bdate_range("2000-01-03", periods=5), "daily_pnl": 1.0, "nav": 1.0, "daily_return": 0.0})
+    r = BacktestResult("toy", "equity", daily, {"sharpe": 1.0}, pd.DataFrame(), None, {"name": "toy", "params": {"a": 1}})
+    d = store.save_result(r)
+    run = json.loads((d / "summary.json").read_text())["run"]
+    assert {"git_rev", "python", "git_dirty", "data_fingerprint", "params_hash", "pandas"} <= set(run)
+    assert len(run["params_hash"]) == 12
