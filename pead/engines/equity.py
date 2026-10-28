@@ -356,13 +356,15 @@ def with_entry_lag(uni: EquityUniverse, k: int) -> EquityUniverse:
 
 
 def apply_cash_and_risk_target(run: EquityRun, rf: np.ndarray, initial_capital: float, target_vol: float = None,
-                               lookback: int = 60, cost_bps: float = 10.0, cash_yield: bool = True) -> EquityRun:
+                               lookback: int = 60, cost_bps: float = 10.0, cash_yield: bool = True,
+                               exposure_scale: np.ndarray = None) -> EquityRun:
     """Long-only wrapper: idle cash earns `rf`, and total exposure is scaled to hold risk roughly constant.
 
     * Idle cash = NAV not held in stock (prior-day NAV minus the book's gross exposure), earning the daily cash return `rf`.
     * Risk target: exposure e_t = min(1, target_vol / realised_vol), where realised_vol is the annualised standard deviation of
       the book's own daily returns over the previous `lookback` sessions, using data through t-1 only. The rest sits in cash.
-      e never exceeds 1, so the overlay can only reduce risk: it never borrows. `cost_bps` is charged on each day's change in e.
+      e never exceeds 1, so the overlay can only reduce risk: it never borrows. `exposure_scale` (optional, one value per calendar
+      day, in [0, 1]) multiplies e, for strategies that de-risk on a causal signal. `cost_bps` is charged on each day's change in e.
       (Positions were sized off the un-overlaid NAV; the overlay is applied afterwards, as for the beta overlay.)"""
     d = run.daily
     nav0 = d["nav"].to_numpy()
@@ -378,6 +380,8 @@ def apply_cash_and_risk_target(run: EquityRun, rf: np.ndarray, initial_capital: 
         e = np.where(np.isfinite(vol) & (vol > 0), np.minimum(1.0, target_vol / np.where(vol > 0, vol, 1.0)), 1.0)
     else:
         e = np.ones(len(r))
+    if exposure_scale is not None:                  # per-day multiplier in [0, 1] built from data through t-1 only (never levers)
+        e = e * np.clip(np.asarray(exposure_scale, dtype=float), 0.0, 1.0)
     de = np.abs(np.diff(e, prepend=1.0))
     r2 = e * r + (1.0 - e) * rf - de * cost_bps / 1e4
     nav = initial_capital * np.cumprod(1.0 + r2)
