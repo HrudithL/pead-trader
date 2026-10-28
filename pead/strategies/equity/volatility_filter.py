@@ -25,6 +25,7 @@ class VolatilityFilter(EquityStrategy):
     sizing = Sizing(base_unit_fraction=0.003, max_gross_leverage=2.5)
     required_columns = ("ann_quarter", "sue_rank_pct", "size_quintile", "ff12_sector", "ivol_252d_tercile",
                         "hold_ret", "exit_date", "day0_date")
+    outcome_columns_allowed = ("hold_ret", "exit_date")   # walk_forward_cell_filter reads only quarters fully exited before the entry quarter
     TRIM, TILT = 0.15, 1.0
 
     def scale(self, events):
