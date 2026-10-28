@@ -33,9 +33,13 @@ Best so far (validated + research strategies):
 | steady_drift_plus_decay60 | equity | research | 8.37% | 6.92% | 1.20 | -19.95% | 0.42 |
 | steady_drift_plus_trend | equity | research | 8.93% | 7.38% | 1.20 | -14.42% | 0.62 |
 | steady_drift_plus | equity | research | 12.07% | 9.97% | 1.19 | -22.07% | 0.55 |
+| steady_drift_plus_dlret | equity | research | 12.07% | 9.97% | 1.19 | -22.07% | 0.55 |
+| steady_drift_plus_dlret_half | equity | research | 12.07% | 9.97% | 1.19 | -22.07% | 0.55 |
+| steady_drift_plus_dlret_only | equity | research | 12.07% | 9.97% | 1.19 | -22.07% | 0.55 |
 | steady_drift_plus_seas_avg | equity | research | 6.86% | 5.73% | 1.19 | -17.72% | 0.39 |
 | calm_weighted_matched | equity | validated | 5.83% | 4.88% | 1.18 | -18.65% | 0.31 |
 | conviction_tilt_legacy | equity | reference | 5.25% | 4.41% | 1.18 | -13.07% | 0.40 |
+| steady_drift_plus_volstop | equity | research | 11.43% | 9.57% | 1.18 | -25.03% | 0.46 |
 | steady_drift_plus_orj_weak_gap | equity | research | 6.48% | 5.48% | 1.17 | -13.55% | 0.48 |
 | steady_drift_plus_mom_tilt | equity | research | 12.10% | 10.19% | 1.17 | -22.15% | 0.55 |
 | steady_drift_plus_seas_and | equity | research | 9.56% | 8.10% | 1.17 | -21.61% | 0.44 |
@@ -58,6 +62,7 @@ Best so far (validated + research strategies):
 | steady_drift_plus_mom_randdrop0 | equity | research | 8.36% | 7.71% | 1.08 | -22.70% | 0.37 |
 | steady_drift_plus_mom_filter | equity | research | 9.28% | 8.59% | 1.08 | -21.32% | 0.44 |
 | steady_drift_plus_contrarian | equity | research | 5.81% | 5.40% | 1.07 | -16.57% | 0.35 |
+| steady_drift_plus_multifactor | equity | research | 8.33% | 7.85% | 1.06 | -16.42% | 0.51 |
 | steady_drift_plus_react_contra | equity | research | 5.32% | 5.09% | 1.04 | -14.14% | 0.38 |
 | steady_drift_plus_orj_comp | equity | research | 9.94% | 9.51% | 1.04 | -24.26% | 0.41 |
 | steady_drift_plus_seas_s5 | equity | research | 5.49% | 5.26% | 1.04 | -16.23% | 0.34 |
