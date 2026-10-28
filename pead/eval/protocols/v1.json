@@ -1,0 +1,14 @@
+{
+  "id": "v1",
+  "status": "PROPOSED: gate constants are proposals pending owner sign-off (plan decision D5); split follows D1 recommendation",
+  "search": {"rule": "first_fraction_of_announcement_quarters", "fraction": 0.70},
+  "holdout": {"rule": "remaining", "kind": "burned"},
+  "bootstrap": {"block": "month", "n": 2000, "seed": 20261027},
+  "cost_scenario_bps_round_trip": 10,
+  "gates": {
+    "G3_holdout_cagr_gt_0_after_cost_bps": 10,
+    "G4_holdout_alpha_t_min": 2.0,
+    "G5_dsr_min": 0.95,
+    "G6_bootstrap_alpha_p2_5_gt_0": true
+  }
+}
