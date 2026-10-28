@@ -46,7 +46,7 @@ reports/ reference/      legacy PDFs (pre-framework, pre-correction numbers) and
 tests/                   test_framework.py (engine reproduces the original scripts), test_fixes.py (the four fixes)
 ```
 
-## 4. Strategy catalog (83 registered; numbers live in `results/leaderboard.md`, not here)
+## 4. Strategy catalog (98 registered; numbers live in `results/leaderboard.md`, not here)
 
 `status`: `validated` = the engine reproduces the original script exactly (NOT "has an edge"); `research` = chosen/tuned in-sample or exploratory; `reference` = kept for comparison.
 
@@ -66,6 +66,8 @@ tests/                   test_framework.py (engine reproduces the original scrip
 - `steady_drift_plus_orj_{only,sue_and_orj,comp,weak_gap}`: overnight-gap surprise; worse than SUE alone
 - `steady_drift_plus_{decay,decay60}`: exposure scaled by recent top-decile drift; lowers return, worse holdout
 - `steady_drift_plus_{trend,breadth_only,gate,gate_half}`: market-trend / earnings-breadth gates; `gate_half` (Sharpe 1.28, MDD -15.1%, holdout Sharpe 1.01) is the one candidate worth a stress test (beats random gates at p about 0.05-0.08, but lower CAGR 10.2% vs 12.1%)
+
+- `steady_drift_plus_{seas_s,seas_s5,seas_and,seas_or,seas_avg,stop5,stop10,trail,ea1904,ea1904_nostop,bouddat,bouddat_60s,react_agree,react_contra,react_flat}` (`library_candidates.py`; `docs/EQ_LIBRARY_CANDIDATES.md`): seasonal SUE, path stops, EA1904-style, Bouddat long leg, day-0 reaction arms. All null out of sample; stops look best in-sample and fail in the holdout.
 
 **Options (8):** `options_cap20`, `options_cap30`, `options_worst_case` (corrected: ask in / bid out); `options_cap20_midfill`, `options_cap30_midfill` (the previous mid-fill convention); `options_cap20_legacy`, `options_cap30_legacy`, `options_cap40_legacy` (the originally reported, overstated numbers).
 

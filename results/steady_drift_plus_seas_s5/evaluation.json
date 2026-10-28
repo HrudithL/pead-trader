@@ -1,0 +1,29 @@
+{
+  "name": "steady_drift_plus_seas_s5",
+  "protocol": "v1",
+  "holdout_kind": "burned",
+  "search_end": "2008-06-30",
+  "search": {
+    "n_days": 3398,
+    "cagr": 0.06734715944847247,
+    "sharpe": 1.2508983286910798,
+    "sharpe_daily": 0.0787991879319745,
+    "max_drawdown": -0.08387383009594307,
+    "skew": 0.13552207151122797,
+    "kurtosis": 9.266660852292857,
+    "psr_0": 0.999997760055416
+  },
+  "holdout": {
+    "n_days": 1510,
+    "cagr": 0.027421282692172255,
+    "sharpe": 0.5538319504609588,
+    "sharpe_daily": 0.03488813354860812,
+    "max_drawdown": -0.1369799134736307,
+    "skew": -0.2913361130901477,
+    "kurtosis": 17.39674937318861,
+    "psr_0": 0.9107044771482478
+  },
+  "degradation_sharpe_ratio": 0.44274737423342775,
+  "dsr_holdout": 0.6744557665964096,
+  "dsr_n_trials": 39
+}

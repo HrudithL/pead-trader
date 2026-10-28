@@ -2,12 +2,13 @@
 
 Best so far (validated + research strategies):
 
-- **equity** -- best sharpe: `calm_rank_tilt` (1.47); best annualized_return: `steady_drift_plus_mom_tilt` (0.121); best calmar: `steady_drift_plus_gate_half` (0.673)
+- **equity** -- best sharpe: `steady_drift_plus_react_flat` (2.27); best annualized_return: `steady_drift_plus_mom_tilt` (0.121); best calmar: `steady_drift_plus_react_flat` (1.43)
 - **options** -- best sharpe: `options_cap20` (0.156); best annualized_return: `options_cap20` (0.00282); best calmar: `options_cap20` (0.015)
 - **portfolio** -- best sharpe: `calm_blend` (1.28); best annualized_return: `calm_blend` (0.058); best calmar: `calm_blend` (0.288)
 
 | name | asset_class | status | annualized_return | annualized_vol | sharpe | max_drawdown | calmar |
 |---|---|---|---|---|---|---|---|
+| steady_drift_plus_react_flat | equity | research | 4.01% | 1.74% | 2.27 | -2.81% | 1.43 |
 | calm_rank_tilt_legacy | equity | reference | 7.12% | 3.83% | 1.81 | -11.59% | 0.61 |
 | calm_rank_levered_legacy | equity | reference | 9.23% | 5.17% | 1.73 | -15.93% | 0.58 |
 | calm_weighted_legacy | equity | reference | 6.71% | 4.49% | 1.47 | -15.58% | 0.43 |
@@ -16,22 +17,29 @@ Best so far (validated + research strategies):
 | calm_weighted_filter_legacy | equity | reference | 6.54% | 4.55% | 1.41 | -15.65% | 0.42 |
 | calm_rank_levered | equity | research | 8.07% | 5.70% | 1.39 | -19.60% | 0.41 |
 | sector_balanced_legacy | equity | reference | 4.06% | 3.02% | 1.33 | -10.83% | 0.37 |
+| steady_drift_plus_stop5 | equity | research | 9.81% | 7.39% | 1.30 | -19.21% | 0.51 |
 | balanced_leverage_legacy | equity | reference | 6.49% | 4.94% | 1.30 | -16.63% | 0.39 |
 | steady_drift_plus_gate_half | equity | research | 10.15% | 7.81% | 1.28 | -15.07% | 0.67 |
 | steady_drift_plus_confirm_notneg | equity | research | 12.01% | 9.47% | 1.25 | -21.72% | 0.55 |
+| steady_drift_plus_gate_entry | equity | research | 9.53% | 7.56% | 1.24 | -12.21% | 0.78 |
 | steady_drift_plus_confirm_z | equity | research | 11.98% | 9.48% | 1.24 | -21.50% | 0.56 |
 | calm_weighted | equity | validated | 5.64% | 4.51% | 1.24 | -17.53% | 0.32 |
 | volatility_filter_legacy | equity | reference | 6.27% | 5.05% | 1.23 | -16.68% | 0.38 |
 | steady_drift_plus_confirm_pos | equity | research | 11.17% | 9.02% | 1.22 | -21.83% | 0.51 |
+| steady_drift_plus_react_agree | equity | research | 10.85% | 8.78% | 1.22 | -22.14% | 0.49 |
 | steady_drift_plus_decay | equity | research | 10.06% | 8.20% | 1.21 | -20.98% | 0.48 |
+| steady_drift_plus_stop10 | equity | research | 10.67% | 8.70% | 1.21 | -22.53% | 0.47 |
 | steady_drift_calm | equity | research | 9.55% | 7.81% | 1.21 | -15.90% | 0.60 |
 | steady_drift_plus_decay60 | equity | research | 8.37% | 6.92% | 1.20 | -19.95% | 0.42 |
 | steady_drift_plus_trend | equity | research | 8.93% | 7.38% | 1.20 | -14.42% | 0.62 |
 | steady_drift_plus | equity | research | 12.07% | 9.97% | 1.19 | -22.07% | 0.55 |
+| steady_drift_plus_seas_avg | equity | research | 6.86% | 5.73% | 1.19 | -17.72% | 0.39 |
 | calm_weighted_matched | equity | validated | 5.83% | 4.88% | 1.18 | -18.65% | 0.31 |
 | conviction_tilt_legacy | equity | reference | 5.25% | 4.41% | 1.18 | -13.07% | 0.40 |
 | steady_drift_plus_orj_weak_gap | equity | research | 6.48% | 5.48% | 1.17 | -13.55% | 0.48 |
 | steady_drift_plus_mom_tilt | equity | research | 12.10% | 10.19% | 1.17 | -22.15% | 0.55 |
+| steady_drift_plus_seas_and | equity | research | 9.56% | 8.10% | 1.17 | -21.61% | 0.44 |
+| steady_drift_plus_trail | equity | research | 8.18% | 6.95% | 1.17 | -16.70% | 0.49 |
 | steady_drift | equity | research | 10.59% | 9.01% | 1.16 | -20.00% | 0.53 |
 | steady_drift_plus_gate | equity | research | 8.12% | 6.95% | 1.16 | -13.07% | 0.62 |
 | steady_drift_plus_lag1 | equity | research | 11.47% | 9.98% | 1.14 | -21.87% | 0.52 |
@@ -50,8 +58,11 @@ Best so far (validated + research strategies):
 | steady_drift_plus_mom_randdrop0 | equity | research | 8.36% | 7.71% | 1.08 | -22.70% | 0.37 |
 | steady_drift_plus_mom_filter | equity | research | 9.28% | 8.59% | 1.08 | -21.32% | 0.44 |
 | steady_drift_plus_contrarian | equity | research | 5.81% | 5.40% | 1.07 | -16.57% | 0.35 |
+| steady_drift_plus_react_contra | equity | research | 5.32% | 5.09% | 1.04 | -14.14% | 0.38 |
 | steady_drift_plus_orj_comp | equity | research | 9.94% | 9.51% | 1.04 | -24.26% | 0.41 |
+| steady_drift_plus_seas_s5 | equity | research | 5.49% | 5.26% | 1.04 | -16.23% | 0.34 |
 | steady_drift_plus_breadth_only | equity | reference | 9.27% | 9.12% | 1.02 | -24.43% | 0.38 |
+| steady_drift_plus_seas_or | equity | research | 10.67% | 10.59% | 1.01 | -22.33% | 0.48 |
 | graded_bets_legacy | equity | reference | 3.88% | 3.86% | 1.01 | -13.96% | 0.28 |
 | balanced_leverage_max_legacy | equity | reference | 12.15% | 12.20% | 1.00 | -36.46% | 0.33 |
 | sector_balanced_max_legacy | equity | reference | 12.15% | 12.20% | 1.00 | -36.46% | 0.33 |
@@ -60,6 +71,8 @@ Best so far (validated + research strategies):
 | market_boost_legacy | equity | reference | 10.08% | 10.51% | 0.97 | -23.23% | 0.43 |
 | steady_drift_core | equity | research | 11.99% | 13.14% | 0.93 | -40.47% | 0.30 |
 | extreme_picks_legacy | equity | reference | 4.91% | 5.32% | 0.93 | -18.48% | 0.27 |
+| steady_drift_plus_seas_s | equity | research | 8.47% | 9.28% | 0.92 | -22.22% | 0.38 |
+| steady_drift_plus_ea1904 | equity | research | 4.96% | 5.44% | 0.92 | -17.63% | 0.28 |
 | size_balanced_legacy | equity | reference | 4.74% | 5.26% | 0.91 | -17.53% | 0.27 |
 | market_boost | equity | validated | 9.15% | 10.39% | 0.90 | -25.08% | 0.36 |
 | graded_bets_max_legacy | equity | reference | 10.84% | 12.40% | 0.89 | -38.76% | 0.28 |
@@ -67,8 +80,11 @@ Best so far (validated + research strategies):
 | volatility_filter | equity | research | 4.60% | 5.20% | 0.89 | -18.76% | 0.25 |
 | steady_drift_plus_orj_only | equity | research | 5.99% | 6.84% | 0.89 | -18.19% | 0.33 |
 | market_boost_max | equity | research | 11.62% | 13.96% | 0.86 | -44.65% | 0.26 |
+| steady_drift_plus_ea1904_nostop | equity | research | 5.76% | 7.07% | 0.83 | -18.00% | 0.32 |
 | size_balanced | equity | validated | 3.82% | 4.77% | 0.81 | -18.05% | 0.21 |
 | extreme_picks_max_legacy | equity | reference | 9.53% | 12.24% | 0.80 | -36.20% | 0.26 |
+| steady_drift_plus_bouddat_60s | equity | research | 8.39% | 10.87% | 0.80 | -21.51% | 0.39 |
+| steady_drift_plus_bouddat | equity | research | 8.27% | 10.82% | 0.79 | -22.32% | 0.37 |
 | conviction_tilt_max | equity | research | 9.26% | 12.65% | 0.76 | -40.51% | 0.23 |
 | market_exposed | equity | reference | 6.63% | 9.48% | 0.72 | -34.14% | 0.19 |
 | size_balanced_max_legacy | equity | reference | 8.45% | 12.26% | 0.72 | -37.45% | 0.23 |
