@@ -76,3 +76,7 @@
 {"family": "equity-longonly", "note": "OV-02 variant, search window", "params": {}, "sharpe_daily": 0.08730681096906345, "strategy": "steady_drift_plus_mom_randdrop2", "ts": "2026-10-28T20:17:34+00:00", "window": "search"}
 {"family": "equity-longonly", "note": "OV-02 variant, search window", "params": {}, "sharpe_daily": 0.08499611833343282, "strategy": "steady_drift_plus_mom_randdrop3", "ts": "2026-10-28T20:17:35+00:00", "window": "search"}
 {"family": "equity-longonly", "note": "OV-02 variant, search window", "params": {}, "sharpe_daily": 0.08474426085550812, "strategy": "steady_drift_plus_mom_randdrop4", "ts": "2026-10-28T20:17:35+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "EQ-24 variant, search window", "params": {}, "sharpe_daily": 0.05574897958434953, "strategy": "steady_drift_plus_orj_only", "ts": "2026-10-28T20:33:07+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "EQ-24 variant, search window", "params": {}, "sharpe_daily": 0.08916410173860562, "strategy": "steady_drift_plus_orj_sue_and_orj", "ts": "2026-10-28T20:33:07+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "EQ-24 variant, search window", "params": {}, "sharpe_daily": 0.07322699094955828, "strategy": "steady_drift_plus_orj_comp", "ts": "2026-10-28T20:33:07+00:00", "window": "search"}
+{"family": "equity-longonly", "note": "EQ-24 variant, search window", "params": {}, "sharpe_daily": 0.09542164372904906, "strategy": "steady_drift_plus_orj_weak_gap", "ts": "2026-10-28T20:33:07+00:00", "window": "search"}
