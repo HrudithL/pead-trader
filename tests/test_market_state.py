@@ -40,3 +40,15 @@ def test_breadth_counts_good_events_and_requires_minimum_sample():
     b = earnings_breadth(uni, window=5, n_min=150)
     assert np.isnan(b[:30]).all() and b[30] == 50 / 200
     assert np.isnan(earnings_breadth(uni, window=5, n_min=500)[30])
+
+
+def test_entry_gate_zeroes_weights_of_events_entering_while_off():
+    import pandas as pd
+    from pead.strategies.equity.steady_drift_gate import SteadyDriftPlusGateEntry
+    s = SteadyDriftPlusGateEntry()
+    n = 6
+    ev = pd.DataFrame(dict(avg_dollar_volume_21d=[1e7] * n, sue_rank_pct=[0.95] * n, ivol_252d=[0.3] * n, tvol_60d=[0.02] * n,
+                           day0_date=pd.bdate_range("2000-01-03", periods=n), ann_quarter=["2000Q1"] * n,
+                           gate_on_day0=[True, False, True, False, True, True]))
+    w = s.weights(ev)
+    assert (w[[1, 3]] == 0).all()

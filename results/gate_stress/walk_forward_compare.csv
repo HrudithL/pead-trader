@@ -1,0 +1,4 @@
+name,sharpe,mdd
+base steady_drift_plus,0.9925,-0.2207
+"fixed default gate (200, 0.15)",1.0726,-0.1507
+walk-forward selected gate,1.1234,-0.1356
